@@ -1,0 +1,243 @@
+# StepSplit
+
+A lightweight, fully offline Android app that counts daily steps and splits them into **workout
+walking** and **incidental/everyday** movement. Hebrew + RTL is the default UI language, with
+English as a fallback locale.
+
+No account, no cloud backend, no ads, no analytics, no location permission.
+
+## What it does
+
+- Counts all steps taken each local calendar day.
+- Splits them into workout-walk steps vs. incidental steps using a transparent, adjustable heuristic.
+- Shows today's totals, daily/weekly goal progress (uncapped - 120% displays as 120%, not clamped to 100%), and a 7-day history with a stacked bar chart.
+- Lets you manually reclassify any auto-detected walking session, or record a walk explicitly with a Start/Finish flow.
+- Works fully offline. The only permission requested is `ACTIVITY_RECOGNITION`.
+
+## Architecture
+
+Single Gradle module (`app`), manual dependency injection (`di/AppContainer.kt`), unidirectional
+data flow from Room/DataStore through a repository, into `StateFlow`-based ViewModels, into
+Compose UI.
+
+```
+ui/            Compose screens (Today, History, Sessions, Settings), navigation, theme
+di/            Hand-written AppContainer + ViewModelFactory (no DI framework)
+domain/        Pure Kotlin, no Android deps: classification, aggregation, time, models
+data/
+  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides, manual_walks)
+  settings/    Preferences DataStore (daily goal, thresholds, last sync time)
+  stepsource/  StepSource interface + LocalRecordingStepSource + FakeStepSource
+  repository/  StepRepository - the single place that imports, normalizes, classifies, merges
+sync/          StepSyncWorker (CoroutineWorker) + WorkManager scheduling/factory
+debug/         Debug-only sample data seeder
+```
+
+The `domain` package has zero Android dependencies, so the classification and aggregation logic
+is plain JVM unit-testable without Robolectric or a device.
+
+## Step acquisition
+
+Steps come from the **accountless Recording API on mobile** (`FitnessLocal.getLocalRecordingClient`,
+`LocalDataType.TYPE_STEP_COUNT_DELTA`, `LocalRecordingClient`, `LocalDataReadRequest`) -
+`com.google.android.gms:play-services-fitness:21.3.0`. This is deliberately **not** the deprecated
+account-based Google Fit API (`Fitness.getRecordingClient`, Google Sign-In, History API).
+
+- `LocalRecordingStepSource` (`data/stepsource/LocalRecordingStepSource.kt`) checks the
+  `ACTIVITY_RECOGNITION` permission and the minimum Google Play services version
+  (`LocalRecordingClient.LOCAL_RECORDING_CLIENT_MIN_VERSION_CODE`) before touching the API.
+- Subscription (`subscribe(TYPE_STEP_COUNT_DELTA)`) is idempotent and is **never** routinely
+  unsubscribed - unsubscribing makes previously recorded data unavailable.
+- Reads use `LocalDataReadRequest.Builder().aggregate(TYPE_STEP_COUNT_DELTA).bucketByTime(1, MINUTES)`,
+  normalizing into one-minute buckets.
+- `StepSource` is a small interface (`data/stepsource/StepSource.kt`) so a future Health Connect
+  or sensor-based provider could be added without touching classification, aggregation, or UI.
+  `FakeStepSource` is the interface's other implementation, used by unit tests and the debug-only
+  sample data seeder.
+
+### Recording API retention limitation
+
+The Local Recording API only retains a limited rolling history on-device (on the order of days,
+not indefinitely). `StepRepository` treats it as a *feed*, not storage: every successful read is
+immediately imported into Room, which is the durable source of truth. On first subscription the
+repository reads the full retained history; every later sync re-reads a 6-hour rolling overlap
+window (so late/corrected buckets reconcile), clamped to a 7-day retention floor if the app has
+not synced in a long time. Data older than what the API still retains at first launch can never
+be recovered - this is an inherent, documented limitation of the platform API, not a bug.
+
+## Required permission
+
+Only `android.permission.ACTIVITY_RECOGNITION`. No location, no internet is required for normal
+operation (Play services calls are all on-device/local for this API).
+
+## Data storage and privacy
+
+Everything lives in a local Room database (`stepsplit.db`) and a local Preferences DataStore
+file - nothing leaves the device. There is no account, no analytics/telemetry, no crash reporter,
+and `android:allowBackup="false"` so step data is not swept into cloud backups. Release builds do
+not log step/activity data (see `debug/DebugDataSeeder.kt` and the `BuildConfig.DEBUG` gates in
+Settings for the only debug-only surface).
+
+### Schema notes
+
+- `step_buckets`: one row per active (steps > 0) minute, unique on `(source, startEpochSecond)`.
+  Re-importing an interval **replaces** the existing row (`OnConflictStrategy.REPLACE`), so
+  repeated or overlapping reads can never duplicate steps. Each row also stores the `zoneId` and
+  precomputed `localDate` captured at import time, so a later device timezone change never
+  retroactively changes which calendar day a past step belongs to.
+- `walk_bouts`: the cached AUTO classification result. Fully regenerated inside a transaction
+  every time the classifier reruns (see below) - it is a derived cache, never a source of truth.
+- `session_overrides`: manual reclassifications, keyed by the bout's stable start-time anchor,
+  stored **separately** from `walk_bouts` so regenerating the AUTO cache can never discard a
+  manual correction.
+- `manual_walks`: explicit Start/Finish walk sessions. The row is written immediately on Start
+  (with `endEpochSecond = NULL`), so process death or rotation never silently loses an in-progress
+  manual walk.
+- No destructive-migration fallback. Room migrations are additive-only going forward
+  (`StepSplitDatabase.MIGRATIONS`).
+
+## Automatic classification heuristic (and its limits)
+
+A phone cannot know user intent with certainty - a continuous walk to a store can look identical
+to a walking workout. `domain/classification/WalkClassifier.kt` is a pure function with no
+Android dependencies:
+
+1. Keep only minutes with steps > 0.
+2. Group consecutive active minutes into a *bout*: an idle gap of up to **2 minutes** stays inside
+   the same bout; **3+** idle minutes finalizes it and starts a new one.
+3. Classify a finished bout as a likely **workout** only if it clears *every* threshold:
+   elapsed duration ≥ 10 min, active minutes ≥ 8, steps ≥ 600, cadence ≥ 60 steps/min. Otherwise
+   it is **incidental**.
+4. Every bout gets a confidence (0.5 at exactly-at-threshold, up to 1.0 as metrics clear the
+   thresholds) and a structured reason code (localized in the UI, not hardcoded English).
+
+All six thresholds are user-editable in Settings ("Advanced"), with a reset-to-defaults action.
+They are an initial heuristic, not an objective truth - the Settings screen says so explicitly.
+
+### Manual overrides
+
+Any auto-detected session can be reclassified from the Sessions screen. A reclassification is
+stored in `session_overrides`, separate from the derived `walk_bouts` cache, and **always wins**
+over the automatic result when the UI/aggregation layer merges them
+(`domain/model/SessionMerger.kt`). Rerunning the classifier (which happens on every sync) fully
+regenerates `walk_bouts` but never touches `session_overrides`, so manual corrections survive
+indefinitely - including the case where more data arrives later and a bout that used to be too
+short for a workout grows into one.
+
+You can also start/finish a walk manually from the Today screen; that session is always a
+workout, is not reclassifiable, and is not hidden from the raw automatic analysis of the same
+minutes (both appear in the Sessions list, labeled Auto/Manual) - manual data is layered on top
+of, not a replacement for, the raw record.
+
+## How periodic synchronization works
+
+`sync/StepSyncWorker.kt` is a `CoroutineWorker` scheduled as **one unique periodic WorkManager
+job** (`SyncScheduler`, `enqueueUniquePeriodicWork` with `ExistingPeriodicWorkPolicy.KEEP`) every
+~6 hours. `ExistingPeriodicWorkPolicy.KEEP` makes it safe to call on every app start - it never
+resets the schedule or creates a duplicate job. A missing permission or unavailable API is treated
+as a non-transient condition (`Result.success()` - retrying will not fix it); an unexpected
+exception is treated as transient (`Result.retry()`, with exponential backoff). The worker is
+constructed via a hand-written `WorkerFactory` (`StepSyncWorkerFactory`) wired through
+`StepSplitApplication : Configuration.Provider`, so it receives the same `StepRepository` as the
+rest of the app - no reflection-based construction.
+
+A `Mutex` inside `StepRepository` serializes the import → normalize → store → reclassify
+pipeline, so a periodic sync racing an app-resume sync cannot interleave writes; Room's
+`withTransaction` blocks additionally guarantee the multi-statement writes (bucket upsert, and
+separately, bout-cache replace) are each atomic.
+
+## UI and localization
+
+Hebrew (`res/values/strings.xml`) is the default resource set; English (`res/values-en/strings.xml`)
+is the fallback. `android:supportsRtl="true"`, and layout direction is derived explicitly from the
+current locale rather than left to resource-fallback guesswork. No text is hardcoded in
+composables - everything goes through `stringResource(...)`.
+
+## Build and run
+
+Requirements: JDK 17+ to build, Android SDK with `platforms;android-36` and
+`build-tools;36.1.0`, and an `ACTIVITY_RECOGNITION`-capable device running Play services (a real
+device is strongly recommended - the Recording API is unlikely to behave meaningfully on an
+emulator with no real step sensor).
+
+```bash
+# from the StepSplit/ directory
+./gradlew assembleDebug
+# APK: app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install on a connected device/emulator:
+
+```bash
+./gradlew installDebug
+```
+
+## Run tests
+
+```bash
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+```
+
+**Note:** `testDebugUnitTest` uses Robolectric against `compileSdk = 36`, and Robolectric's API 36
+shadow specifically requires **JDK 21+** to build its sandbox (`assembleDebug`/`lintDebug` only
+need JDK 17+, per AGP 8.13's minimum). If `testDebugUnitTest` fails with
+`Android SDK 36 requires Java 21 (have Java 17)`, rerun with `JAVA_HOME` pointed at a JDK 21+
+install.
+
+`connectedDebugAndroidTest` requires a physical device or running emulator; none was available in
+the environment this project was built in, so it has not been run.
+
+## Debug fake data
+
+Settings → "Debug tools" (only visible/reachable when `BuildConfig.DEBUG` is true) has a
+"Generate sample data" button. It runs `debug/DebugDataSeeder.kt`, which builds a week of
+synthetic incidental + workout step intervals via `FakeStepSource.withSampleData(...)` and imports
+them through the exact same normalize → store → classify pipeline as a real sync. It is gated by
+`BuildConfig.DEBUG` both at the UI entry point and again inside the seeder itself, so it is inert
+dead code in release builds - and it contains no real user data, so there is nothing sensitive to
+leak even if invoked.
+
+## Installing and testing on a real Android phone
+
+1. On the phone: **Settings → About phone**, tap "Build number" 7 times to enable Developer
+   options, then enable **USB debugging** under **Settings → Developer options**.
+2. Connect the phone via USB and accept the "Allow USB debugging" prompt on the phone.
+3. From the `StepSplit/` directory: `./gradlew installDebug` (or copy
+   `app/build/outputs/apk/debug/app-debug.apk` to the phone and install it manually with unknown
+   sources allowed).
+4. Launch **StepSplit**. Grant the activity-recognition permission when prompted (or via the
+   banner on the Today screen).
+5. Walk around - incidental movement should show up within the ~6-hour sync window, or
+   immediately after a manual "Start walk"/"Finish walk", or the next time you foreground the app
+   (which also triggers a sync).
+
+## Known limitations
+
+- **Not tested on a real device or emulator** in this environment (none was available) - only
+  `testDebugUnitTest`, `lintDebug`, and `assembleDebug` were run. The Local Recording API call
+  surface was written from official documentation and verified to compile against the actual
+  `play-services-fitness:21.3.0` AAR, but its real runtime behavior (permission dialogs, actual
+  step data, Play services error paths) has not been exercised end to end.
+- **compileSdk/targetSdk is 36 (Android 16), not 37.** API 37 platform stubs exist, but its
+  build-tools were still release-candidate only (`build-tools;37.0.0-rc*`) at the time this
+  project was built, and several current-stable androidx libraries (core-ktx 1.19.0, lifecycle
+  2.11.0+) already require compileSdk 37 / AGP 9.1+. To keep the project fully on stable,
+  non-preview tooling, AGP was pinned to the 8.13.x line and those specific androidx libraries to
+  the latest versions still compatible with compileSdk 36 - see the version comments in
+  `gradle/libs.versions.toml`.
+- **AGP 9's built-in Kotlin compilation / new DSL was not adopted.** It is very new (AGP 9.0
+  shipped ~January 2026) and broke on first contact with this project's straightforward setup;
+  the traditional `org.jetbrains.kotlin.android` + `org.jetbrains.kotlin.plugin.compose` + KSP
+  plugin combination is used instead, which is still fully supported.
+- **Manual-override anchoring across classifier reruns is best-effort.** Overrides are keyed by a
+  bout's start-time anchor. If a future classifier change merges or splits bouts differently such
+  that a previously-overridden bout's start time shifts, that override becomes inactive (it is
+  preserved in the database, never deleted, but stops applying) rather than being intelligently
+  re-attached to the new boundary.
+- **No Health Connect / accelerometer fallback.** If the Recording API is unavailable (old Play
+  services, no Play services at all, etc.) the app shows an honest "unavailable" state rather than
+  inventing a second step-counting mechanism, per the product constraints.
+- Very long gaps between app opens (beyond the Recording API's retention window) mean the steps
+  taken during that gap are permanently unrecoverable - this is a platform limitation, documented
+  above, not something the app can work around.

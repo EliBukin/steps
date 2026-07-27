@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StepSplit</string>
+
+    <string name="nav_today">Today</string>
+    <string name="nav_history">History</string>
+    <string name="nav_sessions">Sessions</string>
+    <string name="nav_settings">Settings</string>
+
+    <string name="label_total_steps">Total steps</string>
+    <string name="label_workout_steps">Workout steps</string>
+    <string name="label_incidental_steps">Incidental steps</string>
+    <string name="label_daily_goal">Daily goal</string>
+    <string name="label_weekly_goal">Weekly goal</string>
+    <string name="label_weekly_total">Total this week</string>
+
+    <string name="last_sync_label">Last synced: %1$s</string>
+    <string name="last_sync_never">Not synced yet</string>
+
+    <string name="status_permission_not_granted">Grant activity recognition permission to count steps</string>
+    <string name="status_play_services_update_required">Update Google Play services to keep tracking steps</string>
+    <string name="status_api_unavailable">Step tracking is not available on this device</string>
+    <string name="status_error">A problem occurred while collecting step data: %1$s</string>
+    <string name="status_available">Step collection is active</string>
+    <string name="status_unknown">Checking data collection status…</string>
+
+    <string name="action_grant_permission">Grant permission</string>
+    <string name="action_start_walk">Start walk</string>
+    <string name="action_finish_walk">Finish walk</string>
+    <string name="ongoing_walk_banner">Manual walk in progress</string>
+
+    <string name="history_title">Last 7 days</string>
+    <string name="history_today_label">Today</string>
+
+    <string name="sessions_title">Walking sessions</string>
+    <string name="sessions_empty">No walking sessions detected yet</string>
+    <string name="session_classification_workout">Workout walk</string>
+    <string name="session_classification_incidental">Everyday movement</string>
+    <string name="session_origin_auto">Auto-detected</string>
+    <string name="session_origin_manual">Manual</string>
+    <string name="session_reclassify_action">Reclassify</string>
+    <string name="session_reclassify_dialog_title">Classify this session</string>
+    <string name="session_confidence_label">Confidence: %1$d%%</string>
+    <string name="session_duration_format">%1$d min</string>
+
+    <string name="reason_meets_all_thresholds">Meets every workout threshold</string>
+    <string name="reason_duration_too_short">Too short in duration for a workout</string>
+    <string name="reason_too_few_active_minutes">Too few active minutes for a workout</string>
+    <string name="reason_too_few_steps">Too few steps for a workout</string>
+    <string name="reason_cadence_too_low">Cadence too slow for a workout</string>
+    <string name="reason_multiple_not_met">Several workout conditions were not met</string>
+    <string name="reason_manually_reclassified">You manually changed this classification</string>
+    <string name="reason_manually_recorded">Manually recorded as a workout walk</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_daily_goal_label">Daily step goal</string>
+    <string name="settings_weekly_goal_label">Weekly goal (daily goal × 7): %1$s</string>
+    <string name="settings_goal_invalid_error">Enter a valid step count (greater than zero)</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_advanced_section_title">Automatic classification thresholds (advanced)</string>
+    <string name="settings_threshold_max_gap">Maximum gap inside a bout (minutes)</string>
+    <string name="settings_threshold_idle_finalize">Idle time to finalize a bout (minutes)</string>
+    <string name="settings_threshold_min_duration">Minimum elapsed duration (minutes)</string>
+    <string name="settings_threshold_min_active">Minimum active minutes</string>
+    <string name="settings_threshold_min_steps">Minimum steps</string>
+    <string name="settings_threshold_min_cadence">Minimum cadence (steps per minute)</string>
+    <string name="settings_reset_thresholds">Reset to defaults</string>
+    <string name="settings_classification_limitation_title">Limitations of automatic classification</string>
+    <string name="settings_classification_limitation_note">A phone cannot know your intent with certainty - a continuous walk to a store can look identical to a walking workout. Classification uses a transparent heuristic only. You can correct any classification on the Sessions screen, and a manual correction always overrides the automatic result.</string>
+    <string name="settings_permission_status_title">Permission status</string>
+    <string name="settings_data_collection_status_title">Data collection status</string>
+    <string name="settings_debug_section_title">Debug tools (debug builds only)</string>
+    <string name="settings_debug_seed_action">Generate sample data</string>
+
+    <string name="unit_steps">steps</string>
+    <string name="cadence_unit_format">%1$.0f steps/min</string>
+    <string name="percent_of_goal_format">%1$d%% of goal</string>
+
+    <string name="cd_daily_progress">Daily goal progress, %1$d percent</string>
+    <string name="cd_weekly_progress">Weekly goal progress, %1$d percent</string>
+    <string name="cd_workout_segment">Workout steps: %1$s</string>
+    <string name="cd_incidental_segment">Incidental steps: %1$s</string>
+</resources>
