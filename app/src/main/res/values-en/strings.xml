@@ -28,6 +28,7 @@
     <string name="action_start_walk">Start walk</string>
     <string name="action_finish_walk">Finish walk</string>
     <string name="ongoing_walk_banner">Manual walk in progress</string>
+    <string name="finish_walk_sync_failed_message">The walk couldn\'t be finished because step synchronization failed. Please try again.</string>
 
     <string name="history_title">Last 7 days</string>
     <string name="history_today_label">Today</string>

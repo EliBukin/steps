@@ -8,11 +8,14 @@ import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.FakeStepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.BoutClassification
+import com.example.stepsplit.domain.classification.ClassificationThresholds
 import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -20,6 +23,13 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+
+/** A [Clock] whose [instant] and [currentZone] can each change mid-test, standing in for a live device timezone change while the process (and this same Clock instance) stays alive. */
+private class MutableClock(var instant: Instant, var currentZone: ZoneId) : Clock() {
+    override fun instant(): Instant = instant
+    override fun getZone(): ZoneId = currentZone
+    override fun withZone(zone: ZoneId): Clock = MutableClock(instant, zone)
+}
 
 @RunWith(RobolectricTestRunner::class)
 class StepRepositoryTest {
@@ -41,6 +51,14 @@ class StepRepositoryTest {
         fakeSource = FakeStepSource()
         settingsRepository = SettingsRepository(context)
         repository = StepRepository(database, fakeSource, settingsRepository, clock)
+    }
+
+    @After
+    fun tearDown() = runTest {
+        // Preferences DataStore persists to a real file, and Robolectric does not guarantee a
+        // fresh one per test method - without this, a threshold change made by one test (e.g.
+        // "changing thresholds...") can leak into a sibling test that assumes defaults.
+        settingsRepository.resetThresholds()
     }
 
     @Test
@@ -186,5 +204,162 @@ class StepRepositoryTest {
 
         assertEquals(listOf(expectedLocalDate.toString()), storedDates)
         assertEquals(80L, dstDatabase.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
+    @Test
+    fun `a minute that disappears from a later read is removed rather than left stale`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        repository.syncNow()
+        assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+
+        // The source corrects itself on the next read: that minute no longer has any steps at
+        // all (equivalent to it reporting zero, which the normalizer also treats as absent).
+        fakeSource.clearIntervals()
+        repository.syncNow()
+
+        assertEquals(0, database.stepBucketDao().count())
+    }
+
+    @Test
+    fun `the in-progress current minute is not deleted merely for being absent from a read`() = runTest {
+        // 30 seconds into a still-in-progress minute - "now" deliberately does not land exactly
+        // on a minute boundary, so the read window's exclusive upper bound doesn't itself hide
+        // the minute under test.
+        val midMinuteNow = fixedNow.plusSeconds(30)
+        val midMinuteClock = Clock.fixed(midMinuteNow, ZoneOffset.UTC)
+        val midMinuteRepository = StepRepository(database, fakeSource, settingsRepository, midMinuteClock)
+        val currentMinuteStart = midMinuteNow.epochSecond - Math.floorMod(midMinuteNow.epochSecond, 60L)
+
+        fakeSource.addInterval(currentMinuteStart, currentMinuteStart + 60, 5)
+        midMinuteRepository.syncNow()
+        assertEquals(5L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+
+        // A later sync within the same still-in-progress minute reports nothing new for it yet -
+        // that must not be treated as proof the minute is actually zero.
+        fakeSource.clearIntervals()
+        midMinuteRepository.syncNow()
+
+        assertEquals(5L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
+    @Test
+    fun `a subscription failure is reported as a failed sync and does not update the last sync time`() = runTest {
+        // Compared against its own before/after value (not an assumed-null starting state) since
+        // Preferences DataStore's on-disk file is not guaranteed to be isolated between test
+        // methods under Robolectric.
+        val before = settingsRepository.settings.first().lastSuccessfulSync
+        fakeSource.setSubscribeSucceeds(false)
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        assertEquals(0, database.stepBucketDao().count())
+        assertEquals(before, settingsRepository.settings.first().lastSuccessfulSync)
+    }
+
+    @Test
+    fun `changing thresholds immediately reclassifies existing sessions without waiting for a sync`() = runTest {
+        // 12 minutes at 80 steps per minute is a WORKOUT under the default thresholds
+        // (minBoutDurationMinutes = 10).
+        for (i in 0 until 12) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        repository.syncNow()
+        assertEquals(BoutClassification.WORKOUT, repository.observeSessions().first().single().classification)
+
+        val stricterThresholds = ClassificationThresholds.DEFAULT.copy(minBoutDurationMinutes = 30)
+        val accepted = repository.applyThresholds(stricterThresholds)
+
+        assertTrue(accepted)
+        // No repository.syncNow() here - the reclassification must already be reflected.
+        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
+    }
+
+    @Test
+    fun `an invalid threshold change is rejected and does not touch existing classifications`() = runTest {
+        for (i in 0 until 12) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        repository.syncNow()
+
+        val invalidThresholds = ClassificationThresholds.DEFAULT.copy(minBoutDurationMinutes = -1)
+        val accepted = repository.applyThresholds(invalidThresholds)
+
+        assertFalse(accepted)
+        assertEquals(BoutClassification.WORKOUT, repository.observeSessions().first().single().classification)
+    }
+
+    @Test
+    fun `finishing a manual walk when sync fails keeps it ongoing instead of finalizing with stale data`() = runTest {
+        assertTrue(repository.startManualWalk())
+
+        val laterClock = Clock.fixed(fixedNow.plusSeconds(120), ZoneOffset.UTC)
+        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
+                throw IllegalStateException("simulated transient failure")
+            }
+        }
+        val laterRepository = StepRepository(database, failingSource, settingsRepository, laterClock)
+
+        val finished = laterRepository.finishManualWalk()
+
+        assertFalse(finished)
+        val stillOngoing = database.manualWalkDao().getOngoing()
+        assertEquals(fixedNow.epochSecond, stillOngoing?.startEpochSecond)
+        assertEquals(null, stillOngoing?.endEpochSecond)
+        assertEquals(null, stillOngoing?.steps)
+    }
+
+    @Test
+    fun `re-importing an existing minute after a timezone change preserves its original zone and local date`() = runTest {
+        val zone1 = ZoneId.of("America/New_York")
+        val clock1 = Clock.fixed(fixedNow, zone1)
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
+        val source = FakeStepSource()
+        val settings = SettingsRepository(context)
+        val repo1 = StepRepository(db, source, settings, clock1)
+
+        source.addInterval(baseEpoch, baseEpoch + 60, 50)
+        repo1.syncNow()
+        val original = db.stepBucketDao().getAllActive().single()
+        assertEquals("America/New_York", original.zoneId)
+
+        // Simulate a device timezone change, then a re-sync that re-reads the same overlap
+        // window (the source still reports the exact same interval as before).
+        val zone2 = ZoneId.of("Asia/Tokyo")
+        val clock2 = Clock.fixed(fixedNow.plusSeconds(60), zone2)
+        val repo2 = StepRepository(db, source, settings, clock2)
+        repo2.syncNow()
+
+        val reimported = db.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }
+        assertEquals("America/New_York", reimported.zoneId)
+        assertEquals(original.localDate, reimported.localDate)
+    }
+
+    @Test
+    fun `a live device timezone change is picked up for new buckets while existing buckets keep their original zone`() = runTest {
+        // Unlike the fixed-zone clocks used elsewhere in this file, this is the SAME repository
+        // and SAME Clock instance throughout - modeling AppContainer's clock living for the
+        // whole process, with the device's timezone changing underneath it mid-life.
+        val zoneA = ZoneId.of("America/New_York")
+        val mutableClock = MutableClock(fixedNow, zoneA)
+        val dynamicRepository = StepRepository(database, fakeSource, settingsRepository, mutableClock)
+
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        dynamicRepository.syncNow()
+        val original = database.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }
+        assertEquals("America/New_York", original.zoneId)
+
+        // The device's timezone changes while the process (and this repository/clock) stays alive.
+        mutableClock.currentZone = ZoneId.of("Asia/Tokyo")
+        mutableClock.instant = fixedNow.plusSeconds(120)
+        val newMinuteStart = baseEpoch + 120
+        fakeSource.addInterval(newMinuteStart, newMinuteStart + 60, 20)
+        dynamicRepository.syncNow()
+
+        val stillOriginal = database.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }
+        assertEquals("America/New_York", stillOriginal.zoneId)
+        assertEquals(original.localDate, stillOriginal.localDate)
+
+        val newBucket = database.stepBucketDao().getAllActive().single { it.startEpochSecond == newMinuteStart }
+        assertEquals("Asia/Tokyo", newBucket.zoneId)
     }
 }

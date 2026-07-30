@@ -5,16 +5,23 @@ import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
+import com.example.stepsplit.domain.aggregation.DateStepBreakdown
 import com.example.stepsplit.domain.time.WeekWindow
+import com.example.stepsplit.domain.time.currentDateFlow
 import java.time.Clock
 import java.time.LocalDate
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TodayViewModel(
     private val repository: StepRepository,
     private val settingsRepository: SettingsRepository,
@@ -23,29 +30,44 @@ class TodayViewModel(
 
     private val availability = MutableStateFlow<StepSourceAvailability?>(null)
 
-    private val today = LocalDate.now(clock)
-    private val weekDatesToDate = generateSequence(WeekWindow.startOfWeek(today)) { it.plusDays(1) }
-        .takeWhile { !it.isAfter(today) }
-        .toList()
+    /** Set only right after a failed [finishManualWalk]; cleared by [consumeFinishWalkFailure]. */
+    private val finishWalkFailed = MutableStateFlow(false)
+
+    private fun weekDatesToDate(today: LocalDate): List<LocalDate> =
+        generateSequence(WeekWindow.startOfWeek(today)) { it.plusDays(1) }
+            .takeWhile { !it.isAfter(today) }
+            .toList()
+
+    /**
+     * Re-derived from [currentDateFlow] rather than computed once at construction time, so the
+     * app never keeps showing yesterday's day/week window if it stays open (or comes back to the
+     * foreground) across a midnight boundary.
+     */
+    private val breakdownsForToday: Flow<Pair<LocalDate, Map<LocalDate, DateStepBreakdown>>> =
+        currentDateFlow(clock).flatMapLatest { today ->
+            repository.observeDailyBreakdowns(weekDatesToDate(today)).map { today to it }
+        }
 
     val uiState: StateFlow<TodayUiState> = combine(
-        repository.observeDailyBreakdowns(weekDatesToDate),
+        breakdownsForToday,
         settingsRepository.settings,
         repository.observeLastSuccessfulSync(),
         repository.observeOngoingManualWalk(),
         availability,
-    ) { breakdowns, settings, lastSync, ongoingWalk, currentAvailability ->
+    ) { (today, breakdowns), settings, lastSync, ongoingWalk, currentAvailability ->
+        val weekDates = weekDatesToDate(today)
         TodayUiState(
             isLoading = false,
             today = breakdowns[today],
             dailyGoal = settings.goals.dailyGoalSteps,
-            weeklyTotalSteps = weekDatesToDate.sumOf { breakdowns[it]?.totalSteps ?: 0L },
+            weeklyTotalSteps = weekDates.sumOf { breakdowns[it]?.totalSteps ?: 0L },
             weeklyGoal = settings.goals.weeklyGoalSteps,
             lastSuccessfulSync = lastSync,
             availability = currentAvailability,
             hasOngoingManualWalk = ongoingWalk != null,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())
+    }.combine(finishWalkFailed) { state, failed -> state.copy(finishWalkFailed = failed) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())
 
     init {
         refresh()
@@ -64,6 +86,14 @@ class TodayViewModel(
     }
 
     fun finishManualWalk() {
-        viewModelScope.launch { repository.finishManualWalk() }
+        viewModelScope.launch {
+            val finished = repository.finishManualWalk()
+            if (!finished) finishWalkFailed.value = true
+        }
+    }
+
+    /** Called by the UI once the failure message has actually been shown, so it isn't re-shown on the next recomposition. */
+    fun consumeFinishWalkFailure() {
+        finishWalkFailed.value = false
     }
 }

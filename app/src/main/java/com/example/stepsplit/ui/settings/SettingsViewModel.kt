@@ -60,10 +60,12 @@ class SettingsViewModel(
     }
 
     fun setThresholds(thresholds: ClassificationThresholds) {
-        viewModelScope.launch { settingsRepository.setThresholds(thresholds) }
+        // Routed through stepRepository (not settingsRepository directly) so existing sessions
+        // are reclassified immediately under the new thresholds, not just on the next sync.
+        viewModelScope.launch { stepRepository.applyThresholds(thresholds) }
     }
 
     fun resetThresholds() {
-        viewModelScope.launch { settingsRepository.resetThresholds() }
+        viewModelScope.launch { stepRepository.resetThresholds() }
     }
 }

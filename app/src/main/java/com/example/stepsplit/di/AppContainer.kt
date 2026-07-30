@@ -6,6 +6,7 @@ import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.LocalRecordingStepSource
 import com.example.stepsplit.data.stepsource.StepSource
+import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.sync.StepSyncWorkerFactory
 import java.time.Clock
 
@@ -16,7 +17,9 @@ import java.time.Clock
  * lifetime.
  */
 class AppContainer(context: Context) {
-    val clock: Clock = Clock.systemDefaultZone()
+    // Not Clock.systemDefaultZone(): that freezes the zone at construction time, so a device
+    // timezone change while the process stays alive would go unnoticed until restart.
+    val clock: Clock = DeviceZoneClock()
 
     val database: StepSplitDatabase = StepSplitDatabase.build(context)
 

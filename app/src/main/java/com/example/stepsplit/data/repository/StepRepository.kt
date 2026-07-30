@@ -18,6 +18,7 @@ import com.example.stepsplit.domain.aggregation.StepAggregator
 import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
 import com.example.stepsplit.domain.classification.ClassificationReasonCode
+import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.classification.ClassifiedBout
 import com.example.stepsplit.domain.classification.MinuteBucket
 import com.example.stepsplit.domain.classification.WalkClassifier
@@ -60,7 +61,11 @@ class StepRepository(
         if (availability !is StepSourceAvailability.Available) {
             return SyncResult.Unavailable(availability)
         }
-        stepSource.ensureSubscribed()
+        if (!stepSource.ensureSubscribed()) {
+            // Without a live subscription a "successful" read could just be an empty/stale one -
+            // report this as a failure rather than silently recording an empty sync as success.
+            return SyncResult.Failed("Unable to subscribe to the step data source")
+        }
 
         return try {
             val now = clock.instant()
@@ -69,9 +74,21 @@ class StepRepository(
             val windowStart = computeWindowStart(latestBucketEnd, now)
 
             val rawIntervals = stepSource.readSteps(windowStart, now)
-            val bucketEntities = normalizeToEntities(rawIntervals, stepSource.id, zone, now)
+
+            val reconcileStart = alignToMinute(windowStart.epochSecond)
+            // The minute containing "now" may still be in progress, so it is upserted like any
+            // other minute below but never reconciled-by-deletion purely for being absent - a
+            // partial read of it isn't proof it's actually zero yet.
+            val reconcileEndExclusive = alignToMinute(now.epochSecond)
+
+            val existingByMinute = database.stepBucketDao()
+                .getFrom(stepSource.id, reconcileStart)
+                .associateBy { it.startEpochSecond }
+
+            val bucketEntities = normalizeToEntities(rawIntervals, stepSource.id, zone, now, existingByMinute)
 
             database.withTransaction {
+                database.stepBucketDao().deleteInRange(stepSource.id, reconcileStart, reconcileEndExclusive)
                 database.stepBucketDao().upsertAll(bucketEntities)
             }
 
@@ -97,25 +114,37 @@ class StepRepository(
         return if (overlapStart.isBefore(retentionFloor)) retentionFloor else overlapStart
     }
 
+    /**
+     * [existingByMinute] carries forward each minute's *original* zoneId/localDate when it was
+     * already stored - a re-import (e.g. from the sync overlap window) must never let a later
+     * device timezone change retroactively move a past minute to a different calendar day. Only
+     * minutes with no prior row get zoneId/localDate computed fresh from [zone].
+     */
     private fun normalizeToEntities(
         raw: List<RawStepInterval>,
         source: String,
         zone: ZoneId,
         importedAt: Instant,
+        existingByMinute: Map<Long, StepBucketEntity> = emptyMap(),
     ) = BucketNormalizer
         .normalize(raw.map { RawInterval(it.startEpochSecond, it.endEpochSecond, it.steps) })
         .map { minute ->
-            val localDate = Instant.ofEpochSecond(minute.startEpochSecond).atZone(zone).toLocalDate()
+            val existing = existingByMinute[minute.startEpochSecond]
+            val bucketZoneId = existing?.zoneId ?: zone.id
+            val bucketLocalDate = existing?.localDate
+                ?: Instant.ofEpochSecond(minute.startEpochSecond).atZone(zone).toLocalDate().toString()
             StepBucketEntity(
                 source = source,
                 startEpochSecond = minute.startEpochSecond,
                 endEpochSecond = minute.startEpochSecond + 60,
                 steps = minute.steps,
-                zoneId = zone.id,
-                localDate = localDate.toString(),
+                zoneId = bucketZoneId,
+                localDate = bucketLocalDate,
                 importedAtEpochSecond = importedAt.epochSecond,
             )
         }
+
+    private fun alignToMinute(epochSecond: Long): Long = epochSecond - Math.floorMod(epochSecond, 60L)
 
     /** Reruns the classifier over the full raw history and atomically replaces the AUTO cache. */
     private suspend fun recomputeClassification() {
@@ -142,6 +171,23 @@ class StepRepository(
         )
     }
 
+    /**
+     * Persists new classification thresholds and immediately reruns the classifier against them,
+     * rather than leaving existing sessions showing stale classifications until the next sync.
+     * Shares [syncMutex] with [syncNowLocked] so a threshold change can never interleave with (or
+     * be clobbered by) a concurrent sync's own classify-and-replace.
+     */
+    suspend fun applyThresholds(thresholds: ClassificationThresholds): Boolean = syncMutex.withLock {
+        val accepted = settingsRepository.setThresholds(thresholds)
+        if (accepted) recomputeClassification()
+        accepted
+    }
+
+    suspend fun resetThresholds() = syncMutex.withLock {
+        settingsRepository.resetThresholds()
+        recomputeClassification()
+    }
+
     // ---- Manual "Start walk / Finish walk" flow ----
 
     suspend fun startManualWalk(): Boolean {
@@ -153,9 +199,16 @@ class StepRepository(
         return true
     }
 
+    /**
+     * Finishing a manual walk needs an up-to-date step read for the covered window - finalizing
+     * it against stale or missing data would silently record a wrong step count. If the sync
+     * fails or the source is unavailable, the walk is left ongoing (its `endEpochSecond` stays
+     * null) so the user can retry rather than getting a silently inaccurate result.
+     */
     suspend fun finishManualWalk(): Boolean = syncMutex.withLock {
         val ongoing = database.manualWalkDao().getOngoing() ?: return@withLock false
-        syncNowLocked()
+        val syncResult = syncNowLocked()
+        if (syncResult !is SyncResult.Success) return@withLock false
         val end = clock.instant().epochSecond
         val steps = database.stepBucketDao().getAllActive()
             .filter { it.startEpochSecond >= ongoing.startEpochSecond && it.startEpochSecond < end }

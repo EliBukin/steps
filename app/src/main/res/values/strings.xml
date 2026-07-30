@@ -28,6 +28,7 @@
     <string name="action_start_walk">התחלת הליכה</string>
     <string name="action_finish_walk">סיום הליכה</string>
     <string name="ongoing_walk_banner">הליכה ידנית פעילה</string>
+    <string name="finish_walk_sync_failed_message">לא ניתן היה לסיים את ההליכה מכיוון שסנכרון הצעדים נכשל. נסו שוב.</string>
 
     <string name="history_title">7 הימים האחרונים</string>
     <string name="history_today_label">היום</string>

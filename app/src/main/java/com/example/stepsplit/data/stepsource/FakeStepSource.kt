@@ -11,6 +11,7 @@ import kotlin.random.Random
 class FakeStepSource(
     override val id: String = "fake",
     private var availability: StepSourceAvailability = StepSourceAvailability.Available,
+    private var subscribeSucceeds: Boolean = true,
     private val intervals: MutableList<RawStepInterval> = mutableListOf(),
 ) : StepSource {
 
@@ -18,13 +19,24 @@ class FakeStepSource(
         availability = state
     }
 
+    /** Simulates a subscription-only failure (e.g. Play Services rejecting `subscribe()`) independent of availability. */
+    fun setSubscribeSucceeds(succeeds: Boolean) {
+        subscribeSucceeds = succeeds
+    }
+
     fun addInterval(startEpochSecond: Long, endEpochSecond: Long, steps: Long) {
         intervals.add(RawStepInterval(startEpochSecond, endEpochSecond, steps))
     }
 
+    /** Simulates the source correcting or forgetting previously reported data on a later read. */
+    fun clearIntervals() {
+        intervals.clear()
+    }
+
     override suspend fun checkAvailability(): StepSourceAvailability = availability
 
-    override suspend fun ensureSubscribed(): Boolean = availability is StepSourceAvailability.Available
+    override suspend fun ensureSubscribed(): Boolean =
+        availability is StepSourceAvailability.Available && subscribeSucceeds
 
     override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval> {
         if (availability !is StepSourceAvailability.Available) return emptyList()

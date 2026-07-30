@@ -14,6 +14,8 @@ data class TodayUiState(
     val lastSuccessfulSync: Instant? = null,
     val availability: StepSourceAvailability? = null,
     val hasOngoingManualWalk: Boolean = false,
+    /** True only right after a Finish attempt failed to sync; the walk itself stays ongoing. */
+    val finishWalkFailed: Boolean = false,
 ) {
     val dailyProgress: GoalProgress
         get() = GoalProgress(today?.totalSteps ?: 0, dailyGoal)
