@@ -65,14 +65,21 @@ fun StepSplitApp(container: AppContainer, onRequestPermission: () -> Unit) {
                 val viewModel: TodayViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
                 val finishWalkFailedMessage = stringResource(R.string.finish_walk_sync_failed_message)
+                val autoCompletedMessage = stringResource(R.string.manual_walk_auto_completed_message)
 
-                // A one-shot event: the moment the message is actually handed to the Snackbar
-                // host, it's consumed so recomposition or leaving/returning to this screen never
-                // re-shows it without a fresh Finish failure.
+                // One-shot events: the moment a message is actually handed to the Snackbar host,
+                // it's consumed so recomposition or leaving/returning to this screen never re-shows
+                // it without a fresh underlying event.
                 LaunchedEffect(uiState.finishWalkFailed) {
                     if (uiState.finishWalkFailed) {
                         snackbarHostState.showSnackbar(finishWalkFailedMessage)
                         viewModel.consumeFinishWalkFailure()
+                    }
+                }
+                LaunchedEffect(uiState.showAutoCompletedWalkMessage) {
+                    if (uiState.showAutoCompletedWalkMessage) {
+                        snackbarHostState.showSnackbar(autoCompletedMessage)
+                        viewModel.consumeAutoCompletedWalkMessage()
                     }
                 }
 
@@ -82,6 +89,8 @@ fun StepSplitApp(container: AppContainer, onRequestPermission: () -> Unit) {
                     onGrantPermission = onRequestPermission,
                     onStartWalk = viewModel::startManualWalk,
                     onFinishWalk = viewModel::finishManualWalk,
+                    onCancelStaleWalk = viewModel::cancelStaleWalk,
+                    onFinishStaleWalkNow = viewModel::finishStaleWalkNow,
                 )
             }
             composable(Screen.History.route) {

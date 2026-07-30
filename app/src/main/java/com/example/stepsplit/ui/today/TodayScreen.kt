@@ -4,14 +4,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -21,6 +28,7 @@ import com.example.stepsplit.domain.model.GoalProgress
 import com.example.stepsplit.ui.common.CollectionStatusBanner
 import com.example.stepsplit.ui.common.GoalProgressSection
 import com.example.stepsplit.ui.common.StatCard
+import com.example.stepsplit.ui.common.formatClockTime
 import com.example.stepsplit.ui.common.formatSyncTime
 
 @Composable
@@ -30,6 +38,8 @@ fun TodayScreen(
     onGrantPermission: () -> Unit,
     onStartWalk: () -> Unit,
     onFinishWalk: () -> Unit,
+    onCancelStaleWalk: () -> Unit,
+    onFinishStaleWalkNow: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LifecycleResumeEffect(Unit) {
@@ -37,9 +47,17 @@ fun TodayScreen(
         onPauseOrDispose { }
     }
 
+    // Composition-scoped, not persisted: if the underlying condition still holds (the walk is
+    // still zero-step and stale), the recovery card is expected to reappear on a later visit -
+    // this only suppresses it for the remainder of the current visit to this screen.
+    var staleWalkDismissedFor by remember { mutableStateOf<Long?>(null) }
+    val staleWalkStart = uiState.staleZeroStepWalkStartEpochSecond
+        ?.takeIf { it != staleWalkDismissedFor }
+
     val items = buildList {
         add(TodayItem.Availability)
         add(TodayItem.ManualWalk)
+        if (staleWalkStart != null) add(TodayItem.StaleWalkRecovery)
         add(TodayItem.Totals)
         add(TodayItem.DailyGoal)
         add(TodayItem.WeeklyGoal)
@@ -63,6 +81,15 @@ fun TodayScreen(
                     onFinishWalk = onFinishWalk,
                 )
 
+                TodayItem.StaleWalkRecovery -> staleWalkStart?.let { start ->
+                    StaleWalkRecoveryCard(
+                        startEpochSecond = start,
+                        onCancel = onCancelStaleWalk,
+                        onFinishNow = onFinishStaleWalkNow,
+                        onKeepOngoing = { staleWalkDismissedFor = start },
+                    )
+                }
+
                 TodayItem.Totals -> TotalsSection(uiState)
                 TodayItem.DailyGoal -> GoalProgressSection(
                     title = stringResource(R.string.label_daily_goal),
@@ -83,7 +110,30 @@ fun TodayScreen(
     }
 }
 
-private enum class TodayItem { Availability, ManualWalk, Totals, DailyGoal, WeeklyGoal, LastSync }
+private enum class TodayItem { Availability, ManualWalk, StaleWalkRecovery, Totals, DailyGoal, WeeklyGoal, LastSync }
+
+@Composable
+private fun StaleWalkRecoveryCard(
+    startEpochSecond: Long,
+    onCancel: () -> Unit,
+    onFinishNow: () -> Unit,
+    onKeepOngoing: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = stringResource(R.string.stale_walk_recovery_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = stringResource(R.string.stale_walk_recovery_message, formatClockTime(startEpochSecond)),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onCancel) { Text(stringResource(R.string.stale_walk_action_cancel)) }
+                TextButton(onClick = onFinishNow) { Text(stringResource(R.string.stale_walk_action_finish_now)) }
+                TextButton(onClick = onKeepOngoing) { Text(stringResource(R.string.stale_walk_action_keep_ongoing)) }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ManualWalkControl(

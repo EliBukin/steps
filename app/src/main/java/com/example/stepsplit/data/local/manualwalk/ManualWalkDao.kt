@@ -23,4 +23,14 @@ interface ManualWalkDao {
 
     @Query("SELECT * FROM manual_walks WHERE endEpochSecond IS NOT NULL ORDER BY startEpochSecond DESC")
     fun observeFinished(): Flow<List<ManualWalkEntity>>
+
+    @Query("SELECT * FROM manual_walks WHERE id = :id")
+    suspend fun getById(id: Long): ManualWalkEntity?
+
+    @Query("DELETE FROM manual_walks WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    /** Auto-completed walks whose one-shot "ended automatically" message hasn't been shown yet, oldest first. */
+    @Query("SELECT * FROM manual_walks WHERE autoCompleted = 1 AND autoCompletionMessageShown = 0 ORDER BY endEpochSecond ASC")
+    fun observeUnacknowledgedAutoCompletions(): Flow<List<ManualWalkEntity>>
 }
