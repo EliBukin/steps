@@ -4,18 +4,13 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * An explicit "Start walk / Finish walk" session. [endEpochSecond] and [steps] are null while the
- * walk is ongoing; persisting the ongoing row immediately (on Start) means process death or
- * rotation never silently loses an in-progress manual walk. At most one row with a null
- * [endEpochSecond] should exist at a time - enforced by the repository, not the schema, since
- * Room has no direct "at most one null" constraint.
- *
- * [autoCompleted] is true when the walk was ended by the inactivity auto-completion mechanism
- * (see StepRepository.maybeAutoCompleteOngoingManualWalk) rather than by the user pressing
- * Finish or explicitly resolving a stale-walk prompt. [autoCompletionMessageShown] tracks whether
- * the one-shot "ended automatically" notification has already been shown to the user - persisted
- * (not just in-memory ViewModel state) so an auto-completion that happens during a background
- * WorkManager sync still reliably notifies the user the next time the app is opened.
+ * Deprecated: backed the removed explicit "Start walk / Finish walk" feature. No product code
+ * reads or writes this entity anymore - step data comes exclusively from automatic retrospective
+ * detection (see [com.example.stepsplit.domain.model.SessionMerger]). The entity, its DAO, and the
+ * version 1->2 migration that added [autoCompleted]/[autoCompletionMessageShown] are kept as-is
+ * (not deleted) so the `manual_walks` table and any rows an earlier app version wrote to it are
+ * never dropped by an opportunistic schema change; see [com.example.stepsplit.data.local.StepSplitDatabase]
+ * for the compatibility rationale. Dropping this table is left to a future, dedicated migration.
  */
 @Entity(tableName = "manual_walks")
 data class ManualWalkEntity(

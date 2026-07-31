@@ -9,12 +9,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -50,11 +47,9 @@ fun StepSplitApp(container: AppContainer, onRequestPermission: () -> Unit) {
     val navController = rememberNavController()
     val factory = remember(container) { ViewModelFactory(container) }
     val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
         bottomBar = { StepSplitBottomBar(navController) },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         NavHost(
             navController = navController,
@@ -64,33 +59,11 @@ fun StepSplitApp(container: AppContainer, onRequestPermission: () -> Unit) {
             composable(Screen.Today.route) {
                 val viewModel: TodayViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
-                val finishWalkFailedMessage = stringResource(R.string.finish_walk_sync_failed_message)
-                val autoCompletedMessage = stringResource(R.string.manual_walk_auto_completed_message)
-
-                // One-shot events: the moment a message is actually handed to the Snackbar host,
-                // it's consumed so recomposition or leaving/returning to this screen never re-shows
-                // it without a fresh underlying event.
-                LaunchedEffect(uiState.finishWalkFailed) {
-                    if (uiState.finishWalkFailed) {
-                        snackbarHostState.showSnackbar(finishWalkFailedMessage)
-                        viewModel.consumeFinishWalkFailure()
-                    }
-                }
-                LaunchedEffect(uiState.showAutoCompletedWalkMessage) {
-                    if (uiState.showAutoCompletedWalkMessage) {
-                        snackbarHostState.showSnackbar(autoCompletedMessage)
-                        viewModel.consumeAutoCompletedWalkMessage()
-                    }
-                }
 
                 TodayScreen(
                     uiState = uiState,
                     onRefresh = viewModel::refresh,
                     onGrantPermission = onRequestPermission,
-                    onStartWalk = viewModel::startManualWalk,
-                    onFinishWalk = viewModel::finishManualWalk,
-                    onCancelStaleWalk = viewModel::cancelStaleWalk,
-                    onFinishStaleWalkNow = viewModel::finishStaleWalkNow,
                 )
             }
             composable(Screen.History.route) {

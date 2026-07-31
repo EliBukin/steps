@@ -47,7 +47,6 @@ enum class ClassificationReasonCode {
     CADENCE_TOO_LOW,
     MULTIPLE_THRESHOLDS_NOT_MET,
     MANUALLY_RECLASSIFIED,
-    MANUALLY_RECORDED,
 }
 
 /**

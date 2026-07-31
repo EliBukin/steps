@@ -53,15 +53,6 @@ class SessionMergerTest {
     }
 
     @Test
-    fun `a manual walk session is always a workout and is not reclassifiable`() {
-        val session = SessionMerger.manualWalkSession(id = 1, startEpochSecond = 0, endEpochSecond = 1200, steps = 2000)
-
-        assertEquals(BoutClassification.WORKOUT, session.classification)
-        assertEquals(SessionOrigin.MANUAL, session.origin)
-        assertEquals(false, session.isReclassifiable)
-    }
-
-    @Test
     fun `workout intervals only include sessions currently classified as workout`() {
         val incidental = autoWorkout.copy(
             startEpochSecond = 50_000L,

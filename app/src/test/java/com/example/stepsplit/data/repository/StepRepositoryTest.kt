@@ -13,8 +13,10 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -141,28 +143,6 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `start and finish walk records a manual session with steps from the covered window`() = runTest {
-        assertTrue(repository.startManualWalk())
-        assertFalse("only one ongoing manual walk is allowed at a time", repository.startManualWalk())
-
-        fakeSource.addInterval(fixedNow.epochSecond, fixedNow.epochSecond + 60, 120)
-
-        // Finish two minutes "later" - a separate repository sharing the same database, backed by
-        // a clock two minutes ahead, models time actually elapsing between start and finish.
-        val laterClock = Clock.fixed(fixedNow.plusSeconds(120), ZoneOffset.UTC)
-        val laterRepository = StepRepository(database, fakeSource, settingsRepository, laterClock)
-
-        assertTrue(laterRepository.finishManualWalk())
-        // The same minute is also picked up as its own (incidental, too-short) auto-detected
-        // bout - by design, a manual walk never hides or replaces the raw automatic analysis.
-        val session = laterRepository.observeSessions().first()
-            .single { it.origin == com.example.stepsplit.domain.model.SessionOrigin.MANUAL }
-        assertEquals(120L, session.steps)
-        assertEquals(BoutClassification.WORKOUT, session.classification)
-        assertFalse(session.isReclassifiable)
-    }
-
-    @Test
     fun `daily totals maintain the total equals workout plus incidental invariant`() = runTest {
         for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80) // workout bout
         fakeSource.addInterval(baseEpoch - 1800, baseEpoch - 1800 + 60, 30) // isolated incidental minute
@@ -175,6 +155,36 @@ class StepRepositoryTest {
         assertEquals(breakdown.totalSteps, breakdown.workoutSteps + breakdown.incidentalSteps)
         assertTrue(breakdown.workoutSteps > 0)
         assertTrue(breakdown.incidentalSteps > 0)
+    }
+
+    @Test
+    fun `a leftover manual_walks row from an earlier install is never surfaced or counted`() = runTest {
+        // Simulates an installation that upgraded from before the manual-walk feature was
+        // removed and still has a real row in the deprecated `manual_walks` table (see
+        // StepSplitDatabase's doc comment). There is deliberately no DAO for it anymore, so this
+        // writes directly through Room's low-level statement API, the same way an old app version
+        // would have left the row behind. Off the test's main thread, same as Room's own suspend
+        // DAO methods would be, since compileStatement() is a direct/synchronous call that Room
+        // otherwise refuses to run there.
+        withContext(Dispatchers.IO) {
+            database.compileStatement(
+                "INSERT INTO manual_walks " +
+                    "(startEpochSecond, endEpochSecond, steps, createdAtEpochSecond, autoCompleted, autoCompletionMessageShown) " +
+                    "VALUES ($baseEpoch, ${baseEpoch + 3600}, 5000, $baseEpoch, 0, 0)",
+            ).executeInsert()
+        }
+
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        repository.syncNow()
+
+        val sessions = repository.observeSessions().first()
+        assertTrue("no session may originate from the deprecated manual_walks table", sessions.none { it.id.startsWith("manual:") })
+
+        val today = fixedNow.atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+        // Only the 50 steps actually imported through the sync pipeline are counted - the
+        // leftover row's 5000 steps must not leak into the total, workout, or incidental figures.
+        assertEquals(50L, breakdown.totalSteps)
     }
 
     @Test
@@ -284,27 +294,6 @@ class StepRepositoryTest {
 
         assertFalse(accepted)
         assertEquals(BoutClassification.WORKOUT, repository.observeSessions().first().single().classification)
-    }
-
-    @Test
-    fun `finishing a manual walk when sync fails keeps it ongoing instead of finalizing with stale data`() = runTest {
-        assertTrue(repository.startManualWalk())
-
-        val laterClock = Clock.fixed(fixedNow.plusSeconds(120), ZoneOffset.UTC)
-        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
-            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
-                throw IllegalStateException("simulated transient failure")
-            }
-        }
-        val laterRepository = StepRepository(database, failingSource, settingsRepository, laterClock)
-
-        val finished = laterRepository.finishManualWalk()
-
-        assertFalse(finished)
-        val stillOngoing = database.manualWalkDao().getOngoing()
-        assertEquals(fixedNow.epochSecond, stillOngoing?.startEpochSecond)
-        assertEquals(null, stillOngoing?.endEpochSecond)
-        assertEquals(null, stillOngoing?.steps)
     }
 
     @Test

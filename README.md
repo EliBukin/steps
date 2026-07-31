@@ -8,10 +8,13 @@ No account, no cloud backend, no ads, no analytics, no location permission.
 
 ## What it does
 
-- Counts all steps taken each local calendar day.
-- Splits them into workout-walk steps vs. incidental steps using a transparent, adjustable heuristic.
+- Automatically collects all steps in the background via periodic sync - there is nothing to
+  start or stop, and no way to explicitly record a session.
+- Detects walking sessions retrospectively from imported step data and splits them into
+  workout-walk steps vs. incidental steps using a transparent, adjustable heuristic.
 - Shows today's totals, daily/weekly goal progress (uncapped - 120% displays as 120%, not clamped to 100%), and a 7-day history with a stacked bar chart.
-- Lets you manually reclassify any auto-detected walking session, or record a walk explicitly with a Start/Finish flow.
+- Lets you manually correct any detected session's classification (workout vs. incidental) after
+  the fact - the only manual intervention the app offers.
 - Works fully offline. The only permission requested is `ACTIVITY_RECOGNITION`.
 
 ## Architecture
@@ -25,7 +28,8 @@ ui/            Compose screens (Today, History, Sessions, Settings), navigation,
 di/            Hand-written AppContainer + ViewModelFactory (no DI framework)
 domain/        Pure Kotlin, no Android deps: classification, aggregation, time, models
 data/
-  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides, manual_walks)
+  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides; manual_walks is
+               deprecated - see Schema notes)
   settings/    Preferences DataStore (daily goal, thresholds, last sync time)
   stepsource/  StepSource interface + LocalRecordingStepSource + FakeStepSource
   repository/  StepRepository - the single place that imports, normalizes, classifies, merges
@@ -90,9 +94,13 @@ Settings for the only debug-only surface).
 - `session_overrides`: manual reclassifications, keyed by the bout's stable start-time anchor,
   stored **separately** from `walk_bouts` so regenerating the AUTO cache can never discard a
   manual correction.
-- `manual_walks`: explicit Start/Finish walk sessions. The row is written immediately on Start
-  (with `endEpochSecond = NULL`), so process death or rotation never silently loses an in-progress
-  manual walk.
+- `manual_walks`: **deprecated**. It backed an earlier explicit "Start walk / Finish walk" feature
+  that has since been removed in favor of fully automatic, retrospective detection. No product
+  code reads or writes it anymore. The table, its Room entity, and the version 1→2 migration that
+  added columns to it are kept exactly as they were - not deleted - because safely dropping a
+  table needs its own dedicated migration, and doing that opportunistically alongside an unrelated
+  change would be riskier than just leaving inert, unused rows in place. Removing it is left to a
+  future, dedicated migration. Any rows an earlier app version wrote there are simply ignored.
 - No destructive-migration fallback. Room migrations are additive-only going forward
   (`StepSplitDatabase.MIGRATIONS`).
 
@@ -114,20 +122,20 @@ Android dependencies:
 All six thresholds are user-editable in Settings ("Advanced"), with a reset-to-defaults action.
 They are an initial heuristic, not an objective truth - the Settings screen says so explicitly.
 
-### Manual overrides
+### Manual reclassification
 
-Any auto-detected session can be reclassified from the Sessions screen. A reclassification is
-stored in `session_overrides`, separate from the derived `walk_bouts` cache, and **always wins**
-over the automatic result when the UI/aggregation layer merges them
-(`domain/model/SessionMerger.kt`). Rerunning the classifier (which happens on every sync) fully
-regenerates `walk_bouts` but never touches `session_overrides`, so manual corrections survive
-indefinitely - including the case where more data arrives later and a bout that used to be too
-short for a workout grows into one.
+Any auto-detected session can be reclassified from the Sessions screen, between **Workout** and
+**Incidental activity**. A reclassification is stored in `session_overrides`, separate from the
+derived `walk_bouts` cache, and **always wins** over the automatic result when the UI/aggregation
+layer merges them (`domain/model/SessionMerger.kt`). Rerunning the classifier (which happens on
+every sync) fully regenerates `walk_bouts` but never touches `session_overrides`, so manual
+corrections survive indefinitely - including the case where more data arrives later and a bout
+that used to be too short for a workout grows into one.
 
-You can also start/finish a walk manually from the Today screen; that session is always a
-workout, is not reclassifiable, and is not hidden from the raw automatic analysis of the same
-minutes (both appear in the Sessions list, labeled Auto/Manual) - manual data is layered on top
-of, not a replacement for, the raw record.
+This is the only manual intervention in the app. There is no way to explicitly start, stop, or
+otherwise directly record a session - every session on the Sessions screen is detected
+retrospectively from imported step data, and reclassifying one only changes how it is labeled,
+never what raw steps it covers or how many steps count toward the day's total.
 
 ## How periodic synchronization works
 
@@ -208,9 +216,8 @@ leak even if invoked.
    sources allowed).
 4. Launch **StepSplit**. Grant the activity-recognition permission when prompted (or via the
    banner on the Today screen).
-5. Walk around - incidental movement should show up within the ~6-hour sync window, or
-   immediately after a manual "Start walk"/"Finish walk", or the next time you foreground the app
-   (which also triggers a sync).
+5. Walk around - the activity should show up, detected and classified retrospectively, within the
+   ~6-hour sync window, or the next time you foreground the app (which also triggers a sync).
 
 ## Known limitations
 

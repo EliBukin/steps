@@ -5,13 +5,17 @@ import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.ClassificationReasonCode
 import com.example.stepsplit.domain.classification.ClassifiedBout
 
+/**
+ * [AUTO] is an automatically detected bout shown with its raw classifier result; [MANUAL] is an
+ * automatically detected bout whose classification was overridden by the user on the Sessions
+ * screen. There is no session type recorded independently of automatic detection - see
+ * [SessionMerger].
+ */
 enum class SessionOrigin { AUTO, MANUAL }
 
 /**
- * A walking session as shown to the user: either an automatically detected bout (optionally
- * overridden by the user) or an explicitly recorded manual walk. [anchorEpochSecond] is the
- * stable key used to attach/find a manual override for AUTO-origin sessions; it is null for
- * manual walks, which are not reclassifiable.
+ * A walking session as shown to the user: an automatically detected bout, optionally reclassified
+ * by the user. [anchorEpochSecond] is the stable key used to attach/find a manual override.
  */
 data class WalkSession(
     val id: String,
@@ -29,9 +33,9 @@ data class WalkSession(
 )
 
 /**
- * Combines the automatically-derived bout classification with any manual override, and folds in
- * fully-manual "Start walk / Finish walk" sessions. Manual classifications always take precedence
- * over automatic ones, and raw bouts are never discarded even when overridden.
+ * Turns automatically classified bouts into the sessions shown to the user, applying any manual
+ * reclassification on top. Manual classifications always take precedence over automatic ones, and
+ * raw bouts are never discarded even when overridden - see [com.example.stepsplit.data.repository.StepRepository.reclassify].
  */
 object SessionMerger {
 
@@ -53,29 +57,6 @@ object SessionMerger {
             reasonCode = if (override != null) ClassificationReasonCode.MANUALLY_RECLASSIFIED else bout.reasonCode,
             isReclassifiable = true,
             anchorEpochSecond = bout.startEpochSecond,
-        )
-    }
-
-    fun manualWalkSession(
-        id: Long,
-        startEpochSecond: Long,
-        endEpochSecond: Long,
-        steps: Long,
-    ): WalkSession {
-        val elapsedMinutes = ((endEpochSecond - startEpochSecond) / 60).coerceAtLeast(1)
-        return WalkSession(
-            id = "manual:$id",
-            startEpochSecond = startEpochSecond,
-            endEpochSecond = endEpochSecond,
-            steps = steps,
-            activeMinutes = elapsedMinutes.toInt(),
-            cadence = steps.toDouble() / elapsedMinutes,
-            classification = BoutClassification.WORKOUT,
-            origin = SessionOrigin.MANUAL,
-            confidence = 1.0,
-            reasonCode = ClassificationReasonCode.MANUALLY_RECORDED,
-            isReclassifiable = false,
-            anchorEpochSecond = null,
         )
     }
 

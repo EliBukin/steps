@@ -25,17 +25,6 @@
     <string name="status_unknown">בודק את מצב איסוף הנתונים…</string>
 
     <string name="action_grant_permission">הענקת הרשאה</string>
-    <string name="action_start_walk">התחלת הליכה</string>
-    <string name="action_finish_walk">סיום הליכה</string>
-    <string name="ongoing_walk_banner">הליכה ידנית פעילה</string>
-    <string name="finish_walk_sync_failed_message">לא ניתן היה לסיים את ההליכה מכיוון שסנכרון הצעדים נכשל. נסו שוב.</string>
-    <string name="manual_walk_auto_completed_message">ההליכה הסתיימה אוטומטית מכיוון שלא זוהתה תנועה.</string>
-
-    <string name="stale_walk_recovery_title">לא נרשמו צעדים בהליכה הפעילה</string>
-    <string name="stale_walk_recovery_message">ההליכה החלה ב-%1$s ולא נרשמו בה צעדים. מה ברצונך לעשות?</string>
-    <string name="stale_walk_action_cancel">ביטול ההליכה</string>
-    <string name="stale_walk_action_finish_now">סיום עכשיו</string>
-    <string name="stale_walk_action_keep_ongoing">המשך מעקב</string>
 
     <string name="history_title">7 הימים האחרונים</string>
     <string name="history_today_label">היום</string>
@@ -58,7 +47,6 @@
     <string name="reason_cadence_too_low">קצב הצעידה איטי מדי לאימון</string>
     <string name="reason_multiple_not_met">מספר תנאים לא התקיימו עבור אימון</string>
     <string name="reason_manually_reclassified">הסיווג שונה ידנית על ידך</string>
-    <string name="reason_manually_recorded">נרשם ידנית כהליכת אימון</string>
 
     <string name="settings_title">הגדרות</string>
     <string name="settings_daily_goal_label">יעד צעדים יומי</string>

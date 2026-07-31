@@ -17,7 +17,6 @@ private fun ClassificationReasonCode.textRes(): Int = when (this) {
     ClassificationReasonCode.CADENCE_TOO_LOW -> R.string.reason_cadence_too_low
     ClassificationReasonCode.MULTIPLE_THRESHOLDS_NOT_MET -> R.string.reason_multiple_not_met
     ClassificationReasonCode.MANUALLY_RECLASSIFIED -> R.string.reason_manually_reclassified
-    ClassificationReasonCode.MANUALLY_RECORDED -> R.string.reason_manually_recorded
 }
 
 @Composable

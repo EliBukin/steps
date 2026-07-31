@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
-import com.example.stepsplit.data.local.manualwalk.ManualWalkEntity
 import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.RawStepInterval
@@ -92,7 +91,6 @@ class StepRepository(
                 database.stepBucketDao().upsertAll(bucketEntities)
             }
 
-            maybeAutoCompleteOngoingManualWalk(now)
             recomputeClassification()
             settingsRepository.setLastSuccessfulSync(now)
             SyncResult.Success(bucketEntities.size)
@@ -189,149 +187,6 @@ class StepRepository(
         recomputeClassification()
     }
 
-    // ---- Manual "Start walk / Finish walk" flow ----
-
-    suspend fun startManualWalk(): Boolean {
-        if (database.manualWalkDao().getOngoing() != null) return false
-        val now = clock.instant().epochSecond
-        database.manualWalkDao().insert(
-            ManualWalkEntity(startEpochSecond = now, endEpochSecond = null, steps = null, createdAtEpochSecond = now),
-        )
-        return true
-    }
-
-    /**
-     * Finishing a manual walk needs an up-to-date step read for the covered window - finalizing
-     * it against stale or missing data would silently record a wrong step count. If the sync
-     * fails or the source is unavailable, the walk is left ongoing (its `endEpochSecond` stays
-     * null) so the user can retry rather than getting a silently inaccurate result.
-     *
-     * The sync this triggers may itself auto-complete the walk for inactivity (see
-     * [maybeAutoCompleteOngoingManualWalk]) before this function gets a chance to finalize it
-     * manually - in that case the row is re-read by id and left as the (more accurate)
-     * auto-determined result rather than being overwritten with a `now`-based end time.
-     */
-    suspend fun finishManualWalk(): Boolean = syncMutex.withLock {
-        val ongoingBeforeSync = database.manualWalkDao().getOngoing() ?: return@withLock false
-        val syncResult = syncNowLocked()
-        if (syncResult !is SyncResult.Success) return@withLock false
-
-        val current = database.manualWalkDao().getById(ongoingBeforeSync.id) ?: return@withLock false
-        if (current.endEpochSecond != null) {
-            // Already finished - auto-completed for inactivity during the sync just above.
-            return@withLock true
-        }
-
-        val end = clock.instant().epochSecond
-        val steps = database.stepBucketDao().getAllActive()
-            .filter { it.startEpochSecond >= current.startEpochSecond && it.startEpochSecond < end }
-            .sumOf { it.steps }
-        database.manualWalkDao().update(current.copy(endEpochSecond = end, steps = steps, autoCompleted = false))
-        true
-    }
-
-    /**
-     * Examines imported step buckets on every successful sync and, if the ongoing manual walk
-     * should be considered over, finishes it automatically. Because the Recording API is not a
-     * real-time stream, a single delayed sync can discover an entire forgotten walk - including
-     * any inactivity gap inside it - all at once, so this cannot just compare `now` against the
-     * latest active minute: that would let a later, unrelated burst of steps (found by the same
-     * sync) silently extend or re-open a walk that actually ended much earlier.
-     *
-     * Instead this walks the active minutes since the walk's start in chronological order (already
-     * guaranteed by [com.example.stepsplit.data.local.bucket.StepBucketDao.getAllActive]'s
-     * `ORDER BY startEpochSecond`) looking for the *first* internal gap of at least
-     * [MANUAL_WALK_INACTIVITY_TIMEOUT] between the end of one active minute and the start of the
-     * next. If one exists, the walk ends at the end of the active minute right before that gap -
-     * steps from that point on (including any later activity, and any further gaps) are never
-     * pulled into this walk, and a later qualifying gap can never move the end forward.
-     *
-     * Only when no internal gap exists does this fall back to comparing `now` against the last
-     * active minute, exactly as before - covering the case where the walk is still genuinely
-     * ongoing, or just finished, with no earlier gap to have split it on.
-     *
-     * A walk with zero recorded steps is never touched here - see [observeOngoingManualWalkStatus]
-     * for the separate, UI-driven stale/zero-step recovery path.
-     */
-    private suspend fun maybeAutoCompleteOngoingManualWalk(now: Instant) {
-        val ongoing = database.manualWalkDao().getOngoing() ?: return
-        val activeSinceStart = database.stepBucketDao().getAllActive()
-            .filter { it.startEpochSecond >= ongoing.startEpochSecond }
-        if (activeSinceStart.isEmpty()) return
-
-        val timeoutSeconds = MANUAL_WALK_INACTIVITY_TIMEOUT.seconds
-        var previousActiveMinuteEnd = activeSinceStart.first().startEpochSecond + 60
-        var endEpochSecond: Long? = null
-        for (bucket in activeSinceStart.drop(1)) {
-            val gapSeconds = bucket.startEpochSecond - previousActiveMinuteEnd
-            if (gapSeconds >= timeoutSeconds) {
-                endEpochSecond = previousActiveMinuteEnd
-                break
-            }
-            previousActiveMinuteEnd = bucket.startEpochSecond + 60
-        }
-
-        val resolvedEnd = endEpochSecond ?: run {
-            val trailingIdleSeconds = now.epochSecond - previousActiveMinuteEnd
-            if (trailingIdleSeconds < timeoutSeconds) return
-            previousActiveMinuteEnd
-        }
-
-        database.manualWalkDao().update(
-            ongoing.copy(
-                endEpochSecond = resolvedEnd,
-                steps = activeSinceStart.filter { it.startEpochSecond < resolvedEnd }.sumOf { it.steps },
-                autoCompleted = true,
-                autoCompletionMessageShown = false,
-            ),
-        )
-    }
-
-    /** Deletes the ongoing walk outright - used for the "Cancel" stale-walk recovery action, never for a walk with any recorded steps. */
-    suspend fun cancelOngoingManualWalk(): Boolean = syncMutex.withLock {
-        val ongoing = database.manualWalkDao().getOngoing() ?: return@withLock false
-        database.manualWalkDao().deleteById(ongoing.id)
-        true
-    }
-
-    /** Finishes the ongoing walk at a user-chosen time - used for the "Finish at a selected time" stale-walk recovery action. */
-    suspend fun finishOngoingManualWalkAt(endEpochSecond: Long): Boolean = syncMutex.withLock {
-        val ongoing = database.manualWalkDao().getOngoing() ?: return@withLock false
-        if (endEpochSecond <= ongoing.startEpochSecond) return@withLock false
-        val steps = database.stepBucketDao().getAllActive()
-            .filter { it.startEpochSecond >= ongoing.startEpochSecond && it.startEpochSecond < endEpochSecond }
-            .sumOf { it.steps }
-        database.manualWalkDao().update(
-            ongoing.copy(endEpochSecond = endEpochSecond, steps = steps, autoCompleted = false),
-        )
-        true
-    }
-
-    fun observeOngoingManualWalk(): Flow<ManualWalkEntity?> = database.manualWalkDao().observeOngoing()
-
-    fun observeOngoingManualWalkStatus(): Flow<OngoingManualWalkStatus?> = combine(
-        database.manualWalkDao().observeOngoing(),
-        database.stepBucketDao().observeAllActive(),
-    ) { ongoing, activeBuckets ->
-        ongoing?.let { walk ->
-            OngoingManualWalkStatus(
-                startEpochSecond = walk.startEpochSecond,
-                hasRecordedSteps = activeBuckets.any { it.startEpochSecond >= walk.startEpochSecond },
-            )
-        }
-    }
-
-    fun observeUnacknowledgedAutoCompletions(): Flow<List<AutoCompletedWalk>> =
-        database.manualWalkDao().observeUnacknowledgedAutoCompletions().map { walks ->
-            walks.map { AutoCompletedWalk(it.id, it.startEpochSecond, requireNotNull(it.endEpochSecond)) }
-        }
-
-    suspend fun acknowledgeAutoCompletion(walkId: Long) {
-        val walk = database.manualWalkDao().getById(walkId) ?: return
-        if (walk.autoCompletionMessageShown) return
-        database.manualWalkDao().update(walk.copy(autoCompletionMessageShown = true))
-    }
-
     /**
      * Debug-only entry point (see [com.example.stepsplit.debug.DebugDataSeeder]): seeds the
      * database from arbitrary raw intervals through the same normalize -> upsert -> reclassify
@@ -352,15 +207,9 @@ class StepRepository(
     fun observeSessions(): Flow<List<WalkSession>> = combine(
         database.walkBoutDao().observeAll(),
         database.sessionOverrideDao().observeAll(),
-        database.manualWalkDao().observeFinished(),
-    ) { bouts, overrides, manualWalks ->
+    ) { bouts, overrides ->
         val overrideMap = overrides.associate { it.boutStartEpochSecond to BoutClassification.valueOf(it.classification) }
-        val autoSessions = SessionMerger.fromAutoBouts(bouts.map { it.toDomain() }, overrideMap)
-        val manualSessions = manualWalks.mapNotNull { walk ->
-            val end = walk.endEpochSecond ?: return@mapNotNull null
-            SessionMerger.manualWalkSession(walk.id, walk.startEpochSecond, end, walk.steps ?: 0L)
-        }
-        (autoSessions + manualSessions).sortedByDescending { it.startEpochSecond }
+        SessionMerger.fromAutoBouts(bouts.map { it.toDomain() }, overrideMap).sortedByDescending { it.startEpochSecond }
     }
 
     fun observeDailyBreakdowns(dates: List<LocalDate>): Flow<Map<LocalDate, DateStepBreakdown>> {
@@ -381,19 +230,6 @@ class StepRepository(
     companion object {
         val RETENTION_WINDOW: Duration = Duration.ofDays(7)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
-
-        /** How long a manual walk can go without any recorded steps before it's auto-finished. */
-        val MANUAL_WALK_INACTIVITY_TIMEOUT: Duration = Duration.ofMinutes(7)
-
-        /**
-         * How long a manual walk with *zero* recorded steps since Start is left alone before the
-         * UI offers the stale-walk recovery choice (Cancel / Finish at a time / Keep ongoing).
-         * Deliberately longer than [MANUAL_WALK_INACTIVITY_TIMEOUT]: a slow start (tying shoes,
-         * walking to a trailhead with the phone still in a pocket) is normal and should not be
-         * flagged, whereas a walk that never recorded a single step in an hour most likely means
-         * the user simply forgot it was running.
-         */
-        val ZERO_STEP_STALE_THRESHOLD: Duration = Duration.ofMinutes(60)
     }
 }
 

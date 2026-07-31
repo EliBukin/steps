@@ -12,9 +12,12 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * Proves the v1 -> v2 migration (adding [manualwalk.ManualWalkEntity.autoCompleted] and
- * [manualwalk.ManualWalkEntity.autoCompletionMessageShown] for the auto-completion feature) is
- * purely additive: every pre-existing row - finished or still ongoing - survives the upgrade
- * unchanged, with the two new columns defaulting to false.
+ * [manualwalk.ManualWalkEntity.autoCompletionMessageShown], originally for the manual-walk
+ * auto-completion feature) is purely additive: every pre-existing row - finished or still ongoing
+ * - survives the upgrade unchanged, with the two new columns defaulting to false. Still relevant
+ * after the manual-walk feature itself was removed: `manual_walks`, its entity, and this migration
+ * are deliberately kept (see [StepSplitDatabase]'s doc comment) so an existing installation's rows
+ * are never destroyed by an upgrade, even though the app no longer reads them.
  *
  * This runs [StepSplitDatabase.MIGRATIONS] - the real production migration object - directly
  * against a real SQLite database built with the version-1 `manual_walks` schema, via the same

@@ -25,17 +25,6 @@
     <string name="status_unknown">Checking data collection status…</string>
 
     <string name="action_grant_permission">Grant permission</string>
-    <string name="action_start_walk">Start walk</string>
-    <string name="action_finish_walk">Finish walk</string>
-    <string name="ongoing_walk_banner">Manual walk in progress</string>
-    <string name="finish_walk_sync_failed_message">The walk couldn\'t be finished because step synchronization failed. Please try again.</string>
-    <string name="manual_walk_auto_completed_message">The walk ended automatically because no movement was detected.</string>
-
-    <string name="stale_walk_recovery_title">No steps recorded for your active walk</string>
-    <string name="stale_walk_recovery_message">The walk started at %1$s and no steps have been recorded. What would you like to do?</string>
-    <string name="stale_walk_action_cancel">Cancel walk</string>
-    <string name="stale_walk_action_finish_now">Finish now</string>
-    <string name="stale_walk_action_keep_ongoing">Keep tracking</string>
 
     <string name="history_title">Last 7 days</string>
     <string name="history_today_label">Today</string>
@@ -58,7 +47,6 @@
     <string name="reason_cadence_too_low">Cadence too slow for a workout</string>
     <string name="reason_multiple_not_met">Several workout conditions were not met</string>
     <string name="reason_manually_reclassified">You manually changed this classification</string>
-    <string name="reason_manually_recorded">Manually recorded as a workout walk</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_daily_goal_label">Daily step goal</string>
