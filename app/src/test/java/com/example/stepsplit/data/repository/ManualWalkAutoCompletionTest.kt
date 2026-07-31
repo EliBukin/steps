@@ -191,6 +191,128 @@ class ManualWalkAutoCompletionTest {
     }
 
     @Test
+    fun `a single delayed sync that discovers a 20-minute gap and a later 30-step burst splits the walk before the gap`() = runTest {
+        assertTrue(repoAt(start).startManualWalk())
+        fakeSource.addInterval(start, start + 60, 50)
+        fakeSource.addInterval(start + 60, start + 120, 50)
+
+        // 20-minute gap: start+120 .. start+1320 has no steps at all.
+        val burstStart = start + 120 + 20 * 60L
+        fakeSource.addInterval(burstStart, burstStart + 60, 30)
+
+        // Everything above is imported for the first time in a single delayed sync - the walk's
+        // own internal gap must be found by scanning, not by comparing the latest minute to "now".
+        val repo = repoAt(burstStart + 90)
+        repo.syncNow()
+
+        assertNull(database.manualWalkDao().getOngoing())
+        val finished = database.manualWalkDao().observeFinished().first().single()
+        assertEquals(start, finished.startEpochSecond)
+        assertEquals(start + 120, finished.endEpochSecond) // ends before the gap, not at the later burst
+        assertEquals(100L, finished.steps)
+        assertTrue(finished.autoCompleted)
+
+        val date = Instant.ofEpochSecond(start).atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repo.observeDailyBreakdowns(listOf(date)).first().getValue(date)
+        assertEquals(130L, breakdown.totalSteps)
+        assertEquals(100L, breakdown.workoutSteps)
+        assertEquals(30L, breakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `a single delayed sync that discovers a 20-minute gap and a later 300-step burst splits the walk before the gap`() = runTest {
+        assertTrue(repoAt(start).startManualWalk())
+        fakeSource.addInterval(start, start + 60, 50)
+        fakeSource.addInterval(start + 60, start + 120, 50)
+
+        val burstStart = start + 120 + 20 * 60L
+        fakeSource.addInterval(burstStart, burstStart + 60, 300)
+
+        val repo = repoAt(burstStart + 90)
+        repo.syncNow()
+
+        assertNull(database.manualWalkDao().getOngoing())
+        val finished = database.manualWalkDao().observeFinished().first().single()
+        assertEquals(start + 120, finished.endEpochSecond)
+        assertEquals(100L, finished.steps) // the 300-step burst must not be absorbed into the manual workout
+
+        val date = Instant.ofEpochSecond(start).atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repo.observeDailyBreakdowns(listOf(date)).first().getValue(date)
+        assertEquals(400L, breakdown.totalSteps)
+        assertEquals(100L, breakdown.workoutSteps)
+        assertEquals(300L, breakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `a single delayed sync that discovers a 20-minute gap and a later qualifying walk splits both correctly`() = runTest {
+        assertTrue(repoAt(start).startManualWalk())
+        fakeSource.addInterval(start, start + 60, 80)
+        fakeSource.addInterval(start + 60, start + 120, 80)
+
+        // A separate, later 20-minute burst that independently satisfies the default workout
+        // thresholds, starting right after the 20-minute gap - found in the very same sync.
+        val laterStart = start + 120 + 20 * 60L
+        for (i in 0 until 20) fakeSource.addInterval(laterStart + i * 60L, laterStart + i * 60L + 60L, 80)
+
+        val repo = repoAt(laterStart + 20 * 60L + 60)
+        repo.syncNow()
+
+        assertNull(database.manualWalkDao().getOngoing())
+        val finished = database.manualWalkDao().observeFinished().first().single()
+        assertEquals(start + 120, finished.endEpochSecond)
+        assertEquals(160L, finished.steps)
+        assertTrue(finished.autoCompleted)
+
+        val sessions = repo.observeSessions().first()
+        val laterWorkout = sessions.single { it.origin == SessionOrigin.AUTO && it.startEpochSecond == laterStart }
+        assertEquals(BoutClassification.WORKOUT, laterWorkout.classification)
+        assertEquals(1600L, laterWorkout.steps)
+
+        val date = Instant.ofEpochSecond(start).atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repo.observeDailyBreakdowns(listOf(date)).first().getValue(date)
+        assertEquals(1760L, breakdown.totalSteps)
+        assertEquals(1760L, breakdown.workoutSteps) // manual (160) + later auto workout (1600), none incidental
+        assertEquals(0L, breakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `the first of multiple qualifying gaps determines the manual end - later gaps cannot move it forward`() = runTest {
+        assertTrue(repoAt(start).startManualWalk())
+        fakeSource.addInterval(start, start + 60, 50)
+        fakeSource.addInterval(start + 60, start + 120, 50)
+
+        // First qualifying gap: 20 minutes, start+120 .. start+1320.
+        val burstA = start + 120 + 20 * 60L
+        fakeSource.addInterval(burstA, burstA + 60, 40)
+
+        // A second, later qualifying gap after burstA - must never be consulted, since the walk
+        // already ended at the first gap above.
+        val burstB = burstA + 60 + 20 * 60L
+        fakeSource.addInterval(burstB, burstB + 60, 60)
+
+        // All of the above - two manual minutes, both gaps, and both later bursts - is discovered
+        // together in a single delayed sync.
+        val repo = repoAt(burstB + 90)
+        repo.syncNow()
+
+        assertNull(database.manualWalkDao().getOngoing())
+        val finished = database.manualWalkDao().observeFinished().first().single()
+        assertEquals(start, finished.startEpochSecond)
+        assertEquals(start + 120, finished.endEpochSecond) // the FIRST gap wins, not the second
+        assertEquals(100L, finished.steps)
+        assertTrue(finished.autoCompleted)
+
+        // Total = workout (the manual walk) + incidental (the two later isolated bursts), with no
+        // step counted in more than one bucket.
+        val date = Instant.ofEpochSecond(start).atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repo.observeDailyBreakdowns(listOf(date)).first().getValue(date)
+        assertEquals(200L, breakdown.totalSteps)
+        assertEquals(100L, breakdown.workoutSteps)
+        assertEquals(100L, breakdown.incidentalSteps)
+        assertEquals(breakdown.totalSteps, breakdown.workoutSteps + breakdown.incidentalSteps)
+    }
+
+    @Test
     fun `daily totals do not double-count steps where the manual walk and its own auto bout overlap`() = runTest {
         assertTrue(repoAt(start).startManualWalk())
         // 12 minutes at 80 steps/min - satisfies the default auto-workout thresholds too, so this

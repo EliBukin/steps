@@ -231,27 +231,56 @@ class StepRepository(
     }
 
     /**
-     * Examines imported step buckets on every successful sync and, if the ongoing manual walk has
-     * at least one active minute since it started and [MANUAL_WALK_INACTIVITY_TIMEOUT] worth of
-     * fully-elapsed minutes have since passed with no further steps, finishes it automatically -
-     * anchored to the end of the *last active minute*, not the moment this check runs, so later
-     * (possibly much later, since the Recording API is not a real-time stream) syncs don't inflate
-     * the workout with dead time. A walk with zero recorded steps is never touched here - see
-     * [observeOngoingManualWalkStatus] for the separate, UI-driven stale/zero-step recovery path.
+     * Examines imported step buckets on every successful sync and, if the ongoing manual walk
+     * should be considered over, finishes it automatically. Because the Recording API is not a
+     * real-time stream, a single delayed sync can discover an entire forgotten walk - including
+     * any inactivity gap inside it - all at once, so this cannot just compare `now` against the
+     * latest active minute: that would let a later, unrelated burst of steps (found by the same
+     * sync) silently extend or re-open a walk that actually ended much earlier.
+     *
+     * Instead this walks the active minutes since the walk's start in chronological order (already
+     * guaranteed by [com.example.stepsplit.data.local.bucket.StepBucketDao.getAllActive]'s
+     * `ORDER BY startEpochSecond`) looking for the *first* internal gap of at least
+     * [MANUAL_WALK_INACTIVITY_TIMEOUT] between the end of one active minute and the start of the
+     * next. If one exists, the walk ends at the end of the active minute right before that gap -
+     * steps from that point on (including any later activity, and any further gaps) are never
+     * pulled into this walk, and a later qualifying gap can never move the end forward.
+     *
+     * Only when no internal gap exists does this fall back to comparing `now` against the last
+     * active minute, exactly as before - covering the case where the walk is still genuinely
+     * ongoing, or just finished, with no earlier gap to have split it on.
+     *
+     * A walk with zero recorded steps is never touched here - see [observeOngoingManualWalkStatus]
+     * for the separate, UI-driven stale/zero-step recovery path.
      */
     private suspend fun maybeAutoCompleteOngoingManualWalk(now: Instant) {
         val ongoing = database.manualWalkDao().getOngoing() ?: return
         val activeSinceStart = database.stepBucketDao().getAllActive()
             .filter { it.startEpochSecond >= ongoing.startEpochSecond }
-        val lastActiveMinuteStart = activeSinceStart.maxOfOrNull { it.startEpochSecond } ?: return
-        val lastActiveMinuteEnd = lastActiveMinuteStart + 60
-        val idleSeconds = now.epochSecond - lastActiveMinuteEnd
-        if (idleSeconds < MANUAL_WALK_INACTIVITY_TIMEOUT.seconds) return
+        if (activeSinceStart.isEmpty()) return
+
+        val timeoutSeconds = MANUAL_WALK_INACTIVITY_TIMEOUT.seconds
+        var previousActiveMinuteEnd = activeSinceStart.first().startEpochSecond + 60
+        var endEpochSecond: Long? = null
+        for (bucket in activeSinceStart.drop(1)) {
+            val gapSeconds = bucket.startEpochSecond - previousActiveMinuteEnd
+            if (gapSeconds >= timeoutSeconds) {
+                endEpochSecond = previousActiveMinuteEnd
+                break
+            }
+            previousActiveMinuteEnd = bucket.startEpochSecond + 60
+        }
+
+        val resolvedEnd = endEpochSecond ?: run {
+            val trailingIdleSeconds = now.epochSecond - previousActiveMinuteEnd
+            if (trailingIdleSeconds < timeoutSeconds) return
+            previousActiveMinuteEnd
+        }
 
         database.manualWalkDao().update(
             ongoing.copy(
-                endEpochSecond = lastActiveMinuteEnd,
-                steps = activeSinceStart.sumOf { it.steps },
+                endEpochSecond = resolvedEnd,
+                steps = activeSinceStart.filter { it.startEpochSecond < resolvedEnd }.sumOf { it.steps },
                 autoCompleted = true,
                 autoCompletionMessageShown = false,
             ),
