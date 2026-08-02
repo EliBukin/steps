@@ -108,7 +108,11 @@ Settings for the only debug-only surface).
   `step_buckets` history the next time a sync runs (even if that sync's remote read itself fails
   or the source is unavailable - the recompute never depends on it), and in the meantime
   `observeSessions()` filters stale rows out directly so nothing outdated is ever shown, even
-  briefly.
+  briefly. Independent of that version check, `StepRepository` also unconditionally recomputes
+  once on the very first classification check of its own process lifetime (regardless of whether
+  any row is version-stale, or whether `walk_bouts` is empty) - this restores a pending trailing-
+  bout finalization deadline that a killed-and-restarted process would otherwise have no memory of
+  (see "Automatic classification heuristic" below).
 - `session_overrides`: manual reclassifications, keyed by the bout's stable start-time anchor,
   stored **separately** from `walk_bouts` so regenerating the AUTO cache can never discard a
   manual correction.
@@ -154,6 +158,16 @@ Android dependencies:
    classifier) replace any still-pending timer with a freshly computed one rather than stacking
    duplicates, and the timer's owning `CoroutineScope` lives exactly as long as `StepRepository`
    does (the process lifetime in production), so it can never outlive its owner.
+
+   That timer is purely in-memory, so it does not survive the process being killed while a bout is
+   still withheld. `StepRepository` does not need any separate persisted deadline to recover from
+   this: on the very first classification check of a fresh process (see "Schema notes" above), it
+   unconditionally reruns the classifier against the raw `step_buckets` already in Room - which
+   re-derives the correct current state either way. If the deadline already passed while the
+   process was dead, that recompute finalizes the bout immediately, in the same call; otherwise
+   `rescheduleFinalizationJob` schedules a fresh timer for whatever delay actually remains. This
+   recovery runs before `syncNowLocked` even checks step-source availability, so it happens
+   regardless of whether the source is reachable.
 4. Classify a finalized bout as a likely **workout** only if it clears *every* threshold:
    elapsed duration ≥ 10 min, active minutes ≥ 8, steps ≥ 600, cadence ≥ 60 steps/min. Otherwise
    it is **incidental**.

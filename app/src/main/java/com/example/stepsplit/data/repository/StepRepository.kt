@@ -68,6 +68,13 @@ class StepRepository(
     /** The single pending trailing-bout finalization timer, if any - see [rescheduleFinalizationJob]. */
     private var finalizationJob: Job? = null
 
+    /**
+     * Set once the first [ensureClassificationFreshLocked] call this process has run its
+     * unconditional recovery recompute - see that function for why this is needed on top of the
+     * ordinary [CLASSIFIER_VERSION] staleness check.
+     */
+    private var recoveryPerformed = false
+
     suspend fun checkAvailability(): StepSourceAvailability = stepSource.checkAvailability()
 
     suspend fun syncNow(): SyncResult = syncMutex.withLock { syncNowLocked() }
@@ -185,15 +192,34 @@ class StepRepository(
     private fun alignToMinute(epochSecond: Long): Long = epochSecond - Math.floorMod(epochSecond, 60L)
 
     /**
-     * If any cached [database.walkBoutDao] row was produced by a classifier version other than
-     * the current [CLASSIFIER_VERSION], it is stale - the algorithm has since changed, so the same
-     * raw history could now classify differently. Recomputes straight from the raw
-     * [StepBucketEntity] history already stored in Room, so this works even when [stepSource] is
-     * unavailable, unsubscribed, or failing; it never performs a source read. [observeSessions]
-     * also filters stale rows directly, so nothing stale is ever shown even in the brief window
-     * before this recompute completes.
+     * Guarantees the cached classification (and, transitively, the pending finalization timer -
+     * see [rescheduleFinalizationJob]) reflect the current local raw data before this call
+     * returns. Recomputes straight from the raw [StepBucketEntity] history already stored in
+     * Room, so this works even when [stepSource] is unavailable, unsubscribed, or failing; it
+     * never performs a source read. [observeSessions] also filters stale-version rows directly,
+     * so nothing stale is ever shown even in the brief window before a recompute completes.
+     *
+     * Two independent reasons a recompute can be needed:
+     *
+     * 1. **Stale [CLASSIFIER_VERSION].** A cached row was produced by an older algorithm version,
+     *    which could now classify the same raw history differently.
+     * 2. **Lost in-memory recovery state.** [finalizationJob] and [recoveryPerformed] live only in
+     *    memory - if the process is killed while a trailing bout is still withheld and waiting out
+     *    [ClassificationThresholds.idleFinalizeMinutes], a fresh process has no memory of that
+     *    pending deadline at all, yet every cached row can already be stamped with the current
+     *    [CLASSIFIER_VERSION] (or there may be no cached row for that bout at all, since it was
+     *    correctly withheld) - so the version check alone would never catch this. Recomputing
+     *    unconditionally on the very first call this process makes re-derives the correct current
+     *    state regardless: if the deadline already passed while the process was dead, the
+     *    classifier finalizes it immediately as part of this recompute; otherwise
+     *    [rescheduleFinalizationJob] schedules a fresh timer for whatever delay actually remains.
      */
     private suspend fun ensureClassificationFreshLocked() {
+        if (!recoveryPerformed) {
+            recoveryPerformed = true
+            recomputeClassification()
+            return
+        }
         if (database.walkBoutDao().hasRowsWithOtherClassifierVersion(CLASSIFIER_VERSION)) {
             recomputeClassification()
         }
