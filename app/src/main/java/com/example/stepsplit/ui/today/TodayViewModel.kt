@@ -48,9 +48,8 @@ class TodayViewModel(
     val uiState: StateFlow<TodayUiState> = combine(
         breakdownsForToday,
         settingsRepository.settings,
-        repository.observeLastSuccessfulSync(),
         availability,
-    ) { (today, breakdowns), settings, lastSync, currentAvailability ->
+    ) { (today, breakdowns), settings, currentAvailability ->
         val weekDates = weekDatesToDate(today)
         TodayUiState(
             isLoading = false,
@@ -58,7 +57,9 @@ class TodayViewModel(
             dailyGoal = settings.goals.dailyGoalSteps,
             weeklyTotalSteps = weekDates.sumOf { breakdowns[it]?.totalSteps ?: 0L },
             weeklyGoal = settings.goals.weeklyGoalSteps,
-            lastSuccessfulSync = lastSync,
+            // Sourced from the same settings flow already collected above, not a second
+            // collection of the same underlying DataStore (see StepRepository.recordSuccessfulSync).
+            lastSuccessfulSync = settings.lastSuccessfulSync,
             availability = currentAvailability,
             // Backed by SettingsRepository (a Room/DataStore-persisted value observed through the
             // same settings flow as everything else here), not a transient ViewModel field - a

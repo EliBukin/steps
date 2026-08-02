@@ -28,6 +28,6 @@ class ClassificationThresholdsTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun `classifying with invalid thresholds fails fast instead of producing nonsense results`() {
-        WalkClassifier.classify(listOf(MinuteBucket(0, 10)), ClassificationThresholds(minSteps = 0))
+        WalkClassifier.classify(listOf(MinuteBucket(0, 10)), ClassificationThresholds(minSteps = 0), Long.MAX_VALUE)
     }
 }

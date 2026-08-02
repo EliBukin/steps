@@ -100,8 +100,21 @@ class SettingsRepository(context: Context) {
         setThresholds(ClassificationThresholds.DEFAULT)
     }
 
-    suspend fun setLastSuccessfulSync(instant: Instant) {
-        dataStore.edit { it[Keys.LAST_SYNC_EPOCH_SECOND] = instant.epochSecond }
+    /**
+     * Records a successful sync and clears any previously recorded failure in a single DataStore
+     * transaction. Must not be split into a separate [setLastSuccessfulSync]-then-[clearSyncFailure]
+     * pair: `dataStore.data` only ever emits a fully-committed [Preferences] snapshot, so two
+     * separate `edit` calls would let an observer (e.g. a UI collecting [settings]) briefly see a
+     * new success timestamp sitting alongside a stale failure if collection happened to land
+     * between the two writes, or leave the failure behind entirely if the coroutine were cancelled
+     * between them.
+     */
+    suspend fun recordSuccessfulSync(instant: Instant) {
+        dataStore.edit { prefs ->
+            prefs[Keys.LAST_SYNC_EPOCH_SECOND] = instant.epochSecond
+            prefs.remove(Keys.SYNC_FAILURE_CATEGORY)
+            prefs.remove(Keys.SYNC_FAILURE_EPOCH_SECOND)
+        }
     }
 
     /**

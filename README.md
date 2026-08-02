@@ -102,6 +102,13 @@ Settings for the only debug-only surface).
   retroactively changes which calendar day a past step belongs to.
 - `walk_bouts`: the cached AUTO classification result. Fully regenerated inside a transaction
   every time the classifier reruns (see below) - it is a derived cache, never a source of truth.
+  Every row is stamped with the `CLASSIFIER_VERSION` (`domain/classification/Classification.kt`)
+  that produced it. If the algorithm changes, `CLASSIFIER_VERSION` is bumped and any row stamped
+  with an older version is treated as stale: `StepRepository` recomputes it from the raw
+  `step_buckets` history the next time a sync runs (even if that sync's remote read itself fails
+  or the source is unavailable - the recompute never depends on it), and in the meantime
+  `observeSessions()` filters stale rows out directly so nothing outdated is ever shown, even
+  briefly.
 - `session_overrides`: manual reclassifications, keyed by the bout's stable start-time anchor,
   stored **separately** from `walk_bouts` so regenerating the AUTO cache can never discard a
   manual correction.
@@ -135,9 +142,18 @@ Android dependencies:
    passed since its last active minute. Until then it is withheld entirely - not shown on the
    Sessions screen, and its raw steps count as incidental in daily totals rather than being
    prematurely counted as a workout. Earlier, non-trailing bouts are never withheld. `WalkClassifier.classify()`
-   takes the current instant as an explicit parameter for this rather than reading a system clock
-   itself, so it stays a pure function of its inputs - `StepRepository` supplies it from its own
-   `Clock` on every classifier rerun.
+   takes the current instant as a required (no default) explicit parameter for this rather than
+   reading a system clock itself, so it stays a pure function of its inputs - `StepRepository`
+   supplies it from its own `Clock` on every classifier rerun.
+
+   A withheld trailing bout does not have to wait for the next sync (periodic syncs are ~6 hours
+   apart) to actually appear: `StepRepository.rescheduleFinalizationJob` schedules a single
+   cancellable, one-shot local coroutine timer for the exact remaining delay every time the
+   classifier reruns. When it fires, it reclassifies from the raw data already in Room - it never
+   touches the step source again. New raw data or a threshold change (both of which rerun the
+   classifier) replace any still-pending timer with a freshly computed one rather than stacking
+   duplicates, and the timer's owning `CoroutineScope` lives exactly as long as `StepRepository`
+   does (the process lifetime in production), so it can never outlive its owner.
 4. Classify a finalized bout as a likely **workout** only if it clears *every* threshold:
    elapsed duration ≥ 10 min, active minutes ≥ 8, steps ≥ 600, cadence ≥ 60 steps/min. Otherwise
    it is **incidental**.
@@ -198,9 +214,13 @@ still fail for other reasons, and the UI never conflates the two:
 - This is persisted to Preferences DataStore, not held in transient ViewModel state, so a failure
   recorded by a background `StepSyncWorker` run is visible on the Today screen (and in Settings)
   the next time the app is opened, not only right after a foreground refresh.
-- A failure is only ever cleared by a **genuinely successful** sync (`SettingsRepository.clearSyncFailure()`,
-  called right after `setLastSuccessfulSync`) - it is never replaced with a fake "zero steps"
-  success, and the previous successful data/timestamp keep showing throughout.
+- A failure is only ever cleared by a **genuinely successful** sync, via
+  `SettingsRepository.recordSuccessfulSync(instant)` - a single DataStore `edit` transaction that
+  sets the new timestamp *and* removes the failure keys together, not two separate writes. An
+  observer of `settings` can therefore never see an emission combining the new success timestamp
+  with a stale failure, and cancellation between two separate writes can never leave one applied
+  without the other. It is never replaced with a fake "zero steps" success, and the previous
+  successful data/timestamp keep showing throughout.
 - The Today screen shows a `SyncFailureBanner` (`ui/common/CollectionStatusBanner.kt`) whenever a
   failure is recorded, independent of the availability banner above it. In Settings, "Permission
   status" still describes availability only; "Data collection status" now describes sync health
@@ -253,20 +273,26 @@ the environment this project was built in, so it has not been run.
 
 ### Migration testing
 
-`StepSplitDatabaseMigrationTest` builds the *complete* version-1 schema (all four tables, their
-indices, and the `room_master_table` identity row) from the exact `createSql`/`setupQueries` in
-`app/schemas/.../1.json`, then opens that database through a real `StepSplitDatabase` via
+`StepSplitDatabaseMigrationTest` genuinely parses the committed
+`app/schemas/.../1.json` at test time (`org.json.JSONObject`, not a hand-copied approximation) and
+executes its exact `createSql`/`setupQueries` strings verbatim to build the *complete* version-1
+schema (all four tables, their indices, and the `room_master_table` identity row). It then opens
+that database through a real `StepSplitDatabase` via
 `Room.databaseBuilder(...).addMigrations(*StepSplitDatabase.MIGRATIONS)` - the same call
 `StepSplitDatabase.build()` makes in production. That forces Room's own open-time validation: it
 runs the real migration, then introspects every table's actual on-disk shape (columns, types,
 nullability, indices) and compares it field-by-field against what its compiled v2 entities expect,
 throwing if anything doesn't match. `MigrationTestHelper` was not used directly to drive this: as
 of Room 2.8.4 it has a database-path resolution issue under Robolectric with `applicationIdSuffix`
-set (found while first building this test), on top of needing exported schema JSON bundled as an
-app asset. Building the starting schema by hand from the already-exported JSON and letting a real
-`StepSplitDatabase` open it gives the same validation guarantee without depending on that helper's
-own internals. The test also asserts the pre-existing `manual_walks` rows (finished and ongoing)
-survive the upgrade unchanged, with the two new columns defaulting correctly.
+set (found while first building this test). Parsing the already-exported JSON directly and letting
+a real `StepSplitDatabase` open the result gives the same validation guarantee without depending on
+that helper's own internals; it relies on Gradle running `testDebugUnitTest` with the `app/` module
+directory as the JVM working directory, which was confirmed empirically rather than assumed. The
+test also asserts the pre-existing `manual_walks` rows (finished and ongoing) survive the upgrade
+unchanged, with the two new columns defaulting correctly. (Both this rewrite and the original
+hand-built version were verified with a negative control - temporarily removing one column from
+`MIGRATION_1_2` and confirming the test fails with Room's own expected-vs-found diff - before being
+reverted.)
 
 ## Debug fake data
 

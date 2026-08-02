@@ -9,6 +9,9 @@ import com.example.stepsplit.data.stepsource.StepSource
 import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.sync.StepSyncWorkerFactory
 import java.time.Clock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * Hand-written dependency container - the app is a single module with a handful of
@@ -27,11 +30,17 @@ class AppContainer(context: Context) {
 
     val stepSource: StepSource = LocalRecordingStepSource(context)
 
+    // Owns StepRepository's one-shot trailing-bout finalization timer (see
+    // StepRepository.rescheduleFinalizationJob) - a plain SupervisorJob-backed scope, not a
+    // Service, that simply lives for the process lifetime like every other dependency here.
+    private val repositoryScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     val stepRepository: StepRepository = StepRepository(
         database = database,
         stepSource = stepSource,
         settingsRepository = settingsRepository,
         clock = clock,
+        repositoryScope = repositoryScope,
     )
 
     val workerFactory: StepSyncWorkerFactory = StepSyncWorkerFactory(stepRepository)

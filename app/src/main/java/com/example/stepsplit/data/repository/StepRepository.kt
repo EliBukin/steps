@@ -31,11 +31,15 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -45,20 +49,36 @@ import kotlinx.coroutines.sync.withLock
  * flows. A single [syncMutex] serializes import+classify pipelines so a WorkManager sync racing
  * an app-start sync can never interleave writes - combined with Room's own transactions, this
  * makes concurrent triggers safe by construction rather than by luck.
+ *
+ * [repositoryScope] owns the one-shot local timer used to finalize a withheld trailing bout once
+ * [ClassificationThresholds.idleFinalizeMinutes] actually elapses (see [rescheduleFinalizationJob])
+ * without polling or a background service. It is expected to live exactly as long as this
+ * repository does - the process lifetime in production ([com.example.stepsplit.di.AppContainer]),
+ * or a test's own scope in tests - so the timer can never outlive its owner.
  */
 class StepRepository(
     private val database: StepSplitDatabase,
     private val stepSource: StepSource,
     private val settingsRepository: SettingsRepository,
     private val clock: Clock,
+    private val repositoryScope: CoroutineScope,
 ) {
     private val syncMutex = Mutex()
+
+    /** The single pending trailing-bout finalization timer, if any - see [rescheduleFinalizationJob]. */
+    private var finalizationJob: Job? = null
 
     suspend fun checkAvailability(): StepSourceAvailability = stepSource.checkAvailability()
 
     suspend fun syncNow(): SyncResult = syncMutex.withLock { syncNowLocked() }
 
     private suspend fun syncNowLocked(): SyncResult {
+        // Runs first and unconditionally - a cached classification produced by an older
+        // CLASSIFIER_VERSION must be recomputed from the raw data already in Room regardless of
+        // whether the source below turns out to be unavailable, unsubscribed, or failing. It
+        // never performs a source read itself, so it can never be blocked by one.
+        ensureClassificationFreshLocked()
+
         val availability = stepSource.checkAvailability()
         if (availability !is StepSourceAvailability.Available) {
             // Source availability/permission state is a separate axis from sync/collection
@@ -98,11 +118,12 @@ class StepRepository(
             }
 
             recomputeClassification()
-            settingsRepository.setLastSuccessfulSync(now)
             // A genuinely successful sync is the only thing allowed to clear a previously
             // recorded failure - it must never look cleared just because the UI happened to poll
-            // again, and it must never be replaced with a fake "zero steps" success.
-            settingsRepository.clearSyncFailure()
+            // again, and it must never be replaced with a fake "zero steps" success. Recorded as
+            // one atomic DataStore transaction (see SettingsRepository.recordSuccessfulSync) so
+            // no observer can ever see the new timestamp alongside the old failure.
+            settingsRepository.recordSuccessfulSync(now)
             SyncResult.Success(bucketEntities.size)
         } catch (e: CancellationException) {
             throw e
@@ -164,6 +185,21 @@ class StepRepository(
     private fun alignToMinute(epochSecond: Long): Long = epochSecond - Math.floorMod(epochSecond, 60L)
 
     /**
+     * If any cached [database.walkBoutDao] row was produced by a classifier version other than
+     * the current [CLASSIFIER_VERSION], it is stale - the algorithm has since changed, so the same
+     * raw history could now classify differently. Recomputes straight from the raw
+     * [StepBucketEntity] history already stored in Room, so this works even when [stepSource] is
+     * unavailable, unsubscribed, or failing; it never performs a source read. [observeSessions]
+     * also filters stale rows directly, so nothing stale is ever shown even in the brief window
+     * before this recompute completes.
+     */
+    private suspend fun ensureClassificationFreshLocked() {
+        if (database.walkBoutDao().hasRowsWithOtherClassifierVersion(CLASSIFIER_VERSION)) {
+            recomputeClassification()
+        }
+    }
+
+    /**
      * Reruns the classifier over the full raw history and atomically replaces the AUTO cache.
      * Passes the current instant explicitly so the classifier can decide whether the most recent
      * bout is finalized yet (see [WalkClassifier]'s own doc comment) without reading a clock
@@ -180,6 +216,41 @@ class StepRepository(
         database.withTransaction {
             database.walkBoutDao().clearAll()
             database.walkBoutDao().insertAll(entities)
+        }
+
+        rescheduleFinalizationJob(minuteBuckets, thresholds, computedAt)
+    }
+
+    /**
+     * Schedules a single cancellable, one-shot local timer so a trailing bout that
+     * [WalkClassifier] withheld (still waiting out [ClassificationThresholds.idleFinalizeMinutes])
+     * gets reclassified - and, once idle long enough, appears as a session - the moment its own
+     * deadline passes, rather than only on the next sync (periodic syncs are hours apart). The
+     * timer only ever reruns the classifier over data already in Room; it never touches
+     * [stepSource]. Any previously scheduled timer is replaced here every time this function runs
+     * - i.e. on every sync, threshold change, or debug import - so new raw data or a threshold
+     * change always reschedules rather than leaving a stale deadline pending, and at most one
+     * timer is ever outstanding.
+     */
+    private suspend fun rescheduleFinalizationJob(
+        minuteBuckets: List<MinuteBucket>,
+        thresholds: ClassificationThresholds,
+        computedAtEpochSecond: Long,
+    ) {
+        // Guard against a job cancelling itself: when this function runs because the timer below
+        // just fired, `finalizationJob` still refers to the coroutine currently executing this
+        // very code - cancelling it here would abort this recompute partway through.
+        finalizationJob?.let { pending -> if (pending !== coroutineContext[Job]) pending.cancel() }
+        finalizationJob = null
+
+        val lastActiveMinuteStart = minuteBuckets.filter { it.steps > 0 }.maxOfOrNull { it.startEpochSecond } ?: return
+        val deadlineEpochSecond = lastActiveMinuteStart + 60L + thresholds.idleFinalizeMinutes * 60L
+        val delaySeconds = deadlineEpochSecond - computedAtEpochSecond
+        if (delaySeconds <= 0) return // already finalized as of this very recompute - nothing to wait for
+
+        finalizationJob = repositoryScope.launch {
+            delay(delaySeconds * 1000)
+            syncMutex.withLock { recomputeClassification() }
         }
     }
 
@@ -231,8 +302,12 @@ class StepRepository(
         database.walkBoutDao().observeAll(),
         database.sessionOverrideDao().observeAll(),
     ) { bouts, overrides ->
+        // A row computed by an older CLASSIFIER_VERSION must never be treated as current - see
+        // ensureClassificationFreshLocked. Filtered here too (not just relying on that recompute
+        // having already run) so a stale row is never shown even in the brief window before it does.
+        val current = bouts.filter { it.classifierVersion == CLASSIFIER_VERSION }
         val overrideMap = overrides.associate { it.boutStartEpochSecond to BoutClassification.valueOf(it.classification) }
-        SessionMerger.fromAutoBouts(bouts.map { it.toDomain() }, overrideMap).sortedByDescending { it.startEpochSecond }
+        SessionMerger.fromAutoBouts(current.map { it.toDomain() }, overrideMap).sortedByDescending { it.startEpochSecond }
     }
 
     fun observeDailyBreakdowns(dates: List<LocalDate>): Flow<Map<LocalDate, DateStepBreakdown>> {
@@ -247,8 +322,6 @@ class StepRepository(
             dates.associateWith { date -> breakdowns[date] ?: DateStepBreakdown(date, 0L, 0L, 0L) }
         }
     }
-
-    fun observeLastSuccessfulSync(): Flow<Instant?> = settingsRepository.settings.map { it.lastSuccessfulSync }
 
     companion object {
         /**

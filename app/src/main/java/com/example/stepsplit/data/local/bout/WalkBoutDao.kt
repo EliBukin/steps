@@ -19,4 +19,8 @@ interface WalkBoutDao {
 
     @Query("SELECT * FROM walk_bouts ORDER BY startEpochSecond DESC")
     suspend fun getAll(): List<WalkBoutEntity>
+
+    /** True if any cached row was computed by a classifier version other than [currentVersion] - see [com.example.stepsplit.domain.classification.CLASSIFIER_VERSION]. */
+    @Query("SELECT EXISTS(SELECT 1 FROM walk_bouts WHERE classifierVersion != :currentVersion)")
+    suspend fun hasRowsWithOtherClassifierVersion(currentVersion: Int): Boolean
 }

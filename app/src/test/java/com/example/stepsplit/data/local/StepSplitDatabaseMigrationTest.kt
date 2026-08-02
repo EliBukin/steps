@@ -5,6 +5,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.core.app.ApplicationProvider
+import java.io.File
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,24 +23,28 @@ import org.robolectric.RobolectricTestRunner
  *
  * Two things are verified together:
  *
- * 1. **Full schema validation.** The starting database is built from the *complete* version-1
- *    schema - all four tables, indices, and the `room_master_table` identity row - using the
- *    exact `createSql`/`setupQueries` Room itself generated into the exported
- *    `app/schemas/.../1.json`, not a hand-abridged approximation. It is then opened through a
- *    real [StepSplitDatabase] (via [Room.databaseBuilder], with [StepSplitDatabase.MIGRATIONS]
- *    registered exactly as production does in [StepSplitDatabase.build]), which forces Room's own
- *    internal open-time validation: after running the migration, Room introspects the actual
- *    on-disk schema of *every* table and compares it field-by-field, index-by-index against what
- *    its compiled v2 entities expect. If the migration left anything - a column, a type, a
- *    nullability flag, an index - not matching, Room throws here. This is the same mechanism
- *    `MigrationTestHelper` itself relies on internally.
+ * 1. **Full schema validation.** The starting database is built by genuinely parsing the exported
+ *    `app/schemas/com.example.stepsplit.data.local.StepSplitDatabase/1.json` at test time (see
+ *    [buildCompleteV1Database]) and executing the exact `createSql`/`setupQueries` strings Room
+ *    itself generated into that file - not a hand-copied approximation that could silently drift
+ *    from it. The resulting database is then opened through a real [StepSplitDatabase] (via
+ *    [Room.databaseBuilder], with [StepSplitDatabase.MIGRATIONS] registered exactly as production
+ *    does in [StepSplitDatabase.build]), which forces Room's own internal open-time validation:
+ *    after running the migration, Room introspects the actual on-disk schema of *every* table and
+ *    compares it field-by-field, index-by-index against what its compiled v2 entities expect. If
+ *    the migration left anything - a column, a type, a nullability flag, an index - not matching,
+ *    Room throws here. This is the same mechanism `MigrationTestHelper` itself relies on
+ *    internally.
  *
  *    `MigrationTestHelper` was not used directly to drive this: as of Room 2.8.4 it has a
  *    database-path resolution issue under Robolectric with `applicationIdSuffix` set (confirmed
- *    while first building this test), separate from the schema-asset-loading friction noted
- *    below. Building the starting schema by hand from the already-exported JSON and letting a
- *    real [StepSplitDatabase] open it gives the same validation guarantee without depending on
- *    that helper's own internals.
+ *    while first building this test). Parsing the already-exported JSON directly and letting a
+ *    real [StepSplitDatabase] open the result gives the same validation guarantee without
+ *    depending on that helper's own internals.
+ *
+ *    Parsing the schema file this way relies on the JVM working directory being the `app/` module
+ *    root, which is how Gradle actually runs `testDebugUnitTest` (confirmed empirically) - not an
+ *    assumption specific to any one IDE test runner.
  *
  * 2. **Row preservation.** A finished and a still-ongoing `manual_walks` row both survive the
  *    upgrade unchanged, with the two new columns defaulting to `0`/false.
@@ -101,53 +107,41 @@ class StepSplitDatabaseMigrationTest {
 
     /**
      * Builds the exact version-1 schema - all four tables, their indices, and the
-     * `room_master_table` identity row - from the same `createSql`/`setupQueries` Room exported to
-     * `app/schemas/com.example.stepsplit.data.local.StepSplitDatabase/1.json`, then seeds two
+     * `room_master_table` identity row - by parsing `1.json` itself (see the class-level doc
+     * comment) and executing its `createSql`/`setupQueries` strings verbatim, then seeds two
      * `manual_walks` rows (one finished, one still ongoing). A plain [SupportSQLiteOpenHelper]
      * (not Room) does the building, closed again before Room itself opens the same file below.
      */
     private fun buildCompleteV1Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/1.json")
+        check(schemaFile.exists()) {
+            "Expected the exported v1 schema at ${schemaFile.absolutePath} - " +
+                "this test must run with the app/ module directory as the working directory " +
+                "(true for `gradlew testDebugUnitTest`, which this project's tests are run under)."
+        }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
         val openHelper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(context)
                 .name(dbName)
                 .callback(object : SupportSQLiteOpenHelper.Callback(1) {
                     override fun onCreate(db: SupportSQLiteDatabase) {
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS `step_buckets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                                "`source` TEXT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, " +
-                                "`steps` INTEGER NOT NULL, `zoneId` TEXT NOT NULL, `localDate` TEXT NOT NULL, " +
-                                "`importedAtEpochSecond` INTEGER NOT NULL)",
-                        )
-                        db.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_step_buckets_source_startEpochSecond` " +
-                                "ON `step_buckets` (`source`, `startEpochSecond`)",
-                        )
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS `walk_bouts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                                "`startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, `steps` INTEGER NOT NULL, " +
-                                "`activeMinutes` INTEGER NOT NULL, `elapsedMinutes` INTEGER NOT NULL, `cadence` REAL NOT NULL, " +
-                                "`autoClassification` TEXT NOT NULL, `autoConfidence` REAL NOT NULL, `autoReasonCode` TEXT NOT NULL, " +
-                                "`classifierVersion` INTEGER NOT NULL, `computedAtEpochSecond` INTEGER NOT NULL)",
-                        )
-                        db.execSQL(
-                            "CREATE UNIQUE INDEX IF NOT EXISTS `index_walk_bouts_startEpochSecond` " +
-                                "ON `walk_bouts` (`startEpochSecond`)",
-                        )
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS `session_overrides` (`boutStartEpochSecond` INTEGER NOT NULL, " +
-                                "`classification` TEXT NOT NULL, `overriddenAtEpochSecond` INTEGER NOT NULL, " +
-                                "PRIMARY KEY(`boutStartEpochSecond`))",
-                        )
-                        db.execSQL(
-                            "CREATE TABLE IF NOT EXISTS `manual_walks` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                                "`startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER, `steps` INTEGER, " +
-                                "`createdAtEpochSecond` INTEGER NOT NULL)",
-                        )
-                        db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
-                        db.execSQL(
-                            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) " +
-                                "VALUES(42, '647a7bff7aa146a476b5b6aa84e7c50c')",
-                        )
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                val indexSql = indices.getJSONObject(j).getString("createSql")
+                                db.execSQL(indexSql.replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
                     }
 
                     override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
@@ -168,5 +162,10 @@ class StepSplitDatabaseMigrationTest {
         } finally {
             openHelper.close()
         }
+    }
+
+    private companion object {
+        /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
+        const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"
     }
 }

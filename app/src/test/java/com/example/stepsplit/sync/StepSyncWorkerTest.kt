@@ -15,6 +15,7 @@ import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.data.stepsource.StepSourceReadException
 import java.time.Clock
 import java.time.Instant
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -24,10 +25,10 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class StepSyncWorkerTest {
 
-    private fun buildWorker(stepSource: StepSource): StepSyncWorker {
+    private fun buildWorker(stepSource: StepSource, repositoryScope: CoroutineScope): StepSyncWorker {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val database = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
-        val repository = StepRepository(database, stepSource, SettingsRepository(context), Clock.systemUTC())
+        val repository = StepRepository(database, stepSource, SettingsRepository(context), Clock.systemUTC(), repositoryScope)
         return TestListenableWorkerBuilder<StepSyncWorker>(context)
             .setWorkerFactory(StepSyncWorkerFactory(repository))
             .build()
@@ -35,14 +36,14 @@ class StepSyncWorkerTest {
 
     @Test
     fun `worker succeeds when a sync completes normally`() = runTest {
-        val worker = buildWorker(FakeStepSource())
+        val worker = buildWorker(FakeStepSource(), backgroundScope)
         assertEquals(ListenableWorker.Result.success(), worker.doWork())
     }
 
     @Test
     fun `worker reports success rather than retry when permission is missing`() = runTest {
         val fakeSource = FakeStepSource().apply { setAvailability(StepSourceAvailability.PermissionNotGranted) }
-        val worker = buildWorker(fakeSource)
+        val worker = buildWorker(fakeSource, backgroundScope)
 
         // A missing permission is not a transient failure - retrying will not fix it, so the
         // worker should not keep rescheduling itself with backoff for this case.
@@ -58,7 +59,7 @@ class StepSyncWorkerTest {
                 throw StepSourceReadException("simulated non-success status")
             }
         }
-        val worker = buildWorker(failingSource)
+        val worker = buildWorker(failingSource, backgroundScope)
 
         assertEquals(ListenableWorker.Result.retry(), worker.doWork())
     }

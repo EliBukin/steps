@@ -3,20 +3,29 @@ package com.example.stepsplit.data.repository
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.FakeStepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.BoutClassification
+import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.SyncFailureCategory
+import com.example.stepsplit.domain.model.WalkSession
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.After
@@ -35,6 +44,7 @@ private class MutableClock(var instant: Instant, var currentZone: ZoneId) : Cloc
     override fun withZone(zone: ZoneId): Clock = MutableClock(instant, zone)
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class StepRepositoryTest {
 
@@ -48,13 +58,23 @@ class StepRepositoryTest {
     /** One hour before "now" - safely inside the sync read window used by every test below. */
     private val baseEpoch = fixedNow.epochSecond - 3600
 
+    /**
+     * A throwaway [CoroutineScope] for the shared [repository] below, backed by a
+     * [StandardTestDispatcher] that nothing in this file ever advances - so any trailing-bout
+     * finalization timer it schedules (see StepRepository.rescheduleFinalizationJob) simply never
+     * fires. Fine for every test here that isn't specifically about that timer; tests that are
+     * construct their own repository against `backgroundScope` (see runTest's own TestScope)
+     * instead, so its virtual clock is actually driven by that test's advanceTimeBy/advanceUntilIdle.
+     */
+    private val noOpTimerScope: CoroutineScope = CoroutineScope(StandardTestDispatcher())
+
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         database = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
         fakeSource = FakeStepSource()
         settingsRepository = SettingsRepository(context)
-        repository = StepRepository(database, fakeSource, settingsRepository, clock)
+        repository = StepRepository(database, fakeSource, settingsRepository, clock, noOpTimerScope)
     }
 
     @After
@@ -109,7 +129,7 @@ class StepRepositoryTest {
                 throw IllegalStateException("simulated transient failure")
             }
         }
-        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock)
+        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock, noOpTimerScope)
 
         val result = failingRepository.syncNow()
 
@@ -132,7 +152,7 @@ class StepRepositoryTest {
             }
         }
         val laterClock = Clock.fixed(fixedNow.plusSeconds(120), ZoneOffset.UTC)
-        val laterRepository = StepRepository(database, failingSource, settingsRepository, laterClock)
+        val laterRepository = StepRepository(database, failingSource, settingsRepository, laterClock, noOpTimerScope)
 
         val result = laterRepository.syncNow()
 
@@ -142,6 +162,92 @@ class StepRepositoryTest {
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
         assertEquals(1, database.stepBucketDao().count())
         assertEquals(syncTimeAfterSuccess, settingsRepository.settings.first().lastSuccessfulSync)
+    }
+
+    // ---- Classifier cache versioning (CLASSIFIER_VERSION) ----
+
+    /** Builds a stale cached row as if written by an older classifier version, deliberately misclassified so a passing test proves it was actually replaced rather than coincidentally matching. */
+    private fun staleWalkBoutRow() = WalkBoutEntity(
+        startEpochSecond = baseEpoch,
+        endEpochSecond = baseEpoch + 20 * 60L,
+        steps = 1600,
+        activeMinutes = 20,
+        elapsedMinutes = 20,
+        cadence = 80.0,
+        autoClassification = "INCIDENTAL",
+        autoConfidence = 0.9,
+        autoReasonCode = "DURATION_TOO_SHORT",
+        classifierVersion = 1,
+        computedAtEpochSecond = baseEpoch,
+    )
+
+    private suspend fun seedRawWorkoutBuckets() {
+        for (i in 0 until 20) {
+            database.stepBucketDao().upsertAll(
+                listOf(
+                    StepBucketEntity(
+                        source = fakeSource.id,
+                        startEpochSecond = baseEpoch + i * 60L,
+                        endEpochSecond = baseEpoch + i * 60L + 60,
+                        steps = 80,
+                        zoneId = "UTC",
+                        localDate = "2026-03-10",
+                        importedAtEpochSecond = baseEpoch,
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `observeSessions never returns a row computed by an older classifier version`() = runTest {
+        // No sync has run at all - this asserts the read-side filter directly, independent of
+        // whether anything has triggered a recompute yet.
+        database.walkBoutDao().insertAll(listOf(staleWalkBoutRow()))
+
+        assertTrue(repository.observeSessions().first().isEmpty())
+    }
+
+    @Test
+    fun `a stale cached classification is recomputed from local raw data when the step source is unavailable`() = runTest {
+        seedRawWorkoutBuckets()
+        database.walkBoutDao().insertAll(listOf(staleWalkBoutRow()))
+        fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
+
+        val result = repository.syncNow()
+
+        assertTrue("an unavailable source must not block recovering from a stale cache", result is SyncResult.Unavailable)
+        val sessions = repository.observeSessions().first()
+        assertEquals(1, sessions.size)
+        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+    }
+
+    @Test
+    fun `a stale cached classification is recomputed from local raw data when the source read fails`() = runTest {
+        seedRawWorkoutBuckets()
+        database.walkBoutDao().insertAll(listOf(staleWalkBoutRow()))
+        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
+                throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
+            }
+        }
+        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock, noOpTimerScope)
+
+        val result = failingRepository.syncNow()
+
+        assertTrue("a failing read must not block recovering from a stale cache", result is SyncResult.Failed)
+        val sessions = failingRepository.observeSessions().first()
+        assertEquals(1, sessions.size)
+        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+    }
+
+    @Test
+    fun `a freshly computed row is stamped with the current classifier version`() = runTest {
+        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+
+        repository.syncNow()
+
+        assertEquals(CLASSIFIER_VERSION, database.walkBoutDao().getAll().single().classifierVersion)
     }
 
     @Test
@@ -211,7 +317,7 @@ class StepRepositoryTest {
         // First sync: only 1 minute after the last active minute - well under the default
         // 3-minute idleFinalizeMinutes, so the bout must not be finalized into a session yet.
         val soonClock = Clock.fixed(Instant.ofEpochSecond(lastActiveMinuteEnd + 60), ZoneOffset.UTC)
-        val soonRepo = StepRepository(database, fakeSource, settingsRepository, soonClock)
+        val soonRepo = StepRepository(database, fakeSource, settingsRepository, soonClock, noOpTimerScope)
         soonRepo.syncNow()
 
         assertTrue("an un-finalized trailing bout must not appear as a session", soonRepo.observeSessions().first().isEmpty())
@@ -223,7 +329,7 @@ class StepRepositoryTest {
         // A later sync, once the idle-finalize window has actually elapsed - same raw data,
         // nothing new arrived, but the bout now finalizes into a workout session.
         val laterClock = Clock.fixed(Instant.ofEpochSecond(lastActiveMinuteEnd + 3 * 60L), ZoneOffset.UTC)
-        val laterRepo = StepRepository(database, fakeSource, settingsRepository, laterClock)
+        val laterRepo = StepRepository(database, fakeSource, settingsRepository, laterClock, noOpTimerScope)
         laterRepo.syncNow()
 
         val finalizedSession = laterRepo.observeSessions().first().single()
@@ -232,6 +338,154 @@ class StepRepositoryTest {
         assertEquals(1600L, laterBreakdown.totalSteps)
         assertEquals(1600L, laterBreakdown.workoutSteps)
         assertEquals(0L, laterBreakdown.incidentalSteps)
+    }
+
+    // ---- Local trailing-bout finalization timer (rescheduleFinalizationJob) ----
+
+    /**
+     * The scheduled timer's recompute crosses onto Room's own real background executor,
+     * independent of this test's virtual coroutine time - advancing virtual time resolves the
+     * `delay()` itself, but the resulting Room work can still be mid-flight on that real thread
+     * when [kotlinx.coroutines.test.TestScope.advanceTimeBy] returns. Repeatedly draining the
+     * scheduler with brief real pauses (bounded, and typically resolving in well under a
+     * millisecond of real time) lets any in-flight cross-thread hop actually catch up before an
+     * assertion checks state - without advancing virtual time any further than what was requested.
+     */
+    private fun TestScope.settle() {
+        repeat(200) {
+            runCurrent()
+            Thread.sleep(1)
+        }
+    }
+
+    /** Like [settle], but polls until [repo] actually shows a finalized session instead of a fixed iteration count - more robust against real-thread scheduling variance under load. */
+    private suspend fun TestScope.awaitFinalizedSessions(repo: StepRepository): List<WalkSession> {
+        repeat(1000) {
+            runCurrent()
+            val sessions = repo.observeSessions().first()
+            if (sessions.isNotEmpty()) return sessions
+            Thread.sleep(1)
+        }
+        return repo.observeSessions().first()
+    }
+
+    @Test
+    fun `a trailing bout finalizes on its own once idleFinalizeMinutes passes, with no second source read`() = runTest {
+        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+        val today = Instant.ofEpochSecond(baseEpoch).atZone(ZoneOffset.UTC).toLocalDate()
+
+        var readCount = 0
+        val countingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant) =
+                fakeSource.readSteps(fromInclusive, toExclusive).also { readCount++ }
+        }
+        // "Now" starts 1 minute after the final active bucket - well under the default 3-minute
+        // idleFinalizeMinutes, so this first sync must not finalize a session yet.
+        val mutableClock = MutableClock(Instant.ofEpochSecond(lastActiveMinuteEnd + 60), ZoneOffset.UTC)
+        val timedRepository = StepRepository(database, countingSource, settingsRepository, mutableClock, backgroundScope)
+
+        timedRepository.syncNow()
+        assertEquals(1, readCount)
+        assertTrue("must not appear as a session yet", timedRepository.observeSessions().first().isEmpty())
+        val earlyBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+        assertEquals(0L, earlyBreakdown.workoutSteps)
+        assertEquals(1600L, earlyBreakdown.incidentalSteps)
+
+        // Advance the clock to exactly the idle-finalize deadline and drive the scheduled local
+        // timer - no second call into syncNow(), so no second source read either.
+        advanceTimeBy(3 * 60_000L)
+        mutableClock.instant = Instant.ofEpochSecond(lastActiveMinuteEnd + 3 * 60L)
+        settle()
+
+        val sessions = awaitFinalizedSessions(timedRepository)
+        assertEquals("the local timer must never read from the step source", 1, readCount)
+        assertEquals(1, sessions.size)
+        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        val laterBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+        assertEquals(1600L, laterBreakdown.workoutSteps)
+        assertEquals(0L, laterBreakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `new activity before the deadline reschedules finalization to reflect the newest data`() = runTest {
+        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+        val mutableClock = MutableClock(Instant.ofEpochSecond(lastActiveMinuteEnd + 60), ZoneOffset.UTC)
+        val timedRepository = StepRepository(database, fakeSource, settingsRepository, mutableClock, backgroundScope)
+
+        // First sync: schedules a deadline 3 minutes (the default idleFinalizeMinutes) after the
+        // last active minute, i.e. at lastActiveMinuteEnd + 180s.
+        timedRepository.syncNow()
+
+        // 60 (virtual) seconds later - still well before that deadline - new activity arrives and
+        // a sync picks it up, extending the bout by one more active minute.
+        advanceTimeBy(60_000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(60)
+        settle()
+        fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
+        timedRepository.syncNow()
+
+        // Advance to exactly the ORIGINAL (now-superseded) deadline - if new activity had not
+        // rescheduled it, this is when the bout would have finalized with the old, incomplete data.
+        advanceTimeBy(61_000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(61)
+        settle()
+        assertTrue(
+            "finalization must wait for the rescheduled deadline, not the original one",
+            timedRepository.observeSessions().first().isEmpty(),
+        )
+
+        // Advance the rest of the way to the actual (rescheduled) deadline: idleFinalizeMinutes
+        // after the newest active minute, i.e. lastActiveMinuteEnd + 120 + 180.
+        val target = lastActiveMinuteEnd + 120 + 180
+        val remainingSeconds = target - mutableClock.instant.epochSecond
+        advanceTimeBy(remainingSeconds * 1000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(remainingSeconds)
+
+        val sessions = awaitFinalizedSessions(timedRepository)
+        assertEquals(1, sessions.size)
+        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        // The original 20 minutes (1600 steps) plus the one extra minute that arrived before the
+        // original deadline (80 steps) - proof the newest data, not a stale snapshot, was used.
+        assertEquals(1680L, sessions.single().steps)
+    }
+
+    @Test
+    fun `changing idleFinalizeMinutes reschedules the pending finalization to the new duration`() = runTest {
+        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+        val mutableClock = MutableClock(Instant.ofEpochSecond(lastActiveMinuteEnd + 60), ZoneOffset.UTC)
+        val timedRepository = StepRepository(database, fakeSource, settingsRepository, mutableClock, backgroundScope)
+
+        // First sync: schedules a deadline using the default 3-minute idleFinalizeMinutes.
+        timedRepository.syncNow()
+
+        // Before that deadline, the user relaxes idleFinalizeMinutes to 10 minutes - finalization
+        // must now wait longer, not fire on the old 3-minute schedule.
+        advanceTimeBy(60_000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(60)
+        settle()
+        val longer = ClassificationThresholds.DEFAULT.copy(idleFinalizeMinutes = 10)
+        timedRepository.applyThresholds(longer)
+
+        // Advance to just past the OLD 3-minute deadline - must still be withheld now that
+        // idleFinalizeMinutes is 10 minutes.
+        advanceTimeBy(61_000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(61)
+        settle()
+        assertTrue(timedRepository.observeSessions().first().isEmpty())
+
+        // Advance the rest of the way to the actual new deadline: 10 minutes after the last
+        // active minute.
+        val target = lastActiveMinuteEnd + 10 * 60
+        val remainingSeconds = target - mutableClock.instant.epochSecond
+        advanceTimeBy(remainingSeconds * 1000)
+        mutableClock.instant = mutableClock.instant.plusSeconds(remainingSeconds)
+
+        val sessions = awaitFinalizedSessions(timedRepository)
+        assertEquals(1, sessions.size)
+        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
     }
 
     @Test
@@ -275,7 +529,7 @@ class StepRepositoryTest {
         val dstContext = ApplicationProvider.getApplicationContext<android.content.Context>()
         val dstDatabase = Room.inMemoryDatabaseBuilder(dstContext, StepSplitDatabase::class.java).build()
         val dstSource = FakeStepSource()
-        val dstRepository = StepRepository(dstDatabase, dstSource, SettingsRepository(dstContext), dstClock)
+        val dstRepository = StepRepository(dstDatabase, dstSource, SettingsRepository(dstContext), dstClock, noOpTimerScope)
 
         // One minute at 01:30 local (EST, before the gap) and one at 03:30 local (EDT, right after it).
         val localDay = java.time.LocalDate.of(2026, 3, 8)
@@ -314,7 +568,7 @@ class StepRepositoryTest {
         // the minute under test.
         val midMinuteNow = fixedNow.plusSeconds(30)
         val midMinuteClock = Clock.fixed(midMinuteNow, ZoneOffset.UTC)
-        val midMinuteRepository = StepRepository(database, fakeSource, settingsRepository, midMinuteClock)
+        val midMinuteRepository = StepRepository(database, fakeSource, settingsRepository, midMinuteClock, noOpTimerScope)
         val currentMinuteStart = midMinuteNow.epochSecond - Math.floorMod(midMinuteNow.epochSecond, 60L)
 
         fakeSource.addInterval(currentMinuteStart, currentMinuteStart + 60, 5)
@@ -365,7 +619,7 @@ class StepRepositoryTest {
                 throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
             }
         }
-        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock)
+        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock, noOpTimerScope)
 
         val result = failingRepository.syncNow()
 
@@ -432,7 +686,7 @@ class StepRepositoryTest {
         val db = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
         val source = FakeStepSource()
         val settings = SettingsRepository(context)
-        val repo1 = StepRepository(db, source, settings, clock1)
+        val repo1 = StepRepository(db, source, settings, clock1, noOpTimerScope)
 
         source.addInterval(baseEpoch, baseEpoch + 60, 50)
         repo1.syncNow()
@@ -443,7 +697,7 @@ class StepRepositoryTest {
         // window (the source still reports the exact same interval as before).
         val zone2 = ZoneId.of("Asia/Tokyo")
         val clock2 = Clock.fixed(fixedNow.plusSeconds(60), zone2)
-        val repo2 = StepRepository(db, source, settings, clock2)
+        val repo2 = StepRepository(db, source, settings, clock2, noOpTimerScope)
         repo2.syncNow()
 
         val reimported = db.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }
@@ -458,7 +712,7 @@ class StepRepositoryTest {
         // whole process, with the device's timezone changing underneath it mid-life.
         val zoneA = ZoneId.of("America/New_York")
         val mutableClock = MutableClock(fixedNow, zoneA)
-        val dynamicRepository = StepRepository(database, fakeSource, settingsRepository, mutableClock)
+        val dynamicRepository = StepRepository(database, fakeSource, settingsRepository, mutableClock, noOpTimerScope)
 
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
         dynamicRepository.syncNow()

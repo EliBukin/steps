@@ -6,6 +6,11 @@ package com.example.stepsplit.domain.classification
  * losing manual corrections, because manual overrides are stored and merged in a separate layer.
  * The one piece of "now" this needs - to decide whether the most recent bout is finished yet, see
  * step 3 below - is passed in explicitly by the caller rather than read from a system clock here.
+ * [nowEpochSecond] has no default: every production call site must decide what "now" means
+ * explicitly (see [com.example.stepsplit.data.repository.StepRepository.recomputeClassification]) -
+ * an implicit "always finalized" default would silently make this function's output depend on
+ * wall-clock time again by omission, defeating the point of keeping it a pure function of its
+ * inputs. Tests that don't care about finalization timing pass an explicit far-future constant.
  *
  * Algorithm:
  * 1. Keep only minutes with steps > 0 ("active minutes"), sorted and de-duplicated.
@@ -30,7 +35,7 @@ object WalkClassifier {
     fun classify(
         buckets: List<MinuteBucket>,
         thresholds: ClassificationThresholds = ClassificationThresholds.DEFAULT,
-        nowEpochSecond: Long = Long.MAX_VALUE,
+        nowEpochSecond: Long,
     ): List<ClassifiedBout> {
         require(thresholds.isValid()) { "Invalid classification thresholds: $thresholds" }
 

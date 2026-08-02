@@ -5,7 +5,12 @@ import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.StepGoals
 import com.example.stepsplit.domain.model.SyncFailure
 import com.example.stepsplit.domain.model.SyncFailureCategory
+import java.time.Instant
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -17,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class SettingsRepositoryTest {
 
@@ -113,5 +119,56 @@ class SettingsRepositoryTest {
         val failure = reopened.settings.first().lastSyncFailure
         assertEquals(SyncFailureCategory.UNKNOWN, failure?.category)
         assertEquals(777L, failure?.atEpochSecond)
+    }
+
+    @Test
+    fun `recording a successful sync sets the timestamp and clears a previous failure together`() = runTest {
+        repository.recordSyncFailure(SyncFailure(SyncFailureCategory.READ_FAILED, 100L))
+
+        repository.recordSuccessfulSync(Instant.ofEpochSecond(200L))
+
+        val settings = repository.settings.first()
+        assertEquals(Instant.ofEpochSecond(200L), settings.lastSuccessfulSync)
+        assertNull(settings.lastSyncFailure)
+    }
+
+    /**
+     * [SettingsRepository.recordSuccessfulSync] must update the timestamp and remove the failure
+     * keys in one DataStore transaction - never as two separate edits an observer could catch
+     * between. Proven by collecting every emission of [SettingsRepository.settings] in the
+     * background while the successful sync is recorded, then checking that not one of them
+     * combines the new timestamp with the old (pre-success) failure.
+     */
+    @Test
+    fun `an observer never sees an emission combining the new success timestamp with the old failure`() = runTest {
+        // Preferences DataStore is a real file not guaranteed fresh per test method (see the
+        // class-level note) - pin a known baseline timestamp first so a leftover value from a
+        // sibling test can never coincidentally match the target instant used below.
+        repository.recordSuccessfulSync(Instant.EPOCH)
+        repository.recordSyncFailure(SyncFailure(SyncFailureCategory.READ_FAILED, 100L))
+
+        val observed = mutableListOf<AppSettings>()
+        val collector = launch { repository.settings.collect { observed.add(it) } }
+        awaitCondition { observed.isNotEmpty() }
+
+        repository.recordSuccessfulSync(Instant.ofEpochSecond(200L))
+        awaitCondition { observed.any { it.lastSuccessfulSync == Instant.ofEpochSecond(200L) } }
+        collector.cancel()
+
+        val badIntermediateState = observed.any {
+            it.lastSuccessfulSync == Instant.ofEpochSecond(200L) && it.lastSyncFailure != null
+        }
+        assertFalse("no emission may combine the new success timestamp with the stale failure", badIntermediateState)
+    }
+
+    /** Polls (real, but tiny and bounded) since DataStore's own dispatcher is a real background thread independent of this test's virtual coroutine time. */
+    private suspend fun TestScope.awaitCondition(maxAttempts: Int = 200, condition: () -> Boolean) {
+        var attempts = 0
+        while (!condition() && attempts < maxAttempts) {
+            runCurrent()
+            Thread.sleep(1)
+            attempts++
+        }
+        assertTrue("condition was not met in time", condition())
     }
 }

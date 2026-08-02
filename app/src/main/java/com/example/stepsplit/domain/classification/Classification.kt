@@ -75,5 +75,12 @@ data class ClassifiedBout(
     val reasonCode: ClassificationReasonCode,
 )
 
-/** Bump when the classification algorithm itself changes, so stored results can be identified as stale. */
-const val CLASSIFIER_VERSION = 1
+/**
+ * Bump when the classification algorithm itself changes, so stored [com.example.stepsplit.data.local.bout.WalkBoutEntity]
+ * rows produced by an older version can be identified as stale and never treated as current
+ * results (see [com.example.stepsplit.data.repository.StepRepository]). Version 2: trailing-bout
+ * idle finalization ([WalkClassifier]'s `nowEpochSecond` parameter) changed which bouts a given
+ * raw history produces without changing the raw data itself, so cached results computed under
+ * version 1 are no longer trustworthy and must be recomputed, not just left in place.
+ */
+const val CLASSIFIER_VERSION = 2

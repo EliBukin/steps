@@ -8,18 +8,26 @@ class WalkClassifierTest {
 
     private val thresholds = ClassificationThresholds.DEFAULT
 
+    /**
+     * [WalkClassifier.classify] has no default for `nowEpochSecond` - production must always
+     * decide explicitly what "now" means. Tests below that aren't about finalization timing
+     * itself pass this explicit far-future constant so every bout they build is trivially already
+     * finalized, without reintroducing an implicit always-finalized default.
+     */
+    private val farFuture = Long.MAX_VALUE
+
     private fun minutes(startEpochSecond: Long, count: Int, stepsPerMinute: Long): List<MinuteBucket> =
         (0 until count).map { MinuteBucket(startEpochSecond + it * 60L, stepsPerMinute) }
 
     @Test
     fun `empty input yields no bouts`() {
-        assertTrue(WalkClassifier.classify(emptyList(), thresholds).isEmpty())
+        assertTrue(WalkClassifier.classify(emptyList(), thresholds, farFuture).isEmpty())
     }
 
     @Test
     fun `sustained brisk walk is classified as a workout`() {
         // 20 minutes, 80 steps per minute: elapsed=20, active=20, steps=1600, cadence=80 - all thresholds cleared.
-        val bout = WalkClassifier.classify(minutes(0, 20, 80), thresholds).single()
+        val bout = WalkClassifier.classify(minutes(0, 20, 80), thresholds, farFuture).single()
 
         assertEquals(BoutClassification.WORKOUT, bout.classification)
         assertEquals(ClassificationReasonCode.MEETS_ALL_THRESHOLDS, bout.reasonCode)
@@ -31,7 +39,7 @@ class WalkClassifierTest {
     @Test
     fun `short incidental burst around the house is not a workout`() {
         // 3 minutes only: fails duration, active-minutes, and steps simultaneously.
-        val bout = WalkClassifier.classify(minutes(0, 3, 50), thresholds).single()
+        val bout = WalkClassifier.classify(minutes(0, 3, 50), thresholds, farFuture).single()
 
         assertEquals(BoutClassification.INCIDENTAL, bout.classification)
         assertEquals(ClassificationReasonCode.MULTIPLE_THRESHOLDS_NOT_MET, bout.reasonCode)
@@ -40,7 +48,7 @@ class WalkClassifierTest {
     @Test
     fun `bout failing only the duration threshold reports that specific reason`() {
         // 8 consecutive active minutes, no internal gap: elapsed=8 (<10), active=8 (ok), steps=640 (ok), cadence=80 (ok).
-        val bout = WalkClassifier.classify(minutes(0, 8, 80), thresholds).single()
+        val bout = WalkClassifier.classify(minutes(0, 8, 80), thresholds, farFuture).single()
 
         assertEquals(BoutClassification.INCIDENTAL, bout.classification)
         assertEquals(ClassificationReasonCode.DURATION_TOO_SHORT, bout.reasonCode)
@@ -51,7 +59,7 @@ class WalkClassifierTest {
         // 5 active minutes, a 2-minute gap (still within maxGapMinutes), then 10 more active minutes.
         val firstPart = minutes(0, 5, 70)
         val secondPart = minutes(5 * 60L + 2 * 60L, 10, 70)
-        val bouts = WalkClassifier.classify(firstPart + secondPart, thresholds)
+        val bouts = WalkClassifier.classify(firstPart + secondPart, thresholds, farFuture)
 
         assertEquals(1, bouts.size)
         assertEquals(15, bouts.single().activeMinutes)
@@ -62,7 +70,7 @@ class WalkClassifierTest {
         // A 3-minute gap (== idleFinalizeMinutes) finalizes the first bout.
         val firstPart = minutes(0, 5, 70)
         val secondPart = minutes(5 * 60L + 3 * 60L, 10, 70)
-        val bouts = WalkClassifier.classify(firstPart + secondPart, thresholds)
+        val bouts = WalkClassifier.classify(firstPart + secondPart, thresholds, farFuture)
 
         assertEquals(2, bouts.size)
     }
@@ -70,7 +78,7 @@ class WalkClassifierTest {
     @Test
     fun `cadence exactly at the threshold passes`() {
         // 10 minutes at exactly 60 steps/min: cadence == minCadenceStepsPerMinute (inclusive boundary).
-        val bout = WalkClassifier.classify(minutes(0, 10, 60), thresholds).single()
+        val bout = WalkClassifier.classify(minutes(0, 10, 60), thresholds, farFuture).single()
 
         assertEquals(BoutClassification.WORKOUT, bout.classification)
     }
@@ -80,7 +88,7 @@ class WalkClassifierTest {
         // 10 minutes of 599 total steps spread unevenly is awkward; instead use 10 minutes at 59 steps/min,
         // which also fails steps (590 < 600) - so bump minutes to keep steps high but cadence just under 60.
         val custom = ClassificationThresholds(minSteps = 500L)
-        val bout = WalkClassifier.classify(minutes(0, 10, 59), custom).single()
+        val bout = WalkClassifier.classify(minutes(0, 10, 59), custom, farFuture).single()
 
         assertEquals(BoutClassification.INCIDENTAL, bout.classification)
         assertEquals(ClassificationReasonCode.CADENCE_TOO_LOW, bout.reasonCode)
@@ -89,11 +97,11 @@ class WalkClassifierTest {
     @Test
     fun `a bout becomes a workout only once enough additional data arrives`() {
         // First classifier run over only the first 8 minutes: too short to be a workout.
-        val partial = WalkClassifier.classify(minutes(0, 8, 80), thresholds).single()
+        val partial = WalkClassifier.classify(minutes(0, 8, 80), thresholds, farFuture).single()
         assertEquals(BoutClassification.INCIDENTAL, partial.classification)
 
         // A later sync brings in the rest of the same continuous walk (same start, more active minutes).
-        val complete = WalkClassifier.classify(minutes(0, 20, 80), thresholds).single()
+        val complete = WalkClassifier.classify(minutes(0, 20, 80), thresholds, farFuture).single()
         assertEquals(BoutClassification.WORKOUT, complete.classification)
         assertEquals(partial.startEpochSecond, complete.startEpochSecond)
     }
@@ -101,7 +109,7 @@ class WalkClassifierTest {
     @Test
     fun `multiple minute readings for the same start second are summed before classifying`() {
         val duplicated = listOf(MinuteBucket(0, 40), MinuteBucket(0, 40)) + minutes(60, 9, 80)
-        val bout = WalkClassifier.classify(duplicated, thresholds).single()
+        val bout = WalkClassifier.classify(duplicated, thresholds, farFuture).single()
 
         assertEquals(80L + 9 * 80L, bout.steps)
     }
