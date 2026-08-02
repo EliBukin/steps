@@ -60,6 +60,11 @@ class TodayViewModel(
             weeklyGoal = settings.goals.weeklyGoalSteps,
             lastSuccessfulSync = lastSync,
             availability = currentAvailability,
+            // Backed by SettingsRepository (a Room/DataStore-persisted value observed through the
+            // same settings flow as everything else here), not a transient ViewModel field - a
+            // failure recorded by a background WorkManager sync is visible the moment this screen
+            // is next observed, not only right after a refresh() triggered from here.
+            syncFailure = settings.lastSyncFailure,
         )
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())

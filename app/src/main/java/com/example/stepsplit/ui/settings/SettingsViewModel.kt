@@ -7,6 +7,7 @@ import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.StepGoals
+import com.example.stepsplit.domain.model.SyncFailure
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,8 @@ data class SettingsUiState(
     val goals: StepGoals = StepGoals(StepGoals.DEFAULT_DAILY_GOAL),
     val thresholds: ClassificationThresholds = ClassificationThresholds.DEFAULT,
     val availability: StepSourceAvailability? = null,
+    /** The most recent sync failure, if any hasn't since been cleared by a successful sync - a separate concern from [availability]. */
+    val syncFailure: SyncFailure? = null,
     val goalInputError: Boolean = false,
 )
 
@@ -40,6 +43,7 @@ class SettingsViewModel(
             goals = settings.goals,
             thresholds = settings.thresholds,
             availability = currentAvailability,
+            syncFailure = settings.lastSyncFailure,
             goalInputError = hasGoalError,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())

@@ -9,6 +9,7 @@ import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.RawStepInterval
 import com.example.stepsplit.data.stepsource.StepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
+import com.example.stepsplit.data.stepsource.StepSourceReadException
 import com.example.stepsplit.domain.aggregation.BucketNormalizer
 import com.example.stepsplit.domain.aggregation.DatedBucket
 import com.example.stepsplit.domain.aggregation.DateStepBreakdown
@@ -22,6 +23,8 @@ import com.example.stepsplit.domain.classification.ClassifiedBout
 import com.example.stepsplit.domain.classification.MinuteBucket
 import com.example.stepsplit.domain.classification.WalkClassifier
 import com.example.stepsplit.domain.model.SessionMerger
+import com.example.stepsplit.domain.model.SyncFailure
+import com.example.stepsplit.domain.model.SyncFailureCategory
 import com.example.stepsplit.domain.model.WalkSession
 import java.time.Clock
 import java.time.Duration
@@ -58,12 +61,15 @@ class StepRepository(
     private suspend fun syncNowLocked(): SyncResult {
         val availability = stepSource.checkAvailability()
         if (availability !is StepSourceAvailability.Available) {
+            // Source availability/permission state is a separate axis from sync/collection
+            // health below - deliberately left untouched here rather than recorded as a sync
+            // failure, so the two concerns never get conflated in the UI.
             return SyncResult.Unavailable(availability)
         }
         if (!stepSource.ensureSubscribed()) {
             // Without a live subscription a "successful" read could just be an empty/stale one -
             // report this as a failure rather than silently recording an empty sync as success.
-            return SyncResult.Failed("Unable to subscribe to the step data source")
+            return recordFailure(SyncFailureCategory.SUBSCRIPTION_FAILED, "Unable to subscribe to the step data source")
         }
 
         return try {
@@ -93,12 +99,24 @@ class StepRepository(
 
             recomputeClassification()
             settingsRepository.setLastSuccessfulSync(now)
+            // A genuinely successful sync is the only thing allowed to clear a previously
+            // recorded failure - it must never look cleared just because the UI happened to poll
+            // again, and it must never be replaced with a fake "zero steps" success.
+            settingsRepository.clearSyncFailure()
             SyncResult.Success(bucketEntities.size)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: StepSourceReadException) {
+            recordFailure(SyncFailureCategory.READ_FAILED, e.message ?: "Unknown read failure")
         } catch (e: Exception) {
-            SyncResult.Failed(e.message ?: "Unknown sync failure")
+            recordFailure(SyncFailureCategory.UNKNOWN, e.message ?: "Unknown sync failure")
         }
+    }
+
+    /** Persists a structured failure category/time (see [SyncFailure]) and returns the matching [SyncResult.Failed]. */
+    private suspend fun recordFailure(category: SyncFailureCategory, message: String): SyncResult.Failed {
+        settingsRepository.recordSyncFailure(SyncFailure(category, clock.instant().epochSecond))
+        return SyncResult.Failed(category, message)
     }
 
     /**
@@ -145,13 +163,18 @@ class StepRepository(
 
     private fun alignToMinute(epochSecond: Long): Long = epochSecond - Math.floorMod(epochSecond, 60L)
 
-    /** Reruns the classifier over the full raw history and atomically replaces the AUTO cache. */
+    /**
+     * Reruns the classifier over the full raw history and atomically replaces the AUTO cache.
+     * Passes the current instant explicitly so the classifier can decide whether the most recent
+     * bout is finalized yet (see [WalkClassifier]'s own doc comment) without reading a clock
+     * itself - it stays a pure function of its inputs.
+     */
     private suspend fun recomputeClassification() {
         val thresholds = settingsRepository.settings.first().thresholds
         val buckets = database.stepBucketDao().getAllActive()
         val minuteBuckets = buckets.map { MinuteBucket(it.startEpochSecond, it.steps) }
-        val classified = WalkClassifier.classify(minuteBuckets, thresholds)
         val computedAt = clock.instant().epochSecond
+        val classified = WalkClassifier.classify(minuteBuckets, thresholds, computedAt)
 
         val entities = classified.map { it.toEntity(computedAt) }
         database.withTransaction {
@@ -228,7 +251,15 @@ class StepRepository(
     fun observeLastSuccessfulSync(): Flow<Instant?> = settingsRepository.settings.map { it.lastSuccessfulSync }
 
     companion object {
-        val RETENTION_WINDOW: Duration = Duration.ofDays(7)
+        /**
+         * The Local Recording API documents successfully subscribed local data as retained for
+         * 10 days. Clamping the recovery/read window any tighter than that would permanently
+         * miss still-recoverable data after a long sync gap (roughly 8-10 days with no
+         * successful sync) even though the API itself still has it. This only bounds how far
+         * back a *read request* reaches on a first-ever or long-overdue sync - it has no effect
+         * on how long data already imported into Room is kept; that's permanent.
+         */
+        val RETENTION_WINDOW: Duration = Duration.ofDays(10)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
     }
 }

@@ -26,8 +26,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
+import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.ui.common.statusText
+import com.example.stepsplit.ui.common.text
 
 @Composable
 fun SettingsScreen(
@@ -157,6 +159,13 @@ private fun ThresholdField(label: String, value: Int, onValueChange: (Int) -> Un
     )
 }
 
+/**
+ * "Permission status" reflects source availability only (permission granted, Play services
+ * present) - see [StepSourceAvailability]. "Data collection status" reflects whether syncs are
+ * actually succeeding - see [com.example.stepsplit.domain.model.SyncFailure] - which is not the
+ * same thing: availability being fine does not mean the last sync actually succeeded, so this
+ * must never just echo the availability text back a second time under a different heading.
+ */
 @Composable
 private fun StatusSection(uiState: SettingsUiState) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -172,10 +181,28 @@ private fun StatusSection(uiState: SettingsUiState) {
                 modifier = Modifier.padding(top = 8.dp),
             )
             Text(
-                text = uiState.availability?.statusText() ?: stringResource(R.string.status_unknown),
+                text = collectionStatusText(uiState),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+    }
+}
+
+/**
+ * A recorded sync failure always wins - it means collection is *not* actually working right now,
+ * regardless of what availability says. Only once there is no such failure does this fall back to
+ * describing availability: "active" when available, or the same reason text the permission-status
+ * line above shows when not (there is nothing more specific to say about collection health in
+ * that case - the source itself isn't usable yet).
+ */
+@Composable
+private fun collectionStatusText(uiState: SettingsUiState): String {
+    val failure = uiState.syncFailure
+    if (failure != null) return failure.category.text()
+    return when (uiState.availability) {
+        StepSourceAvailability.Available -> stringResource(R.string.status_available)
+        null -> stringResource(R.string.status_unknown)
+        else -> uiState.availability.statusText()
     }
 }
 

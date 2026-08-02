@@ -7,9 +7,12 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.StepGoals
+import com.example.stepsplit.domain.model.SyncFailure
+import com.example.stepsplit.domain.model.SyncFailureCategory
 import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -20,6 +23,8 @@ data class AppSettings(
     val goals: StepGoals,
     val thresholds: ClassificationThresholds,
     val lastSuccessfulSync: Instant?,
+    /** The most recent sync failure, if any hasn't since been cleared by a successful sync - see [SyncFailure]. */
+    val lastSyncFailure: SyncFailure?,
 )
 
 /**
@@ -41,6 +46,8 @@ class SettingsRepository(context: Context) {
         val MIN_STEPS = longPreferencesKey("threshold_min_steps")
         val MIN_CADENCE = doublePreferencesKey("threshold_min_cadence")
         val LAST_SYNC_EPOCH_SECOND = longPreferencesKey("last_sync_epoch_second")
+        val SYNC_FAILURE_CATEGORY = stringPreferencesKey("sync_failure_category")
+        val SYNC_FAILURE_EPOCH_SECOND = longPreferencesKey("sync_failure_epoch_second")
     }
 
     val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
@@ -58,6 +65,14 @@ class SettingsRepository(context: Context) {
                 minCadenceStepsPerMinute = prefs[Keys.MIN_CADENCE] ?: default.minCadenceStepsPerMinute,
             ),
             lastSuccessfulSync = prefs[Keys.LAST_SYNC_EPOCH_SECOND]?.let { Instant.ofEpochSecond(it) },
+            lastSyncFailure = prefs[Keys.SYNC_FAILURE_CATEGORY]?.let { categoryName ->
+                val atEpochSecond = prefs[Keys.SYNC_FAILURE_EPOCH_SECOND]
+                if (atEpochSecond == null) {
+                    null
+                } else {
+                    SyncFailure(SyncFailureCategory.valueOf(categoryName), atEpochSecond)
+                }
+            },
         )
     }
 
@@ -87,5 +102,25 @@ class SettingsRepository(context: Context) {
 
     suspend fun setLastSuccessfulSync(instant: Instant) {
         dataStore.edit { it[Keys.LAST_SYNC_EPOCH_SECOND] = instant.epochSecond }
+    }
+
+    /**
+     * Persisted (not just in-memory ViewModel state) so a failure that happens during a
+     * background WorkManager sync is still visible the next time the app is opened, not only
+     * during the ViewModel call that happened to trigger it.
+     */
+    suspend fun recordSyncFailure(failure: SyncFailure) {
+        dataStore.edit { prefs ->
+            prefs[Keys.SYNC_FAILURE_CATEGORY] = failure.category.name
+            prefs[Keys.SYNC_FAILURE_EPOCH_SECOND] = failure.atEpochSecond
+        }
+    }
+
+    /** Called after a genuinely successful sync - a failure must never keep showing once collection is working again. */
+    suspend fun clearSyncFailure() {
+        dataStore.edit { prefs ->
+            prefs.remove(Keys.SYNC_FAILURE_CATEGORY)
+            prefs.remove(Keys.SYNC_FAILURE_EPOCH_SECOND)
+        }
     }
 }

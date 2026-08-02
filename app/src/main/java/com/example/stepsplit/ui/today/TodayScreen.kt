@@ -18,6 +18,7 @@ import com.example.stepsplit.domain.model.GoalProgress
 import com.example.stepsplit.ui.common.CollectionStatusBanner
 import com.example.stepsplit.ui.common.GoalProgressSection
 import com.example.stepsplit.ui.common.StatCard
+import com.example.stepsplit.ui.common.SyncFailureBanner
 import com.example.stepsplit.ui.common.formatSyncTime
 
 @Composable
@@ -34,6 +35,7 @@ fun TodayScreen(
 
     val items = buildList {
         add(TodayItem.Availability)
+        if (uiState.syncFailure != null) add(TodayItem.SyncFailure)
         add(TodayItem.Totals)
         add(TodayItem.DailyGoal)
         add(TodayItem.WeeklyGoal)
@@ -50,6 +52,8 @@ fun TodayScreen(
                 TodayItem.Availability -> uiState.availability?.let { availability ->
                     CollectionStatusBanner(availability = availability, onGrantPermission = onGrantPermission)
                 }
+
+                TodayItem.SyncFailure -> uiState.syncFailure?.let { failure -> SyncFailureBanner(failure) }
 
                 TodayItem.Totals -> TotalsSection(uiState)
                 TodayItem.DailyGoal -> GoalProgressSection(
@@ -71,7 +75,7 @@ fun TodayScreen(
     }
 }
 
-private enum class TodayItem { Availability, Totals, DailyGoal, WeeklyGoal, LastSync }
+private enum class TodayItem { Availability, SyncFailure, Totals, DailyGoal, WeeklyGoal, LastSync }
 
 @Composable
 private fun TotalsSection(uiState: TodayUiState) {

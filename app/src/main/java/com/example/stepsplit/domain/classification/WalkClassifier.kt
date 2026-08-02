@@ -2,15 +2,25 @@ package com.example.stepsplit.domain.classification
 
 /**
  * Pure, deterministic bout-detection and workout classification. No Android dependencies, no
- * I/O, no wall-clock reads - safe to rerun over the full raw history at any time without losing
- * manual corrections, because manual overrides are stored and merged in a separate layer.
+ * I/O, no internal wall-clock reads - safe to rerun over the full raw history at any time without
+ * losing manual corrections, because manual overrides are stored and merged in a separate layer.
+ * The one piece of "now" this needs - to decide whether the most recent bout is finished yet, see
+ * step 3 below - is passed in explicitly by the caller rather than read from a system clock here.
  *
  * Algorithm:
  * 1. Keep only minutes with steps > 0 ("active minutes"), sorted and de-duplicated.
  * 2. Group consecutive active minutes into a bout as long as the gap between them is at most
- *    [ClassificationThresholds.maxGapMinutes]. A gap of [ClassificationThresholds.idleFinalizeMinutes]
- *    or more finalizes the bout and starts a new one.
- * 3. Classify each finalized bout as a likely WORKOUT only if it satisfies every threshold
+ *    [ClassificationThresholds.maxGapMinutes]. A gap of more than that finalizes the bout and
+ *    starts a new one.
+ * 3. The trailing (most recent) bout is retrospective, not live: more of it could still arrive on
+ *    a later sync, so it is only classified and returned once
+ *    [ClassificationThresholds.idleFinalizeMinutes] worth of fully-elapsed minutes have passed
+ *    since its last active minute, per [nowEpochSecond]. Until then it is withheld entirely - its
+ *    raw steps stay out of every session, so they fall back to being counted as incidental in
+ *    daily totals until the bout actually finalizes. Earlier, non-trailing bouts are never
+ *    withheld - by definition something newer already exists after them, so they cannot still be
+ *    growing.
+ * 4. Classify each finalized bout as a likely WORKOUT only if it satisfies every threshold
  *    (elapsed duration, active minutes, total steps, average cadence); otherwise INCIDENTAL.
  */
 object WalkClassifier {
@@ -20,6 +30,7 @@ object WalkClassifier {
     fun classify(
         buckets: List<MinuteBucket>,
         thresholds: ClassificationThresholds = ClassificationThresholds.DEFAULT,
+        nowEpochSecond: Long = Long.MAX_VALUE,
     ): List<ClassifiedBout> {
         require(thresholds.isValid()) { "Invalid classification thresholds: $thresholds" }
 
@@ -48,7 +59,12 @@ object WalkClassifier {
         }
         bouts.add(current)
 
-        return bouts.map { classifyBout(it, thresholds) }
+        val trailingBoutEnd = bouts.last().last().startEpochSecond + SECONDS_PER_MINUTE
+        val trailingIdleSeconds = nowEpochSecond - trailingBoutEnd
+        val trailingIsFinalized = trailingIdleSeconds >= thresholds.idleFinalizeMinutes * SECONDS_PER_MINUTE
+        val finalizedBouts = if (trailingIsFinalized) bouts else bouts.dropLast(1)
+
+        return finalizedBouts.map { classifyBout(it, thresholds) }
     }
 
     private fun classifyBout(

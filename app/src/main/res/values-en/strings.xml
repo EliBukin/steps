@@ -24,6 +24,11 @@
     <string name="status_available">Step collection is active</string>
     <string name="status_unknown">Checking data collection status…</string>
 
+    <string name="sync_failure_subscription_message">Steps aren\'t syncing: subscribing to step data failed. We\'ll keep retrying automatically.</string>
+    <string name="sync_failure_read_message">Steps aren\'t syncing: the last attempt to read step data failed. We\'ll keep retrying automatically.</string>
+    <string name="sync_failure_unknown_message">Steps aren\'t syncing due to an unexpected error. We\'ll keep retrying automatically.</string>
+    <string name="sync_failure_time_label">Last failed: %1$s</string>
+
     <string name="action_grant_permission">Grant permission</string>
 
     <string name="history_title">Last 7 days</string>

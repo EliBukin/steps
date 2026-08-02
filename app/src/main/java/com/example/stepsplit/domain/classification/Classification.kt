@@ -7,7 +7,16 @@ package com.example.stepsplit.domain.classification
  * user-adjustable in Settings and every classification carries a confidence + reason.
  */
 data class ClassificationThresholds(
+    /** A gap of up to this many idle minutes between two active minutes stays inside the same bout. */
     val maxGapMinutes: Int = 2,
+    /**
+     * How long the most recent bout must sit idle before it is finalized (classified and
+     * surfaced as a session) at all - see [com.example.stepsplit.domain.classification.WalkClassifier].
+     * Always greater than [maxGapMinutes] (enforced by [isValid]): a short internal pause merges
+     * into the same bout, but a much longer one is required before treating that bout as *done*,
+     * since the Local Recording API is not a real-time stream and more of the same bout could
+     * still arrive on a later sync.
+     */
     val idleFinalizeMinutes: Int = 3,
     val minBoutDurationMinutes: Int = 10,
     val minActiveMinutes: Int = 8,

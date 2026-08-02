@@ -48,12 +48,21 @@ Steps come from the **accountless Recording API on mobile** (`FitnessLocal.getLo
 account-based Google Fit API (`Fitness.getRecordingClient`, Google Sign-In, History API).
 
 - `LocalRecordingStepSource` (`data/stepsource/LocalRecordingStepSource.kt`) checks the
-  `ACTIVITY_RECOGNITION` permission and the minimum Google Play services version
-  (`LocalRecordingClient.LOCAL_RECORDING_CLIENT_MIN_VERSION_CODE`) before touching the API.
+  `ACTIVITY_RECOGNITION` permission and the minimum Google Play services version using
+  `LocalRecordingClient.LOCAL_RECORDING_CLIENT_STEPS_MIN_VERSION_CODE` - the steps-only floor,
+  not the general `LOCAL_RECORDING_CLIENT_MIN_VERSION_CODE` (documented as a higher requirement).
+  Since this app never subscribes to any local fitness data type other than steps, using the
+  general constant would reject devices that support local step recording but not every other
+  local fitness data type.
 - Subscription (`subscribe(TYPE_STEP_COUNT_DELTA)`) is idempotent and is **never** routinely
   unsubscribed - unsubscribing makes previously recorded data unavailable.
 - Reads use `LocalDataReadRequest.Builder().aggregate(TYPE_STEP_COUNT_DELTA).bucketByTime(1, MINUTES)`,
-  normalizing into one-minute buckets.
+  normalizing into one-minute buckets. The response's own `Status` is checked before any bucket is
+  processed (`toRawIntervalsOrThrow()` in the same file): a completed `Task` does not by itself
+  mean the read succeeded, and treating a non-success status as "zero buckets" would let
+  `StepRepository` delete previously stored data in its reconciliation window based on that false
+  emptiness. A non-success status throws `StepSourceReadException` instead, which surfaces as an
+  ordinary failed sync - see "Synchronization health" below.
 - `StepSource` is a small interface (`data/stepsource/StepSource.kt`) so a future Health Connect
   or sensor-based provider could be added without touching classification, aggregation, or UI.
   `FakeStepSource` is the interface's other implementation, used by unit tests and the debug-only
@@ -61,13 +70,15 @@ account-based Google Fit API (`Fitness.getRecordingClient`, Google Sign-In, Hist
 
 ### Recording API retention limitation
 
-The Local Recording API only retains a limited rolling history on-device (on the order of days,
-not indefinitely). `StepRepository` treats it as a *feed*, not storage: every successful read is
-immediately imported into Room, which is the durable source of truth. On first subscription the
-repository reads the full retained history; every later sync re-reads a 6-hour rolling overlap
-window (so late/corrected buckets reconcile), clamped to a 7-day retention floor if the app has
-not synced in a long time. Data older than what the API still retains at first launch can never
-be recovered - this is an inherent, documented limitation of the platform API, not a bug.
+The Local Recording API only retains a limited rolling history on-device - documented as **10
+days** for successfully subscribed local data. `StepRepository` treats it as a *feed*, not
+storage: every successful read is immediately imported into Room, which is the durable source of
+truth. On first subscription (or after a long gap with no successful sync) the repository reads
+back up to that full 10-day retention floor; ordinary syncs instead re-read a 6-hour rolling
+overlap window ending at the last known bucket, so late/corrected buckets reconcile without
+re-requesting the full history every time. Data older than what the API still retains at first
+launch can never be recovered - this is an inherent, documented limitation of the platform API,
+not a bug.
 
 ## Required permission
 
@@ -103,6 +114,11 @@ Settings for the only debug-only surface).
   future, dedicated migration. Any rows an earlier app version wrote there are simply ignored.
 - No destructive-migration fallback. Room migrations are additive-only going forward
   (`StepSplitDatabase.MIGRATIONS`).
+- Exported schema JSON (`app/schemas/com.example.stepsplit.data.local.StepSplitDatabase/{1,2}.json`,
+  from `ksp { arg("room.schemaLocation", ...) }` in `app/build.gradle.kts`) is committed to the
+  repository rather than git-ignored, so a schema change shows up as a reviewable diff and the
+  exact version-1 `createSql` is available for migration tests to build from (see below) without
+  reverse-engineering it from the entity source.
 
 ## Automatic classification heuristic (and its limits)
 
@@ -111,16 +127,28 @@ to a walking workout. `domain/classification/WalkClassifier.kt` is a pure functi
 Android dependencies:
 
 1. Keep only minutes with steps > 0.
-2. Group consecutive active minutes into a *bout*: an idle gap of up to **2 minutes** stays inside
-   the same bout; **3+** idle minutes finalizes it and starts a new one.
-3. Classify a finished bout as a likely **workout** only if it clears *every* threshold:
+2. Group consecutive active minutes into a *bout*: an idle gap of up to **2 minutes**
+   (`maxGapMinutes`) stays inside the same bout; anything longer starts a new one.
+3. The **trailing** (most recent) bout is retrospective, not live: more of it could still arrive
+   on a later sync, so it is only classified and surfaced as a session once **3 minutes**
+   (`idleFinalizeMinutes`, always greater than `maxGapMinutes`) worth of fully-elapsed minutes have
+   passed since its last active minute. Until then it is withheld entirely - not shown on the
+   Sessions screen, and its raw steps count as incidental in daily totals rather than being
+   prematurely counted as a workout. Earlier, non-trailing bouts are never withheld. `WalkClassifier.classify()`
+   takes the current instant as an explicit parameter for this rather than reading a system clock
+   itself, so it stays a pure function of its inputs - `StepRepository` supplies it from its own
+   `Clock` on every classifier rerun.
+4. Classify a finalized bout as a likely **workout** only if it clears *every* threshold:
    elapsed duration ≥ 10 min, active minutes ≥ 8, steps ≥ 600, cadence ≥ 60 steps/min. Otherwise
    it is **incidental**.
-4. Every bout gets a confidence (0.5 at exactly-at-threshold, up to 1.0 as metrics clear the
+5. Every bout gets a confidence (0.5 at exactly-at-threshold, up to 1.0 as metrics clear the
    thresholds) and a structured reason code (localized in the UI, not hardcoded English).
 
 All six thresholds are user-editable in Settings ("Advanced"), with a reset-to-defaults action.
 They are an initial heuristic, not an objective truth - the Settings screen says so explicitly.
+Regardless of `idleFinalizeMinutes`, every raw step is always counted somewhere:
+`totalSteps == workoutSteps + incidentalSteps` holds whether or not the trailing bout has
+finalized yet, since daily totals are aggregated from raw buckets, not from sessions.
 
 ### Manual reclassification
 
@@ -153,6 +181,33 @@ A `Mutex` inside `StepRepository` serializes the import → normalize → store 
 pipeline, so a periodic sync racing an app-resume sync cannot interleave writes; Room's
 `withTransaction` blocks additionally guarantee the multi-statement writes (bucket upsert, and
 separately, bout-cache replace) are each atomic.
+
+## Synchronization health
+
+Source **availability** (`StepSourceAvailability` - permission granted, Play services present)
+and sync/collection **health** (whether the most recent sync attempt actually succeeded) are
+tracked as two separate, orthogonal states - a device can be fully available while sync attempts
+still fail for other reasons, and the UI never conflates the two:
+
+- Every failure `StepRepository.syncNowLocked()` can produce - a failed `ensureSubscribed()`, or
+  an exception from the read/import/classify pipeline - is recorded as a structured
+  `SyncFailure(category, atEpochSecond)` (`domain/model/SyncFailure.kt`) via `SettingsRepository`,
+  **not** as raw exception text. `SyncFailureCategory` has three localizable values:
+  `SUBSCRIPTION_FAILED`, `READ_FAILED` (a `StepSourceReadException`, e.g. the non-success `Status`
+  case above), and `UNKNOWN` for anything else unexpected.
+- This is persisted to Preferences DataStore, not held in transient ViewModel state, so a failure
+  recorded by a background `StepSyncWorker` run is visible on the Today screen (and in Settings)
+  the next time the app is opened, not only right after a foreground refresh.
+- A failure is only ever cleared by a **genuinely successful** sync (`SettingsRepository.clearSyncFailure()`,
+  called right after `setLastSuccessfulSync`) - it is never replaced with a fake "zero steps"
+  success, and the previous successful data/timestamp keep showing throughout.
+- The Today screen shows a `SyncFailureBanner` (`ui/common/CollectionStatusBanner.kt`) whenever a
+  failure is recorded, independent of the availability banner above it. In Settings, "Permission
+  status" still describes availability only; "Data collection status" now describes sync health
+  specifically (a recorded failure's message, or "active"/the availability reason when there is
+  none) instead of just echoing the same availability text under both headings.
+- `StepSyncWorker`'s retry behavior is unchanged: any `SyncResult.Failed` (whatever its category)
+  still requests `Result.retry()`, so WorkManager keeps retrying transient failures with backoff.
 
 ## UI and localization
 
@@ -195,6 +250,23 @@ install.
 
 `connectedDebugAndroidTest` requires a physical device or running emulator; none was available in
 the environment this project was built in, so it has not been run.
+
+### Migration testing
+
+`StepSplitDatabaseMigrationTest` builds the *complete* version-1 schema (all four tables, their
+indices, and the `room_master_table` identity row) from the exact `createSql`/`setupQueries` in
+`app/schemas/.../1.json`, then opens that database through a real `StepSplitDatabase` via
+`Room.databaseBuilder(...).addMigrations(*StepSplitDatabase.MIGRATIONS)` - the same call
+`StepSplitDatabase.build()` makes in production. That forces Room's own open-time validation: it
+runs the real migration, then introspects every table's actual on-disk shape (columns, types,
+nullability, indices) and compares it field-by-field against what its compiled v2 entities expect,
+throwing if anything doesn't match. `MigrationTestHelper` was not used directly to drive this: as
+of Room 2.8.4 it has a database-path resolution issue under Robolectric with `applicationIdSuffix`
+set (found while first building this test), on top of needing exported schema JSON bundled as an
+app asset. Building the starting schema by hand from the already-exported JSON and letting a real
+`StepSplitDatabase` open it gives the same validation guarantee without depending on that helper's
+own internals. The test also asserts the pre-existing `manual_walks` rows (finished and ongoing)
+survive the upgrade unchanged, with the two new columns defaulting correctly.
 
 ## Debug fake data
 

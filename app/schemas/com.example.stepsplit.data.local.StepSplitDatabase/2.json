@@ -1,0 +1,262 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "b8be1f80c6cb5a799ba4569560b0b7b0",
+    "entities": [
+      {
+        "tableName": "step_buckets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source` TEXT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `zoneId` TEXT NOT NULL, `localDate` TEXT NOT NULL, `importedAtEpochSecond` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zoneId",
+            "columnName": "zoneId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localDate",
+            "columnName": "localDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedAtEpochSecond",
+            "columnName": "importedAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_step_buckets_source_startEpochSecond",
+            "unique": true,
+            "columnNames": [
+              "source",
+              "startEpochSecond"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_step_buckets_source_startEpochSecond` ON `${TABLE_NAME}` (`source`, `startEpochSecond`)"
+          }
+        ]
+      },
+      {
+        "tableName": "walk_bouts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `activeMinutes` INTEGER NOT NULL, `elapsedMinutes` INTEGER NOT NULL, `cadence` REAL NOT NULL, `autoClassification` TEXT NOT NULL, `autoConfidence` REAL NOT NULL, `autoReasonCode` TEXT NOT NULL, `classifierVersion` INTEGER NOT NULL, `computedAtEpochSecond` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeMinutes",
+            "columnName": "activeMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedMinutes",
+            "columnName": "elapsedMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cadence",
+            "columnName": "cadence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoClassification",
+            "columnName": "autoClassification",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoConfidence",
+            "columnName": "autoConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoReasonCode",
+            "columnName": "autoReasonCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classifierVersion",
+            "columnName": "classifierVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "computedAtEpochSecond",
+            "columnName": "computedAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_walk_bouts_startEpochSecond",
+            "unique": true,
+            "columnNames": [
+              "startEpochSecond"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_walk_bouts_startEpochSecond` ON `${TABLE_NAME}` (`startEpochSecond`)"
+          }
+        ]
+      },
+      {
+        "tableName": "session_overrides",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`boutStartEpochSecond` INTEGER NOT NULL, `classification` TEXT NOT NULL, `overriddenAtEpochSecond` INTEGER NOT NULL, PRIMARY KEY(`boutStartEpochSecond`))",
+        "fields": [
+          {
+            "fieldPath": "boutStartEpochSecond",
+            "columnName": "boutStartEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classification",
+            "columnName": "classification",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "overriddenAtEpochSecond",
+            "columnName": "overriddenAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "boutStartEpochSecond"
+          ]
+        }
+      },
+      {
+        "tableName": "manual_walks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER, `steps` INTEGER, `createdAtEpochSecond` INTEGER NOT NULL, `autoCompleted` INTEGER NOT NULL, `autoCompletionMessageShown` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtEpochSecond",
+            "columnName": "createdAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoCompleted",
+            "columnName": "autoCompleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoCompletionMessageShown",
+            "columnName": "autoCompletionMessageShown",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b8be1f80c6cb5a799ba4569560b0b7b0')"
+    ]
+  }
+}

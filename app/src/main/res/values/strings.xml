@@ -24,6 +24,11 @@
     <string name="status_available">איסוף הצעדים פעיל</string>
     <string name="status_unknown">בודק את מצב איסוף הנתונים…</string>
 
+    <string name="sync_failure_subscription_message">הצעדים אינם מסתנכרנים: המנוי לנתוני הצעדים נכשל. ננסה שוב באופן אוטומטי.</string>
+    <string name="sync_failure_read_message">הצעדים אינם מסתנכרנים: הניסיון האחרון לקרוא את נתוני הצעדים נכשל. ננסה שוב באופן אוטומטי.</string>
+    <string name="sync_failure_unknown_message">הצעדים אינם מסתנכרנים עקב שגיאה בלתי צפויה. ננסה שוב באופן אוטומטי.</string>
+    <string name="sync_failure_time_label">נכשל לאחרונה: %1$s</string>
+
     <string name="action_grant_permission">הענקת הרשאה</string>
 
     <string name="history_title">7 הימים האחרונים</string>

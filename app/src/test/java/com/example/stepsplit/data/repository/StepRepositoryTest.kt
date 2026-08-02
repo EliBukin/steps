@@ -9,7 +9,9 @@ import com.example.stepsplit.data.stepsource.FakeStepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.ClassificationThresholds
+import com.example.stepsplit.domain.model.SyncFailureCategory
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -61,6 +63,7 @@ class StepRepositoryTest {
         // fresh one per test method - without this, a threshold change made by one test (e.g.
         // "changing thresholds...") can leak into a sibling test that assumes defaults.
         settingsRepository.resetThresholds()
+        settingsRepository.clearSyncFailure()
     }
 
     @Test
@@ -115,6 +118,47 @@ class StepRepositoryTest {
     }
 
     @Test
+    fun `a failed read after data already exists leaves the existing buckets untouched`() = runTest {
+        // A successful sync first - this is the data a failed read must never wipe out via
+        // reconciliation deletion (see LocalRecordingStepSource.toRawIntervalsOrThrow).
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        assertTrue(repository.syncNow() is SyncResult.Success)
+        assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+        val syncTimeAfterSuccess = settingsRepository.settings.first().lastSuccessfulSync
+
+        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
+                throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
+            }
+        }
+        val laterClock = Clock.fixed(fixedNow.plusSeconds(120), ZoneOffset.UTC)
+        val laterRepository = StepRepository(database, failingSource, settingsRepository, laterClock)
+
+        val result = laterRepository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        // The reconciliation delete-then-upsert transaction must never have run for this failed
+        // read - the previously stored bucket is exactly as it was, not deleted and not replaced.
+        assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+        assertEquals(1, database.stepBucketDao().count())
+        assertEquals(syncTimeAfterSuccess, settingsRepository.settings.first().lastSuccessfulSync)
+    }
+
+    @Test
+    fun `an interval roughly nine days old is still recovered on a first-ever sync`() = runTest {
+        // The Local Recording API documents a 10-day retention window - a first-ever (or
+        // long-overdue) sync must reach back that far, not just 7 days, or it permanently misses
+        // data the API still actually has.
+        val nineDaysAgo = fixedNow.epochSecond - Duration.ofDays(9).seconds
+        fakeSource.addInterval(nineDaysAgo, nineDaysAgo + 60, 40)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals(40L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
+    @Test
     fun `syncing without permission reports unavailable and writes nothing`() = runTest {
         fakeSource.setAvailability(StepSourceAvailability.PermissionNotGranted)
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
@@ -155,6 +199,39 @@ class StepRepositoryTest {
         assertEquals(breakdown.totalSteps, breakdown.workoutSteps + breakdown.incidentalSteps)
         assertTrue(breakdown.workoutSteps > 0)
         assertTrue(breakdown.incidentalSteps > 0)
+    }
+
+    @Test
+    fun `a trailing bout counts as incidental until it finalizes, then reclassifies as a workout on a later sync`() = runTest {
+        // 20 minutes of brisk walking that would clearly qualify as a workout once finalized.
+        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+        val today = Instant.ofEpochSecond(baseEpoch).atZone(ZoneOffset.UTC).toLocalDate()
+
+        // First sync: only 1 minute after the last active minute - well under the default
+        // 3-minute idleFinalizeMinutes, so the bout must not be finalized into a session yet.
+        val soonClock = Clock.fixed(Instant.ofEpochSecond(lastActiveMinuteEnd + 60), ZoneOffset.UTC)
+        val soonRepo = StepRepository(database, fakeSource, settingsRepository, soonClock)
+        soonRepo.syncNow()
+
+        assertTrue("an un-finalized trailing bout must not appear as a session", soonRepo.observeSessions().first().isEmpty())
+        val earlyBreakdown = soonRepo.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+        assertEquals(1600L, earlyBreakdown.totalSteps)
+        assertEquals(0L, earlyBreakdown.workoutSteps)
+        assertEquals(1600L, earlyBreakdown.incidentalSteps)
+
+        // A later sync, once the idle-finalize window has actually elapsed - same raw data,
+        // nothing new arrived, but the bout now finalizes into a workout session.
+        val laterClock = Clock.fixed(Instant.ofEpochSecond(lastActiveMinuteEnd + 3 * 60L), ZoneOffset.UTC)
+        val laterRepo = StepRepository(database, fakeSource, settingsRepository, laterClock)
+        laterRepo.syncNow()
+
+        val finalizedSession = laterRepo.observeSessions().first().single()
+        assertEquals(BoutClassification.WORKOUT, finalizedSession.classification)
+        val laterBreakdown = laterRepo.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+        assertEquals(1600L, laterBreakdown.totalSteps)
+        assertEquals(1600L, laterBreakdown.workoutSteps)
+        assertEquals(0L, laterBreakdown.incidentalSteps)
     }
 
     @Test
@@ -266,6 +343,57 @@ class StepRepositoryTest {
         assertTrue(result is SyncResult.Failed)
         assertEquals(0, database.stepBucketDao().count())
         assertEquals(before, settingsRepository.settings.first().lastSuccessfulSync)
+    }
+
+    @Test
+    fun `a subscription failure records a structured SUBSCRIPTION_FAILED sync failure`() = runTest {
+        fakeSource.setSubscribeSucceeds(false)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        assertEquals(SyncFailureCategory.SUBSCRIPTION_FAILED, (result as SyncResult.Failed).category)
+        val recorded = settingsRepository.settings.first().lastSyncFailure
+        assertEquals(SyncFailureCategory.SUBSCRIPTION_FAILED, recorded?.category)
+        assertEquals(fixedNow.epochSecond, recorded?.atEpochSecond)
+    }
+
+    @Test
+    fun `a read failure records a structured READ_FAILED sync failure, distinct from a subscription failure`() = runTest {
+        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
+                throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
+            }
+        }
+        val failingRepository = StepRepository(database, failingSource, settingsRepository, clock)
+
+        val result = failingRepository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        assertEquals(SyncFailureCategory.READ_FAILED, (result as SyncResult.Failed).category)
+        assertEquals(SyncFailureCategory.READ_FAILED, settingsRepository.settings.first().lastSyncFailure?.category)
+    }
+
+    @Test
+    fun `a genuinely successful sync clears a previously recorded failure`() = runTest {
+        fakeSource.setSubscribeSucceeds(false)
+        repository.syncNow()
+        assertEquals(SyncFailureCategory.SUBSCRIPTION_FAILED, settingsRepository.settings.first().lastSyncFailure?.category)
+
+        fakeSource.setSubscribeSucceeds(true)
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 20)
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals(null, settingsRepository.settings.first().lastSyncFailure)
+    }
+
+    @Test
+    fun `an available source with no recorded failure has no lingering sync failure after a successful sync`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 20)
+        assertTrue(repository.syncNow() is SyncResult.Success)
+
+        assertEquals(null, settingsRepository.settings.first().lastSyncFailure)
     }
 
     @Test

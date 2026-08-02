@@ -105,4 +105,90 @@ class WalkClassifierTest {
 
         assertEquals(80L + 9 * 80L, bout.steps)
     }
+
+    // ---- Trailing-bout idle finalization ----
+
+    @Test
+    fun `a trailing bout is withheld entirely before idleFinalizeMinutes has elapsed`() {
+        val lastActiveMinuteEnd = 20 * 60L
+        val now = lastActiveMinuteEnd + 60 // 1 minute idle - under the default 3-minute threshold
+
+        val bouts = WalkClassifier.classify(minutes(0, 20, 80), thresholds, now)
+
+        assertTrue("a not-yet-finalized trailing bout must not be emitted at all", bouts.isEmpty())
+    }
+
+    @Test
+    fun `a trailing bout stays withheld one second before the idleFinalizeMinutes boundary`() {
+        val lastActiveMinuteEnd = 20 * 60L
+        val now = lastActiveMinuteEnd + thresholds.idleFinalizeMinutes * 60L - 1
+
+        val bouts = WalkClassifier.classify(minutes(0, 20, 80), thresholds, now)
+
+        assertTrue(bouts.isEmpty())
+    }
+
+    @Test
+    fun `a trailing bout finalizes at the exact idleFinalizeMinutes boundary`() {
+        val lastActiveMinuteEnd = 20 * 60L
+        val now = lastActiveMinuteEnd + thresholds.idleFinalizeMinutes * 60L
+
+        val bouts = WalkClassifier.classify(minutes(0, 20, 80), thresholds, now)
+
+        assertEquals(1, bouts.size)
+        assertEquals(BoutClassification.WORKOUT, bouts.single().classification)
+    }
+
+    @Test
+    fun `a trailing bout well past idleFinalizeMinutes is classified normally`() {
+        val lastActiveMinuteEnd = 20 * 60L
+        val now = lastActiveMinuteEnd + 3600
+
+        val bouts = WalkClassifier.classify(minutes(0, 20, 80), thresholds, now)
+
+        assertEquals(1, bouts.size)
+        assertEquals(BoutClassification.WORKOUT, bouts.single().classification)
+    }
+
+    @Test
+    fun `a custom idleFinalizeMinutes value actually delays finalization`() {
+        val custom = ClassificationThresholds(maxGapMinutes = 2, idleFinalizeMinutes = 7)
+        val lastActiveMinuteEnd = 20 * 60L
+
+        val stillWithheld = WalkClassifier.classify(minutes(0, 20, 80), custom, lastActiveMinuteEnd + 6 * 60L)
+        assertTrue(stillWithheld.isEmpty())
+
+        val finalized = WalkClassifier.classify(minutes(0, 20, 80), custom, lastActiveMinuteEnd + 7 * 60L)
+        assertEquals(1, finalized.size)
+    }
+
+    @Test
+    fun `an earlier historical bout is classified normally while a later trailing bout is withheld`() {
+        val earlierBout = minutes(0, 20, 80) // t 0..1200, comfortably separated from what follows
+        val laterBurst = minutes(1200 + 3600, 2, 50) // starts a full hour later
+
+        // Only 30 seconds after the trailing burst's last active minute - well under the default
+        // 3-minute idleFinalizeMinutes.
+        val now = laterBurst.last().startEpochSecond + 60 + 30
+        val bouts = WalkClassifier.classify(earlierBout + laterBurst, thresholds, now)
+
+        val historical = bouts.single()
+        assertEquals(0L, historical.startEpochSecond)
+        assertEquals(BoutClassification.WORKOUT, historical.classification)
+    }
+
+    @Test
+    fun `a delayed sync discovering multiple separated bouts finalizes all but the trailing one`() {
+        val boutA = minutes(0, 20, 80)
+        val boutB = minutes(boutA.last().startEpochSecond + 60 + 3600, 20, 80)
+        val boutC = minutes(boutB.last().startEpochSecond + 60 + 3600, 3, 50)
+
+        // Well under idleFinalizeMinutes since boutC's last active minute.
+        val now = boutC.last().startEpochSecond + 60 + 30
+        val bouts = WalkClassifier.classify(boutA + boutB + boutC, thresholds, now)
+
+        assertEquals(2, bouts.size)
+        assertTrue(bouts.none { it.startEpochSecond == boutC.first().startEpochSecond })
+        assertTrue(bouts.all { it.classification == BoutClassification.WORKOUT })
+    }
 }
