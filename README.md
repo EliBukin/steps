@@ -1,4 +1,4 @@
-# StepSplit
+# Bukin's Split Step
 
 A lightweight, fully offline Android app that counts daily steps and splits them into **workout
 walking** and **incidental/everyday** movement. Hebrew + RTL is the default UI language, with
@@ -326,7 +326,7 @@ leak even if invoked.
 3. From the `StepSplit/` directory: `./gradlew installDebug` (or copy
    `app/build/outputs/apk/debug/app-debug.apk` to the phone and install it manually with unknown
    sources allowed).
-4. Launch **StepSplit**. Grant the activity-recognition permission when prompted (or via the
+4. Launch **Bukin's Split Step**. Grant the activity-recognition permission when prompted (or via the
    banner on the Today screen).
 5. Walk around - the activity should show up, detected and classified retrospectively, within the
    ~6-hour sync window, or the next time you foreground the app (which also triggers a sync).
