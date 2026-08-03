@@ -2,6 +2,7 @@ package com.example.stepsplit.data.trip
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -27,10 +28,25 @@ class TripRecordingCoordinator(
 
     val isActive: Boolean get() = collectingJob?.isActive == true
 
-    fun start(tripId: Long) {
+    /**
+     * [onFailure] runs at most once if [locationClient]'s flow itself terminates with a
+     * non-cancellation exception - e.g. the platform asynchronously rejecting location-update
+     * registration (see [FusedTripLocationClient]'s doc comment), or a provider failure
+     * mid-collection. `Flow.catch` is cancellation-transparent (it never sees a
+     * [kotlinx.coroutines.CancellationException] raised by [stop] cancelling [collectingJob]), so a
+     * normal stop never spuriously invokes this callback - only a genuine, unexpected failure does.
+     * Collection is stopped before [onFailure] runs; the caller (see
+     * [com.example.stepsplit.trip.service.TripRecordingService]) is responsible for marking the
+     * affected trip interrupted and tearing down the foreground service/notification.
+     */
+    fun start(tripId: Long, onFailure: suspend (Throwable) -> Unit = {}) {
         if (isActive) return
         collectingJob = locationClient.locationUpdates()
             .onEach { batch -> repository.recordAcceptedBatch(tripId, batch) }
+            .catch { throwable ->
+                collectingJob = null
+                onFailure(throwable)
+            }
             .launchIn(scope)
     }
 

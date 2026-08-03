@@ -3,11 +3,7 @@ package com.example.stepsplit.data.trip
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
-import com.example.stepsplit.data.local.bucket.StepBucketEntity
-import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.domain.model.TripState
-import com.example.stepsplit.domain.model.TripStepEstimate
-import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import java.time.Clock
@@ -47,7 +43,7 @@ class TripRepositoryTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         database = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
         clock = MutableClock(fixedNow)
-        repository = TripRepository(database, clock, stepSourceId = "local_recording_api")
+        repository = TripRepository(database, clock)
     }
 
     @Test
@@ -301,78 +297,55 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `estimatedSteps is Pending while the trip is still active`() = runTest {
+    fun `markTripInterrupted transitions an ACTIVE trip to INTERRUPTED`() = runTest {
         val tripId = repository.startTrip()
-        val trip = repository.getTrip(tripId)!!
-        assertEquals(TripStepEstimate.Pending, repository.estimatedSteps(trip.toSummaryForTest()))
+        repository.markTripInterrupted(tripId)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
     }
 
     @Test
-    fun `estimatedSteps is Pending until the step source has synced through the trip's end`() = runTest {
+    fun `markTripInterrupted is a no-op for a trip that is not currently ACTIVE`() = runTest {
         val tripId = repository.startTrip()
-        clock.instant = fixedNow.plusSeconds(120)
         repository.finishTrip(tripId)
-        val trip = repository.getTrip(tripId)!!
 
-        // Only synced up to fixedNow, before the trip's end - must not guess.
-        database.stepBucketDao().upsertAll(
-            listOf(
-                StepBucketEntity(
-                    source = "local_recording_api",
-                    startEpochSecond = fixedNow.epochSecond,
-                    endEpochSecond = fixedNow.epochSecond + 60,
-                    steps = 50,
-                    zoneId = "UTC",
-                    localDate = "2026-03-10",
-                    importedAtEpochSecond = fixedNow.epochSecond,
-                ),
-            ),
-        )
+        repository.markTripInterrupted(tripId)
 
-        assertEquals(TripStepEstimate.Pending, repository.estimatedSteps(trip.toSummaryForTest()))
+        assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
     }
 
+    /**
+     * Reproduces the exact ordering that used to let a delayed OS restart create a duplicate trip:
+     * 1. Create an ACTIVE trip. 2. Reconcile it to INTERRUPTED while the service is reported not
+     * running (`TripsViewModel.init` running before Android's own restart arrives).
+     * 3. "Deliver" the simulated null-intent restart - per the fixed `TripRecordingService.onStartCommand`,
+     * a null [android.content.Intent] resolves via [TripRepository.getActiveTripId] (recover-only),
+     * never via [TripRepository.startTrip] (create-if-none-active); that is the data-layer contract
+     * this test proves. 4. No second trip was created, and the original trip was not silently
+     * changed back.
+     */
     @Test
-    fun `estimatedSteps sums synced step_buckets overlapping the trip window once available`() = runTest {
+    fun `a null-intent restart after reconciliation finds nothing to recover, never a duplicate`() = runTest {
         val tripId = repository.startTrip()
-        clock.instant = fixedNow.plusSeconds(120)
-        repository.finishTrip(tripId)
-        val trip = repository.getTrip(tripId)!!
 
-        database.stepBucketDao().upsertAll(
-            listOf(
-                StepBucketEntity(
-                    source = "local_recording_api",
-                    startEpochSecond = fixedNow.epochSecond,
-                    endEpochSecond = fixedNow.epochSecond + 60,
-                    steps = 60,
-                    zoneId = "UTC",
-                    localDate = "2026-03-10",
-                    importedAtEpochSecond = fixedNow.epochSecond,
-                ),
-                StepBucketEntity(
-                    source = "local_recording_api",
-                    startEpochSecond = fixedNow.epochSecond + 60,
-                    endEpochSecond = fixedNow.epochSecond + 120,
-                    steps = 60,
-                    zoneId = "UTC",
-                    localDate = "2026-03-10",
-                    importedAtEpochSecond = fixedNow.epochSecond + 60,
-                ),
-            ),
-        )
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
 
-        val estimate = repository.estimatedSteps(trip.toSummaryForTest()) as TripStepEstimate.Available
-        assertEquals(120L, estimate.steps)
+        val recoveredTripId = repository.getActiveTripId()
+
+        assertNull(recoveredTripId)
+        assertEquals(1, database.tripDao().observeAll().first().size)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+    }
+
+    /** Documents the bug the fix above prevents: calling the *old* null-intent handler's `startTrip()` at this same point really would create a second, unrelated trip. */
+    @Test
+    fun `calling startTrip instead - the old buggy restart path - would have created a duplicate`() = runTest {
+        val tripId = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+
+        val secondTripId = repository.startTrip()
+
+        assertNotEquals(tripId, secondTripId)
+        assertEquals(2, database.tripDao().observeAll().first().size)
     }
 }
-
-private fun TripEntity.toSummaryForTest() = TripSummary(
-    id = id,
-    startEpochSecond = startEpochSecond,
-    endEpochSecond = endEpochSecond,
-    startZoneId = startZoneId,
-    state = TripState.valueOf(state),
-    distanceMeters = distanceMeters,
-    lastAcceptedPointEpochSecond = lastAcceptedPointEpochSecond,
-)

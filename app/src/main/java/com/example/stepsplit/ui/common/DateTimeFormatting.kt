@@ -36,3 +36,11 @@ fun formatClockTime(epochSecond: Long): String {
     val formatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
     return Instant.ofEpochSecond(epochSecond).atZone(ZoneId.systemDefault()).format(formatter)
 }
+
+/** Like [formatClockTime], but in an explicit [zoneId] rather than the device's current one - for a trip's own stored `startZoneId`, so its start/end times stay consistent with the date shown alongside them even after a later device timezone change. */
+@Composable
+fun formatClockTimeInZone(epochSecond: Long, zoneId: ZoneId): String {
+    val locale = LocalConfiguration.current.locales[0]
+    val formatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
+    return Instant.ofEpochSecond(epochSecond).atZone(zoneId).format(formatter)
+}

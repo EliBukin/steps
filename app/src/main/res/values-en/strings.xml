@@ -126,9 +126,6 @@
     <string name="trip_detail_end_label">Finished</string>
     <string name="trip_detail_duration_label">Duration</string>
     <string name="trip_detail_distance_label">Distance</string>
-    <string name="trip_detail_steps_label">Estimated steps</string>
-    <string name="trip_detail_steps_pending">Not available yet - waiting for steps to sync</string>
-    <string name="trip_detail_export_gpx_action">Export GPX</string>
     <string name="trip_detail_delete_action">Delete trip</string>
     <string name="trip_detail_delete_confirm_title">Delete this trip?</string>
     <string name="trip_detail_delete_confirm_message">This permanently deletes the trip and its recorded route. This cannot be undone.</string>

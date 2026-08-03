@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -51,7 +52,7 @@ class TripRecordingCoordinatorTest {
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         database = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
-        repository = TripRepository(database, clock, stepSourceId = "local_recording_api")
+        repository = TripRepository(database, clock)
         locationClient = FakeTripLocationClient()
         coordinatorScope = CoroutineScope(Dispatchers.Default + Job())
     }
@@ -133,5 +134,53 @@ class TripRecordingCoordinatorTest {
         locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
 
         assertEquals(0, database.tripPointDao().getAllForTrip(tripId).size)
+    }
+
+    @Test
+    fun `a failure during registration invokes onFailure and never starts collecting`() = runBlocking {
+        val tripId = repository.startTrip()
+        val failingClient = FakeTripLocationClient(registrationFailure = IllegalStateException("registration rejected"))
+        val coordinator = TripRecordingCoordinator(repository, failingClient, coordinatorScope)
+        var observedFailure: Throwable? = null
+
+        coordinator.start(tripId) { throwable -> observedFailure = throwable }
+        withTimeout(2_000) { while (observedFailure == null) yield() }
+
+        assertEquals("registration rejected", observedFailure?.message)
+        assertEquals(0, database.tripPointDao().getAllForTrip(tripId).size)
+    }
+
+    @Test
+    fun `a failure after collection begins invokes onFailure and stops collecting`() = runBlocking {
+        val tripId = repository.startTrip()
+        val coordinator = TripRecordingCoordinator(repository, locationClient, coordinatorScope)
+        var observedFailure: Throwable? = null
+
+        coordinator.start(tripId) { throwable -> observedFailure = throwable }
+        awaitSubscriptionCount(1)
+        locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
+        withTimeout(5_000) { database.tripPointDao().observeForTrip(tripId).first { it.isNotEmpty() } }
+
+        locationClient.failActiveCollection(IllegalStateException("provider lost"))
+        withTimeout(2_000) { while (observedFailure == null) yield() }
+
+        assertEquals("provider lost", observedFailure?.message)
+        awaitSubscriptionCount(0)
+    }
+
+    @Test
+    fun `a normal stop never invokes onFailure`() = runBlocking {
+        val tripId = repository.startTrip()
+        val coordinator = TripRecordingCoordinator(repository, locationClient, coordinatorScope)
+        var observedFailure: Throwable? = null
+
+        coordinator.start(tripId) { throwable -> observedFailure = throwable }
+        awaitSubscriptionCount(1)
+        coordinator.stop()
+        awaitSubscriptionCount(0)
+
+        // Give any spurious onFailure invocation a chance to land before asserting its absence.
+        withTimeout(1_000) { delay(100) }
+        assertEquals(null, observedFailure)
     }
 }

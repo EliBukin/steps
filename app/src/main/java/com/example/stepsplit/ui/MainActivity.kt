@@ -2,7 +2,6 @@ package com.example.stepsplit.ui
 
 import android.Manifest
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -37,14 +36,6 @@ class MainActivity : ComponentActivity() {
         pendingTripPermissionResult = null
     }
 
-    private var pendingGpxDocumentResult: ((Uri?) -> Unit)? = null
-    private val createGpxDocumentLauncher = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("application/gpx+xml"),
-    ) { uri ->
-        pendingGpxDocumentResult?.invoke(uri)
-        pendingGpxDocumentResult = null
-    }
-
     private var initialRoute by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,7 +51,6 @@ class MainActivity : ComponentActivity() {
                     container = container,
                     onRequestPermission = { requestActivityRecognitionPermission() },
                     onRequestTripPermissions = ::requestTripPermissions,
-                    onCreateGpxDocument = ::createGpxDocument,
                     initialRoute = initialRoute,
                 )
             }
@@ -95,11 +85,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         requestTripPermissionsLauncher.launch(permissions.toTypedArray())
-    }
-
-    private fun createGpxDocument(suggestedFileName: String, onResult: (Uri?) -> Unit) {
-        pendingGpxDocumentResult = onResult
-        createGpxDocumentLauncher.launch(suggestedFileName)
     }
 
     companion object {

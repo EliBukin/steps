@@ -4,16 +4,13 @@ import androidx.room.withTransaction
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
-import com.example.stepsplit.domain.classification.MinuteBucket
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
-import com.example.stepsplit.domain.model.TripStepEstimate
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSampleDecision
 import com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy
-import com.example.stepsplit.domain.trip.TripStepEstimator
 import java.time.Clock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -23,22 +20,17 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Owns every read/write path over manually recorded GPS trips - entirely separate from
  * [com.example.stepsplit.data.repository.StepRepository]: a trip never inserts or edits
- * `walk_bouts`, creates a session override, or changes daily step totals. It only ever *reads*
- * `step_buckets` (see [estimatedSteps]) to derive an honest, boundary-aware step estimate for a
- * finished trip - it never writes there either.
+ * `walk_bouts`, creates a session override, or changes daily step totals, and never reads
+ * `step_buckets` either. This MVP only persists a trip's own timestamps/route/distance; a
+ * read-only association with step data is left for a future version.
  *
  * A single [tripMutex] serializes start/finish/point-recording/recovery the same way
  * [com.example.stepsplit.data.repository.StepRepository.syncMutex] does for step sync, so a
  * location callback racing a Finish tap (or a duplicate service start) can never interleave writes.
- *
- * [stepSourceId] is only used to answer "has the normal step source synced through this trip's end
- * yet" for [estimatedSteps] - this repository never subscribes to or reads live data from that
- * source itself.
  */
 class TripRepository(
     private val database: StepSplitDatabase,
     private val clock: Clock,
-    private val stepSourceId: String,
 ) {
     private val tripMutex = Mutex()
 
@@ -130,6 +122,19 @@ class TripRepository(
         database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
     }
 
+    /**
+     * Transitions [tripId] from ACTIVE to INTERRUPTED - the same terminal state
+     * [reconcileActiveTripOnLaunch] uses, but triggered by a live recording failure (see
+     * [TripRecordingCoordinator]'s `onFailure` callback) rather than an app-launch check. A no-op
+     * if the trip is not currently ACTIVE (already finished/interrupted, or a stale/duplicate
+     * failure callback), so this is safe to call more than once for the same failure.
+     */
+    suspend fun markTripInterrupted(tripId: Long) = tripMutex.withLock {
+        val trip = database.tripDao().getById(tripId) ?: return@withLock
+        if (trip.state != TripState.ACTIVE.name) return@withLock
+        database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
+    }
+
     /** The user's choice to continue an [TripState.INTERRUPTED] trip, accepting the visible gap. Does not itself restart the recording service - the caller must also do that. */
     suspend fun resumeInterruptedTrip(tripId: Long) = tripMutex.withLock {
         val trip = database.tripDao().getById(tripId) ?: return@withLock
@@ -162,20 +167,6 @@ class TripRepository(
 
     /** Cascades to every point of this trip - see [TripPointEntity]'s foreign key. */
     suspend fun deleteTrip(tripId: Long) = database.tripDao().deleteById(tripId)
-
-    /**
-     * [TripStepEstimate.Pending] while the trip is still active (nothing final to estimate yet) or
-     * while the normal step source hasn't synced through the trip's end - never a guessed or
-     * silently-zero value. See [TripStepEstimator] for the boundary-minute overlap math.
-     */
-    suspend fun estimatedSteps(trip: TripSummary): TripStepEstimate {
-        val tripEnd = trip.endEpochSecond ?: return TripStepEstimate.Pending
-        val latestSynced = database.stepBucketDao().latestBucketEnd(stepSourceId)
-        if (latestSynced == null || latestSynced < tripEnd) return TripStepEstimate.Pending
-        val buckets = database.stepBucketDao().getAllActive().map { MinuteBucket(it.startEpochSecond, it.steps) }
-        val estimate = TripStepEstimator.estimateSteps(buckets, trip.startEpochSecond, tripEnd)
-        return TripStepEstimate.Available(Math.round(estimate))
-    }
 }
 
 private fun TripEntity.toSummary() = TripSummary(

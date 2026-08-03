@@ -265,9 +265,9 @@ started, manually finished, and never confused with the automatic step tracking 
 **A manually recorded trip and an automatically detected walking session are different concepts.**
 They may overlap in time, but neither owns or mutates the other: a trip never inserts or edits
 `walk_bouts`, never creates a `session_overrides` row, never forces a workout classification, and
-never changes daily step totals or duplicates steps. The only thing it *reads* from the step-sync
-side is already-synced `step_buckets`, purely to show an estimated step count for a finished trip
-(see "Estimated steps" below) - it never writes there.
+never changes daily step totals or duplicates steps. This MVP does not read step data at all - it
+only persists a trip's own timestamps, route, and distance; a read-only association with
+already-synced step data is left for a future version.
 
 There is no way to enable/disable the feature in Settings. The **Trips** tab (between Sessions and
 Settings, `Icons.Filled.Place`) is always visible; "off" simply means no trip is currently
@@ -328,8 +328,26 @@ class with no Service/Activity/ViewModel/composable reference held anywhere.
   every terminal path: normal Finish, an error, or the service's own `onDestroy` as a safety net.
 - **Never starts automatically after boot.** There is no boot receiver anywhere in the manifest;
   the service is only ever started by an explicit user action (Start/Finish) or by Android itself
-  restarting an already-running `START_STICKY` instance after process death - and that restart
-  path resolves to the *same* trip via `startTrip()`'s idempotency, never a duplicate.
+  restarting an already-running `START_STICKY` instance after process death.
+- **Explicit Start and an OS restart are handled by different code paths, deliberately.**
+  `onStartCommand` branches on whether the triggering `Intent` is null: an explicit `ACTION_START`
+  (always a non-null `Intent`, see `TripsScreen.kt`) may create a new trip via the idempotent
+  `TripRepository.startTrip()`, but a null-`Intent` OS restart may only *recover* an already-`ACTIVE`
+  trip via `TripRepository.getActiveTripId()` - it never calls `startTrip()`. This matters because
+  the two can race: if the app's own launch-time reconciliation (see "Honest recovery" below) has
+  already marked the trip `INTERRUPTED` by the time a *delayed* OS restart finally arrives, there is
+  no longer an `ACTIVE` trip to recover - the old code called `startTrip()` unconditionally here,
+  which would silently create and start recording a second, unrelated trip. The fixed restart path
+  instead finds nothing to recover and stops the service without creating or changing anything.
+- **A location-registration failure never leaves the app silently claiming to record.**
+  `FusedLocationProviderClient.requestLocationUpdates()` can reject registration *asynchronously*
+  (its returned `Task` failing, with no exception thrown at the call site) - `FusedTripLocationClient`
+  attaches a failure listener to that `Task` and closes its flow with the resulting exception, so a
+  rejected registration is never silent. `TripRecordingCoordinator.start()` takes a cancellation-transparent
+  `onFailure` callback (via `Flow.catch`, which never fires for a normal `stop()`) that
+  `TripRecordingService` uses to mark the trip `TripState.INTERRUPTED` and tear down the foreground
+  notification/service - the same honest recovery UI described below, triggered by a live failure
+  instead of a launch-time check.
 
 ### Honest recovery after process death or force-stop
 
@@ -380,7 +398,14 @@ in ascending capture-time order. Distance accumulates only between *consecutive 
 the trip's updated distance/last-point-timestamp commit together inside one Room transaction, so a
 crash between them can never leave the two inconsistent.
 
-### Trip detail: offline route trace, estimated steps, GPX export
+### Trip detail: offline route trace and delete
+
+The MVP detail screen is deliberately minimal: date, start/end times (in the trip's own stored
+`startZoneId`, consistent with its date - see "Schema" below - not the device's *current* zone), duration, distance, the offline route
+trace, and delete. Estimated steps and GPX export were both cut from this first version (see
+"Known limitations") to keep trips completely independent of the step pipeline and reduce MVP
+surface area; both are straightforward to reintroduce later since `trips`/`trip_points` already
+retain everything (timestamps, points) either would need.
 
 - The route trace (`ui/trips/RouteTraceCanvas.kt`) is a plain Compose `Canvas` polyline over a
   pure, unit-tested normalization function (`domain/trip/RouteTraceGeometry.kt`) - a simple
@@ -388,19 +413,6 @@ crash between them can never leave the two inconsistent.
   perfectly horizontal/vertical routes (all handled explicitly, not just assumed away). No Google
   Maps, no map tiles, no API key/billing, no Internet permission, no routing, no offline map
   downloads - the app's offline character is fully preserved.
-- **Estimated steps**: `TripStepEstimator` derives a trip's steps from already-synced
-  `step_buckets` by boundary-aware overlap - a minute bucket that only partially overlaps the trip
-  window contributes only that fraction of its steps (`steps * overlapSeconds / 60`), not the
-  whole minute. Since the underlying source data is minute-resolution, this is always presented as
-  *estimated*. If the normal step source hasn't synced through the trip's end yet,
-  `TripRepository.estimatedSteps` returns `TripStepEstimate.Pending` - never a guessed or silently
-  zero value - and the UI updates once a later sync catches up.
-- **Export GPX** uses Android's Storage Access Framework (`ActivityResultContracts.CreateDocument`),
-  so no broad storage permission is needed. `GpxFormatter` (pure, unit-tested) emits accepted route
-  points in chronological order with UTC timestamps, elevation only when actually supplied by the
-  location provider, fixed 7-decimal-place coordinates (never Kotlin's default scientific notation
-  for small magnitudes near the equator/prime meridian), correct XML escaping, and safe handling of
-  an empty or one-point trip. No cloud upload, no automatic sharing.
 - **Delete trip** cascades (`ON DELETE CASCADE` on `trip_points.tripId`) to remove every point with
   it, with an in-app confirmation first.
 
@@ -515,10 +527,12 @@ leak even if invoked.
 
 ### Trip Route Recording device checklist
 
-Automated tests cover the pure logic (acceptance policy, distance, GPX, step-overlap, migration,
-repository idempotency/recovery) but **cannot** exercise real permission dialogs, a real GPS
-receiver, or real process death - the following needs a physical device, and has not been run in
-this environment:
+Automated tests cover the pure logic (acceptance policy, distance, route geometry, migration,
+repository idempotency/recovery, location-failure/interrupted-trip handling) but **cannot**
+exercise real permission dialogs, a real GPS receiver, or real process death - the following needs
+a physical device, and has not been run in this environment. **The trip recorder is not considered
+field-validated until every item below has actually been exercised on a physical device with the
+screen off and the app backgrounded, not merely compiled/unit-tested.**
 
 - [ ] Location permission granted, and denied.
 - [ ] Approximate-only vs. precise location granted.
@@ -535,6 +549,12 @@ this environment:
       restoration - confirm the *same* trip continues, not a duplicate.
 - [ ] Force-stop the app mid-trip, relaunch, and confirm the interrupted-trip recovery UI appears
       honestly with both Resume and Finish-at-last-point working correctly.
+- [ ] Process death (or force-stop) mid-trip followed by a *delayed* restart that arrives after
+      reopening the app (and therefore after launch-time reconciliation already marked the trip
+      `INTERRUPTED`) - confirm the app never ends up with two trips or a silently-resurrected one.
+- [ ] A location provider/registration failure mid-trip (e.g. toggling location services off while
+      recording) - confirm the app shows the interrupted-trip recovery UI rather than continuing to
+      claim recording is active.
 - [ ] A real hike/walk: route shape looks plausible on the trace, distance is in a reasonable
       range for the actual distance covered, and battery use over an extended recording is
       acceptable.
@@ -578,8 +598,14 @@ this environment:
   start/stop, no `ACCESS_BACKGROUND_LOCATION`, no pause/resume (only Start/Finish), no
   waypoints/photos/notes, no cloud sync/accounts/analytics/telemetry, and no network-based
   elevation correction (altitude, when shown, is whatever the location provider itself supplied).
+  **Estimated steps and GPX export were both cut from this first version too** - a trip currently
+  reads no step data at all and can only be viewed in-app, not exported - to keep trips completely
+  independent of the step pipeline while the recording mechanism itself was hardened; the schema
+  already retains everything (timestamps, route points) either would need to be reintroduced later.
   None of these are bugs to fix incidentally - they are explicit scope exclusions for this change.
 - **Trip Route Recording has not been exercised on a real device or GPS receiver** in this
-  environment - see the device checklist above. The interrupted-trip-recovery liveness check also
-  has one documented, accepted timing race (see "Trip Route Recording" → "Honest recovery" above)
-  that needs real-device confirmation.
+  environment - see the device checklist above. It is not considered field-validated - in
+  particular for screen-off/backgrounded recording, process-death/restart recovery, and a
+  location-registration failure mid-trip - until it actually has been. The interrupted-trip-recovery
+  liveness check also has one documented, accepted timing race (see "Trip Route Recording" →
+  "Honest recovery" above) that needs real-device confirmation.

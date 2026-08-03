@@ -126,9 +126,6 @@
     <string name="trip_detail_end_label">סיום</string>
     <string name="trip_detail_duration_label">משך</string>
     <string name="trip_detail_distance_label">מרחק</string>
-    <string name="trip_detail_steps_label">צעדים משוערים</string>
-    <string name="trip_detail_steps_pending">עדיין לא זמין - ממתין לסנכרון הצעדים</string>
-    <string name="trip_detail_export_gpx_action">ייצוא GPX</string>
     <string name="trip_detail_delete_action">מחיקת טיול</string>
     <string name="trip_detail_delete_confirm_title">למחוק את הטיול הזה?</string>
     <string name="trip_detail_delete_confirm_message">פעולה זו תמחק לצמיתות את הטיול ואת המסלול שנרשם. לא ניתן לבטל פעולה זו.</string>

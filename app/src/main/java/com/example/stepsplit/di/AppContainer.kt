@@ -55,7 +55,6 @@ class AppContainer(context: Context) {
     val tripRepository: TripRepository = TripRepository(
         database = database,
         clock = clock,
-        stepSourceId = stepSource.id,
     )
 
     val locationClient: TripLocationClient = FusedTripLocationClient(context)

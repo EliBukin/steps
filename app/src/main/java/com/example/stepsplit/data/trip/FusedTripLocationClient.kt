@@ -32,8 +32,13 @@ import kotlinx.coroutines.flow.callbackFlow
  * `@SuppressLint("MissingPermission")`: permission is the caller's responsibility - the Start-trip
  * flow in the Trips UI never starts a trip (and therefore never collects this) without first
  * confirming ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION is granted. If it is somehow missing
- * anyway, `requestLocationUpdates` throws [SecurityException], which closes the flow with that
- * exception instead of crashing the process.
+ * anyway, `requestLocationUpdates` throws [SecurityException] synchronously, which closes the flow
+ * with that exception instead of crashing the process. `requestLocationUpdates` can *also* reject
+ * registration asynchronously (its returned `Task` completing unsuccessfully - e.g. location
+ * settings that can't satisfy the request) without throwing anything at the call site; the returned
+ * `Task`'s failure listener (below) closes the flow with that cause too, so a caller collecting
+ * [locationUpdates] is guaranteed to observe *either* an accepted registration or a failure, never
+ * silence. See [TripRecordingCoordinator] for how a resulting flow failure is handled.
  */
 class FusedTripLocationClient(private val context: Context) : TripLocationClient {
 
@@ -57,6 +62,7 @@ class FusedTripLocationClient(private val context: Context) : TripLocationClient
 
         try {
             client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                .addOnFailureListener { e -> close(e) }
         } catch (e: SecurityException) {
             close(e)
         }

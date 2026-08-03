@@ -1,6 +1,5 @@
 package com.example.stepsplit.ui
 
-import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
@@ -56,7 +55,6 @@ fun StepSplitApp(
     container: AppContainer,
     onRequestPermission: () -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
-    onCreateGpxDocument: (suggestedFileName: String, onResult: (Uri?) -> Unit) -> Unit,
     initialRoute: String? = null,
 ) {
     val navController = rememberNavController()
@@ -126,8 +124,6 @@ fun StepSplitApp(
                 TripDetailScreen(
                     uiState = uiState,
                     onDeleteTrip = viewModel::deleteTrip,
-                    onBuildGpxContent = viewModel::buildGpxContent,
-                    onCreateGpxDocument = onCreateGpxDocument,
                     onBack = { navController.popBackStack() },
                 )
             }
