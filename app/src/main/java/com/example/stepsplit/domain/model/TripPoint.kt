@@ -1,6 +1,6 @@
 package com.example.stepsplit.domain.model
 
-/** One accepted route point as shown to the UI/exported to GPX - decoupled from [com.example.stepsplit.data.local.trip.TripPointEntity]'s Room-specific shape. */
+/** One accepted route point as shown to the UI - decoupled from [com.example.stepsplit.data.local.trip.TripPointEntity]'s Room-specific shape. */
 data class TripPoint(
     val capturedAtEpochSecond: Long,
     val latitude: Double,

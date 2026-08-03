@@ -12,6 +12,7 @@ import java.time.ZoneOffset
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -240,17 +241,33 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `resuming an interrupted trip returns it to ACTIVE and preserves its distance and points`() = runTest {
+    fun `resuming an interrupted trip returns true, transitions it to ACTIVE, and preserves its distance and points`() = runTest {
         val tripId = repository.startTrip()
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10)))
         repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
 
-        repository.resumeInterruptedTrip(tripId)
+        val resumed = repository.resumeInterruptedTrip(tripId)
 
+        assertTrue(resumed)
         val trip = repository.getTrip(tripId)!!
         assertEquals(TripState.ACTIVE.name, trip.state)
         assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `resumeInterruptedTrip returns false and changes nothing for a trip that is not INTERRUPTED`() = runTest {
+        val tripId = repository.startTrip() // ACTIVE, not INTERRUPTED
+
+        val resumed = repository.resumeInterruptedTrip(tripId)
+
+        assertFalse(resumed)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+    }
+
+    @Test
+    fun `resumeInterruptedTrip returns false for an unknown trip id`() = runTest {
+        assertFalse(repository.resumeInterruptedTrip(999L))
     }
 
     @Test
@@ -347,5 +364,90 @@ class TripRepositoryTest {
 
         assertNotEquals(tripId, secondTripId)
         assertEquals(2, database.tripDao().observeAll().first().size)
+    }
+
+    @Test
+    fun `a sample captured just before the trip's own start time is rejected`() = runTest {
+        val tripId = repository.startTrip() // startEpochSecond == fixedNow.epochSecond
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond - 1)))
+
+        assertEquals(0, repository.getTripPoints(tripId).size)
+        assertEquals(0.0, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
+        assertNull(repository.getTrip(tripId)!!.lastAcceptedPointEpochSecond)
+    }
+
+    @Test
+    fun `a sample captured exactly at the trip's own start time is accepted`() = runTest {
+        val tripId = repository.startTrip()
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond)))
+
+        assertEquals(1, repository.getTripPoints(tripId).size)
+        assertEquals(fixedNow.epochSecond, repository.getTrip(tripId)!!.lastAcceptedPointEpochSecond)
+    }
+
+    @Test
+    fun `later valid points are accepted normally alongside a rejected cached pre-Start point`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.recordAcceptedBatch(
+            tripId,
+            listOf(
+                sample(40.0, 40.0, t0 - 3_600), // a cached fix from an hour before this trip even started
+                sample(32.0000, 34.0000, t0 + 10),
+                sample(32.0001, 34.0000, t0 + 20),
+            ),
+        )
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(2, points.size)
+        assertTrue(points.none { it.latitude == 40.0 })
+        val expectedDistance = RouteMath.haversineMeters(32.0000, 34.0000, 32.0001, 34.0000)
+        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+    }
+
+    @Test
+    fun `a sample timestamped far in the future is rejected and cannot poison ordering for later genuine samples`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        // A bogus timestamp ~1 day ahead of "now" - if accepted, every genuine later sample would
+        // look non-monotonic (elapsed <= 0) relative to it and be rejected forever after.
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 86_400)))
+        assertEquals(0, repository.getTripPoints(tripId).size)
+
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0001, 34.0000, t0 + 10)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `markFinishRequested rejects a sample captured after the Finish cutoff even while the trip is still ACTIVE`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 10)))
+
+        repository.markFinishRequested(tripId, cutoffEpochSecond = t0 + 15)
+
+        // A fix the GPS chip happens to capture *after* Finish was requested, while the trip is
+        // technically still ACTIVE during the bounded flush/grace wait - must not be appended.
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.001, 34.0, t0 + 20)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+
+        // A fix captured before the cutoff but only delivered now (exactly what flush() is for) is unaffected.
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0001, 34.0000, t0 + 12)))
+        assertEquals(2, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `finishTrip clears the Finish cutoff so a later trip is never affected by a stale one`() = runTest {
+        val firstTripId = repository.startTrip()
+        repository.markFinishRequested(firstTripId, cutoffEpochSecond = fixedNow.epochSecond)
+        repository.finishTrip(firstTripId)
+
+        val secondTripId = repository.startTrip()
+        val t0 = clock.instant.epochSecond
+        // Well after the first trip's cutoff (fixedNow), but still within MAX_FUTURE_SKEW_SECONDS
+        // of "now" - this test is specifically about the stale cutoff, not the future-skew guard.
+        repository.recordAcceptedBatch(secondTripId, listOf(sample(32.0, 34.0, t0 + 5)))
+
+        assertEquals(1, repository.getTripPoints(secondTripId).size)
     }
 }

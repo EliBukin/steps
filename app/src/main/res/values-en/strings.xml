@@ -94,11 +94,9 @@
     <string name="trip_permission_rationale_title">Location needed for this trip</string>
     <string name="trip_permission_rationale_message">Bukin\'s Split Step needs precise location to record your trip\'s route. Location is only used while a trip is being recorded, never in the background otherwise.</string>
     <string name="trip_permission_rationale_continue">Continue</string>
-    <string name="trip_permission_denied_message">Location permission is required to record a trip.</string>
+    <string name="trip_permission_precise_required_title">Precise location required</string>
+    <string name="trip_permission_denied_message">Route recording requires precise (GPS) location. Approximate location isn\'t accurate enough to record a useful route.</string>
     <string name="trip_permission_open_settings_action">Open app settings</string>
-    <string name="trip_permission_approximate_title">Only approximate location granted</string>
-    <string name="trip_permission_approximate_message">With approximate-only location, the recorded route will be much less precise. Start the trip anyway?</string>
-    <string name="trip_permission_approximate_continue">Start anyway</string>
     <string name="trip_location_services_disabled_message">Device location is turned off. Turn it on to record a trip.</string>
     <string name="trip_location_services_enable_action">Turn on location</string>
     <string name="trip_notification_permission_denied_notice">Notification permission was denied - you won\'t see a persistent notification, but recording still continues.</string>

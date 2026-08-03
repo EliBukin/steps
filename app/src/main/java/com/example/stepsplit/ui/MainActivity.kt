@@ -15,6 +15,17 @@ import com.example.stepsplit.StepSplitApplication
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.theme.StepSplitTheme
 import com.example.stepsplit.util.ActivityRecognitionPermission
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * A one-shot, consumable navigation request from the trip-recording notification - [id] is
+ * monotonically unique per tap (see [MainActivity.routeForIntent]) specifically so that two
+ * consecutive taps targeting the *same* [route] still each produce a distinct event: a plain
+ * `String?` route alone would make the second tap's state write structurally equal to the first's,
+ * which Compose's snapshot state silently skips recomposing for, so the second navigation would
+ * never fire.
+ */
+data class TripNotificationNavigationEvent(val route: String, val id: Long)
 
 class MainActivity : ComponentActivity() {
 
@@ -36,12 +47,13 @@ class MainActivity : ComponentActivity() {
         pendingTripPermissionResult = null
     }
 
-    private var initialRoute by mutableStateOf<String?>(null)
+    private var navigationEvent by mutableStateOf<TripNotificationNavigationEvent?>(null)
+    private val navigationEventCounter = AtomicLong(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        initialRoute = routeForIntent(intent)
+        navigationEvent = eventForIntent(intent)
 
         val container = (application as StepSplitApplication).container
 
@@ -51,7 +63,7 @@ class MainActivity : ComponentActivity() {
                     container = container,
                     onRequestPermission = { requestActivityRecognitionPermission() },
                     onRequestTripPermissions = ::requestTripPermissions,
-                    initialRoute = initialRoute,
+                    navigationEvent = navigationEvent,
                 )
             }
         }
@@ -59,15 +71,21 @@ class MainActivity : ComponentActivity() {
 
     // MainActivity is launchMode="singleTask" (see the manifest) so tapping the trip-recording
     // notification while the app is already running redelivers here instead of creating a second
-    // instance.
+    // instance. Every redelivery - even a repeat tap that resolves to the same route as last time -
+    // must still produce a *new* event id, or the second navigation would silently never fire (see
+    // [TripNotificationNavigationEvent]'s own doc comment).
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        initialRoute = routeForIntent(intent)
+        navigationEvent = eventForIntent(intent)
     }
 
-    private fun routeForIntent(intent: Intent?): String? =
-        if (intent?.action == ACTION_OPEN_TRIPS) Screen.Trips.route else null
+    private fun eventForIntent(intent: Intent?): TripNotificationNavigationEvent? =
+        if (intent?.action == ACTION_OPEN_TRIPS) {
+            TripNotificationNavigationEvent(Screen.Trips.route, navigationEventCounter.incrementAndGet())
+        } else {
+            null
+        }
 
     private fun requestActivityRecognitionPermission() {
         if (ActivityRecognitionPermission.isRequiredOn(Build.VERSION.SDK_INT)) {

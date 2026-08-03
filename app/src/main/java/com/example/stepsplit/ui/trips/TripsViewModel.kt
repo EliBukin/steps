@@ -30,14 +30,15 @@ import kotlinx.coroutines.launch
  * same pattern [com.example.stepsplit.domain.time.currentDateFlow] uses for day-rollover) - it is
  * a display convenience, not a second source of truth for whether recording is active.
  *
- * Starting/finishing a trip is intentionally NOT done here: those are simple Context-level
- * `startForegroundService` calls the Trips screen composable makes directly (see
- * [com.example.stepsplit.trip.service.TripRecordingService]) - [TripRecordingService.onStartCommand]
- * is what actually creates/finishes the trip in Room, and this ViewModel's flows pick that up
- * automatically once it does. This ViewModel only owns the interrupted-trip recovery actions
- * (resume/finish-at-last-point) and delete, which are plain repository calls with no service
- * interaction (delete/finish-at-last-point) or one that must happen strictly before the service is
- * asked to resume (see [resumeInterruptedTrip]'s own doc comment).
+ * Starting/finishing/resuming a trip is intentionally NOT done here: those are simple
+ * Context-level `startForegroundService` calls the Trips screen composable makes directly (see
+ * [com.example.stepsplit.trip.service.TripRecordingService] and
+ * `TripRecordingCommandController`), sent synchronously from the button's own click handler so the
+ * command reaches the service even if this ViewModel/its Activity is backgrounded immediately
+ * afterward. The service is what actually creates/finishes/resumes the trip in Room, atomically and
+ * with its own generation-safety guarantees; this ViewModel's flows pick that up automatically once
+ * it does. This ViewModel only owns [finishInterruptedTripAtLastPoint] and [deleteTrip], which are
+ * plain repository calls with no service interaction at all.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripsViewModel(
@@ -82,20 +83,6 @@ class TripsViewModel(
             gpsStatus = gpsStatusFor(lastPoint, nowEpochSecond),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripsUiState())
-
-    /**
-     * Flips the trip back to ACTIVE in Room first, then invokes [onResumed] - the caller uses that
-     * callback to send the service its start command only afterward. Ordering matters:
-     * [TripRecordingService]'s start path calls the idempotent [TripRepository.startTrip], which
-     * only recognizes an existing *ACTIVE* trip - calling it while this trip is still INTERRUPTED
-     * would find no active trip and create a brand new one instead of resuming this one.
-     */
-    fun resumeInterruptedTrip(tripId: Long, onResumed: () -> Unit) {
-        viewModelScope.launch {
-            repository.resumeInterruptedTrip(tripId)
-            onResumed()
-        }
-    }
 
     fun finishInterruptedTripAtLastPoint(tripId: Long) {
         viewModelScope.launch { repository.finishInterruptedTripAtLastPoint(tripId) }

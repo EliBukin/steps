@@ -150,8 +150,14 @@ class TripRecordingCoordinatorTest {
         assertEquals(0, database.tripPointDao().getAllForTrip(tripId).size)
     }
 
+    /**
+     * Models an actual, unexpected exception terminating an already-active collection (e.g. a
+     * permission revoked mid-trip) - a genuine failure, distinct from transient GPS
+     * unavailability/no fresh fixes, which is not a Flow failure at all and has no equivalent here
+     * on purpose (see [FakeTripLocationClient]'s and [FusedTripLocationClient]'s doc comments).
+     */
     @Test
-    fun `a failure after collection begins invokes onFailure and stops collecting`() = runBlocking {
+    fun `an actual exception mid-collection invokes onFailure and stops collecting`() = runBlocking {
         val tripId = repository.startTrip()
         val coordinator = TripRecordingCoordinator(repository, locationClient, coordinatorScope)
         var observedFailure: Throwable? = null
@@ -161,10 +167,10 @@ class TripRecordingCoordinatorTest {
         locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
         withTimeout(5_000) { database.tripPointDao().observeForTrip(tripId).first { it.isNotEmpty() } }
 
-        locationClient.failActiveCollection(IllegalStateException("provider lost"))
+        locationClient.failActiveCollection(SecurityException("location permission revoked"))
         withTimeout(2_000) { while (observedFailure == null) yield() }
 
-        assertEquals("provider lost", observedFailure?.message)
+        assertEquals("location permission revoked", observedFailure?.message)
         awaitSubscriptionCount(0)
     }
 

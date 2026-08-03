@@ -44,27 +44,39 @@ import com.example.stepsplit.ui.common.formatDateLabel
 import java.time.Instant
 import java.time.ZoneId
 
+/** What the current permission/location-enabled flow will do once it succeeds - Start and Resume share every dialog/check below, differing only in which command they ultimately send. */
+private sealed interface PendingRecordingAction {
+    data object Start : PendingRecordingAction
+    data class Resume(val tripId: Long) : PendingRecordingAction
+}
+
 @Composable
 fun TripsScreen(
     uiState: TripsUiState,
     onOpenTrip: (Long) -> Unit,
-    onResumeInterruptedTrip: (Long, () -> Unit) -> Unit,
     onFinishInterruptedTripAtLastPoint: (Long) -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
 
+    var pendingAction by remember { mutableStateOf<PendingRecordingAction?>(null) }
     var showRationale by remember { mutableStateOf(false) }
-    var showApproximateWarning by remember { mutableStateOf(false) }
-    var showDenied by remember { mutableStateOf(false) }
+    var showPreciseRequired by remember { mutableStateOf(false) }
     var showLocationDisabled by remember { mutableStateOf(false) }
     var notificationPermissionDenied by remember { mutableStateOf(false) }
     var showFinishConfirm by remember { mutableStateOf(false) }
 
-    fun attemptStart() {
+    fun sendCommand(action: PendingRecordingAction) {
+        when (action) {
+            PendingRecordingAction.Start -> startTripService(context)
+            is PendingRecordingAction.Resume -> resumeTripService(context, action.tripId)
+        }
+    }
+
+    fun attemptRecording(action: PendingRecordingAction) {
         if (isSystemLocationEnabled(context)) {
-            startTripService(context)
+            sendCommand(action)
         } else {
             showLocationDisabled = true
         }
@@ -72,15 +84,19 @@ fun TripsScreen(
 
     fun onPermissionResult(result: Map<String, Boolean>) {
         val fineGranted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        val coarseGranted = result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionDenied = result[Manifest.permission.POST_NOTIFICATIONS] != true
         }
-        when {
-            fineGranted -> attemptStart()
-            coarseGranted -> showApproximateWarning = true
-            else -> showDenied = true
-        }
+        val action = pendingAction ?: return
+        if (fineGranted) attemptRecording(action) else showPreciseRequired = true
+    }
+
+    // Both Start and Resume always go through this same rationale-then-request flow - a trip can
+    // only ever reach INTERRUPTED after fine location was already granted once, but it may have
+    // been revoked since, so Resume re-validates exactly like a fresh Start rather than assuming.
+    fun beginRecording(action: PendingRecordingAction) {
+        pendingAction = action
+        showRationale = true
     }
 
     LazyColumn(
@@ -93,7 +109,7 @@ fun TripsScreen(
         uiState.interruptedTrip?.let { trip ->
             item {
                 InterruptedTripCard(
-                    onResume = { onResumeInterruptedTrip(trip.id) { startTripService(context) } },
+                    onResume = { beginRecording(PendingRecordingAction.Resume(trip.id)) },
                     onFinishAtLastPoint = { onFinishInterruptedTripAtLastPoint(trip.id) },
                 )
             }
@@ -109,7 +125,7 @@ fun TripsScreen(
             }
         } else if (uiState.interruptedTrip == null) {
             item {
-                IdleStatusCard(onStartClick = { showRationale = true })
+                IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) })
             }
         }
 
@@ -126,7 +142,7 @@ fun TripsScreen(
 
     if (showRationale) {
         AlertDialog(
-            onDismissRequest = { showRationale = false },
+            onDismissRequest = { showRationale = false; pendingAction = null },
             title = { Text(stringResource(R.string.trip_permission_rationale_title)) },
             text = { Text(stringResource(R.string.trip_permission_rationale_message)) },
             confirmButton = {
@@ -135,43 +151,29 @@ fun TripsScreen(
                     onRequestTripPermissions(::onPermissionResult)
                 }) { Text(stringResource(R.string.trip_permission_rationale_continue)) }
             },
-            dismissButton = { TextButton(onClick = { showRationale = false }) { Text(stringResource(android.R.string.cancel)) } },
+            dismissButton = { TextButton(onClick = { showRationale = false; pendingAction = null }) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
 
-    if (showApproximateWarning) {
+    if (showPreciseRequired) {
         AlertDialog(
-            onDismissRequest = { showApproximateWarning = false },
-            title = { Text(stringResource(R.string.trip_permission_approximate_title)) },
-            text = { Text(stringResource(R.string.trip_permission_approximate_message)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showApproximateWarning = false
-                    attemptStart()
-                }) { Text(stringResource(R.string.trip_permission_approximate_continue)) }
-            },
-            dismissButton = { TextButton(onClick = { showApproximateWarning = false }) { Text(stringResource(android.R.string.cancel)) } },
-        )
-    }
-
-    if (showDenied) {
-        AlertDialog(
-            onDismissRequest = { showDenied = false },
-            title = { Text(stringResource(R.string.trip_permission_rationale_title)) },
+            onDismissRequest = { showPreciseRequired = false; pendingAction = null },
+            title = { Text(stringResource(R.string.trip_permission_precise_required_title)) },
             text = { Text(stringResource(R.string.trip_permission_denied_message)) },
             confirmButton = {
                 TextButton(onClick = {
-                    showDenied = false
+                    showPreciseRequired = false
+                    pendingAction = null
                     context.startActivity(appSettingsIntent(context))
                 }) { Text(stringResource(R.string.trip_permission_open_settings_action)) }
             },
-            dismissButton = { TextButton(onClick = { showDenied = false }) { Text(stringResource(android.R.string.cancel)) } },
+            dismissButton = { TextButton(onClick = { showPreciseRequired = false; pendingAction = null }) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
 
     if (showLocationDisabled) {
         AlertDialog(
-            onDismissRequest = { showLocationDisabled = false },
+            onDismissRequest = { showLocationDisabled = false; pendingAction = null },
             title = { Text(stringResource(R.string.trip_permission_rationale_title)) },
             text = { Text(stringResource(R.string.trip_location_services_disabled_message)) },
             confirmButton = {
@@ -180,7 +182,7 @@ fun TripsScreen(
                     context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                 }) { Text(stringResource(R.string.trip_location_services_enable_action)) }
             },
-            dismissButton = { TextButton(onClick = { showLocationDisabled = false }) { Text(stringResource(android.R.string.cancel)) } },
+            dismissButton = { TextButton(onClick = { showLocationDisabled = false; pendingAction = null }) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
 
@@ -348,6 +350,22 @@ private fun startTripService(context: Context) {
     ContextCompat.startForegroundService(
         context,
         Intent(context, TripRecordingService::class.java).setAction(TripRecordingService.ACTION_START),
+    )
+}
+
+/**
+ * Sent synchronously, directly from the Resume button's click handler - not routed through a
+ * ViewModel/coroutine - so the command reaches the service even if the activity is backgrounded
+ * immediately afterward. The service (see `TripRecordingCommandController.handleResume`) is what
+ * atomically verifies the trip is still INTERRUPTED and transitions it to ACTIVE; this call never
+ * touches Room directly.
+ */
+private fun resumeTripService(context: Context, tripId: Long) {
+    ContextCompat.startForegroundService(
+        context,
+        Intent(context, TripRecordingService::class.java)
+            .setAction(TripRecordingService.ACTION_RESUME)
+            .putExtra(TripRecordingService.EXTRA_TRIP_ID, tripId),
     )
 }
 

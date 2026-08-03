@@ -119,6 +119,16 @@ class RoutePointAcceptancePolicyTest {
         )
     }
 
+    @Test
+    fun `a near-antipodal teleport is rejected as implausible, not silently accepted via a poisoned NaN distance`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L)
+        // Almost exactly antipodal to `last` - the floating-point edge RouteMath.haversineMeters
+        // must clamp, and regardless of that, a jump this large in 10 seconds is never plausible.
+        val next = sample(lat = 0.0000001, lon = 179.9999999, capturedAt = 1_010L)
+        val decision = decide(next, last)
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decision as RouteSampleDecision.Rejected).reason)
+    }
+
     private fun degreesLatFor(distanceMeters: Double): Double =
         Math.toDegrees(distanceMeters / EARTH_RADIUS_METERS)
 

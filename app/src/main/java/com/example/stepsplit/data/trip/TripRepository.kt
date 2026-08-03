@@ -34,6 +34,13 @@ class TripRepository(
 ) {
     private val tripMutex = Mutex()
 
+    // In-memory only, deliberately not a Room column (no new schema for this MVP revision): the
+    // single trip currently mid-Finish, and the cutoff timestamp captured the instant Finish was
+    // requested - see markFinishRequested's doc comment. Finishing is a short-lived, single-process
+    // operation; if the process dies mid-finish the trip is simply recovered like any other
+    // mid-recording death, via the ordinary reconcileActiveTripOnLaunch -> INTERRUPTED path.
+    private var finishCutoff: Pair<Long, Long>? = null
+
     /**
      * Idempotent: if a trip is already ACTIVE, its existing id is returned and no new row is
      * created - this is what makes a duplicate Start command (a double-tap, or the OS redelivering
@@ -60,6 +67,21 @@ class TripRepository(
         val trip = database.tripDao().getById(tripId) ?: return@withLock
         if (trip.state != TripState.ACTIVE.name) return@withLock
         database.tripDao().update(trip.copy(state = TripState.FINISHED.name, endEpochSecond = clock.instant().epochSecond))
+        if (finishCutoff?.first == tripId) finishCutoff = null
+    }
+
+    /**
+     * Records the instant Finish was requested for [tripId], *before* the service's bounded flush
+     * (see [com.example.stepsplit.trip.service.TripRecordingCommandController.handleFinish]) waits
+     * for any already-batched fixes to arrive. [recordAcceptedBatch] then rejects any sample
+     * *captured* after [cutoffEpochSecond] even though the trip is technically still ACTIVE during
+     * that wait - a live fix the GPS chip happens to produce while the service is merely waiting out
+     * the flush window must not be silently appended after the user already asked to stop. Fixes
+     * captured *before* the cutoff but only *delivered* during the wait (exactly what flush() is
+     * for) are unaffected.
+     */
+    suspend fun markFinishRequested(tripId: Long, cutoffEpochSecond: Long) = tripMutex.withLock {
+        finishCutoff = tripId to cutoffEpochSecond
     }
 
     /**
@@ -72,6 +94,16 @@ class TripRepository(
      * Re-reads the trip's own state before processing: a batch delivered after [finishTrip] has
      * already run (a stale/delayed callback) finds the trip no longer ACTIVE and is dropped
      * entirely - it can never append a point or increase distance after Finish.
+     *
+     * Two durable backstops run *before* a sample ever reaches [RoutePointAcceptancePolicy] (which
+     * is intentionally trip-agnostic and knows nothing about a specific trip's start time or
+     * Finish request - see that class's own doc comment):
+     * - A sample captured before [com.example.stepsplit.data.local.trip.TripEntity.startEpochSecond]
+     *   is rejected outright. Fused Location can deliver a cached, pre-Start fix immediately after
+     *   registration; without this, such a fix could become the trip's very first "accepted" point.
+     * - A sample captured unreasonably far in the *future* relative to now ([MAX_FUTURE_SKEW_SECONDS])
+     *   is rejected outright, so a single bogus/corrupt timestamp can never become [lastAccepted] and
+     *   make every subsequent genuine fix look non-monotonic (and therefore rejected) forever after.
      */
     suspend fun recordAcceptedBatch(tripId: Long, samples: List<RawLocationSample>) {
         if (samples.isEmpty()) return
@@ -83,8 +115,13 @@ class TripRepository(
             var distance = trip.distanceMeters
             var latestAcceptedEpochSecond = trip.lastAcceptedPointEpochSecond
             val nowEpochSecond = clock.instant().epochSecond
+            val cutoffEpochSecond = finishCutoff?.takeIf { it.first == tripId }?.second
 
             for (sample in samples.sortedBy { it.capturedAtEpochSecond }) {
+                if (sample.capturedAtEpochSecond < trip.startEpochSecond) continue
+                if (sample.capturedAtEpochSecond > nowEpochSecond + MAX_FUTURE_SKEW_SECONDS) continue
+                if (cutoffEpochSecond != null && sample.capturedAtEpochSecond > cutoffEpochSecond) continue
+
                 val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)
                 val accepted = (decision as? RouteSampleDecision.Accepted)?.sample ?: continue
 
@@ -135,11 +172,21 @@ class TripRepository(
         database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
     }
 
-    /** The user's choice to continue an [TripState.INTERRUPTED] trip, accepting the visible gap. Does not itself restart the recording service - the caller must also do that. */
-    suspend fun resumeInterruptedTrip(tripId: Long) = tripMutex.withLock {
-        val trip = database.tripDao().getById(tripId) ?: return@withLock
-        if (trip.state != TripState.INTERRUPTED.name) return@withLock
+    /**
+     * The atomic core of resuming an [TripState.INTERRUPTED] trip, accepting the visible gap:
+     * verifies [tripId] is still INTERRUPTED and transitions it to ACTIVE in one locked step, so a
+     * stale/duplicate Resume command (see
+     * [com.example.stepsplit.trip.service.TripRecordingCommandController]) can never resume a trip
+     * twice or resurrect one that has since finished. Returns `true` only if it actually performed
+     * the transition; `false` (a no-op) if [tripId] was not found or was not INTERRUPTED - callers
+     * use that to decide whether to start collecting at all. Does not itself touch the recording
+     * service or coordinator - the caller does that only after this returns `true`.
+     */
+    suspend fun resumeInterruptedTrip(tripId: Long): Boolean = tripMutex.withLock {
+        val trip = database.tripDao().getById(tripId) ?: return@withLock false
+        if (trip.state != TripState.INTERRUPTED.name) return@withLock false
         database.tripDao().update(trip.copy(state = TripState.ACTIVE.name))
+        true
     }
 
     /** The user's choice to end an [TripState.INTERRUPTED] trip honestly at the last point actually recorded, rather than resuming it. */
@@ -167,6 +214,11 @@ class TripRepository(
 
     /** Cascades to every point of this trip - see [TripPointEntity]'s foreign key. */
     suspend fun deleteTrip(tripId: Long) = database.tripDao().deleteById(tripId)
+
+    private companion object {
+        /** Generous enough to tolerate ordinary GPS-vs-device clock drift, tight enough that a corrupt/bogus far-future timestamp can never become the last-accepted point - see [recordAcceptedBatch]'s doc comment. */
+        const val MAX_FUTURE_SKEW_SECONDS = 300L
+    }
 }
 
 private fun TripEntity.toSummary() = TripSummary(

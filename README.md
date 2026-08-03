@@ -273,42 +273,75 @@ There is no way to enable/disable the feature in Settings. The **Trips** tab (be
 Settings, `Icons.Filled.Place`) is always visible; "off" simply means no trip is currently
 recording, and opening the tab alone requests no permission and starts no service.
 
-### Start / Finish, not continuous tracking
+### Start / Finish / Resume, not continuous tracking
 
 - Exactly one trip may be active at a time; tapping "Start trip" again while one is already active
   is a no-op (see `TripRepository.startTrip`'s idempotency below).
 - **No automatic trip detection, no geofencing, no continuous daily location tracking, no
-  background-location permission (`ACCESS_BACKGROUND_LOCATION`), no pause/resume.** Start and
-  Finish are the only two user-managed states in this MVP.
+  background-location permission (`ACCESS_BACKGROUND_LOCATION`), no pause/resume mid-recording.**
+  Start, Finish, and Resume-after-interruption are the only user-managed transitions in this MVP.
 - While idle, the app performs **zero** location requests and runs no location foreground
   service - `TripLocationClient.locationUpdates()` is a cold `Flow`, only ever collected by
   `TripRecordingCoordinator` while a trip is actually being recorded.
 
 ### Permission flow
 
-Requested only after tapping "Start trip", with a rationale shown first:
+Requested after tapping "Start trip" **or** "Resume" on an interrupted trip - both go through the
+exact same rationale-then-request-then-validate flow in `TripsScreen.kt`, since a trip can only
+reach `INTERRUPTED` after fine location was already granted once, but it may have been revoked
+since; Resume re-checks rather than assuming.
 
-1. `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` (+ `POST_NOTIFICATIONS` on API 33+) via a
-   single `ActivityResultContracts.RequestMultiplePermissions()` launcher in `MainActivity`.
-2. **Precise granted** → the trip starts.
-3. **Only approximate granted** → a second dialog warns that the recorded route will be much less
-   precise before letting you start anyway (honest, not silently degraded).
-4. **Both denied** → no trip is created; a message explains location is required, with a button to
-   open the app's system settings page.
-5. **System location services disabled** → a dialog offers a button straight to
+1. A rationale dialog is shown first, then `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION`
+   (+ `POST_NOTIFICATIONS` on API 33+) are requested together via a single
+   `ActivityResultContracts.RequestMultiplePermissions()` launcher in `MainActivity`, as Android
+   requires.
+2. **Precise (`ACCESS_FINE_LOCATION`) granted** → the trip starts/resumes.
+3. **Only approximate granted, or denied entirely** → **there is no "start anyway" path.**
+   `RoutePointAcceptancePolicy` rejects any fix whose reported accuracy is worse than 50m, and
+   Android's approximate location is normally far coarser than that - a coarse-only trip could
+   silently record zero points and zero distance while still looking like it was "recording."
+   Instead, a dialog explains that precise location is required to record a useful route, with a
+   button straight to the app's system settings page to grant it.
+4. **System location services disabled** → a dialog offers a button straight to
    `Settings.ACTION_LOCATION_SOURCE_SETTINGS`.
-6. **Notification permission denied** (API 33+) → recording still proceeds (a foreground service
+5. **Notification permission denied** (API 33+) → recording still proceeds (a foreground service
    does not require it to run), but the active-recording screen honestly notes that no persistent
    notification will be visible, rather than claiming one is shown.
 
-### Foreground service (`trip/service/TripRecordingService.kt`)
+### Foreground service (`trip/service/TripRecordingService.kt` + `TripRecordingCommandController.kt`)
 
 A dedicated `Service`, entirely separate from `sync/StepSyncWorker` - no `WorkManager` involvement
-in continuous GPS recording. Deliberately kept thin: it owns only foreground-service mechanics
-(promote to foreground *immediately* in `onStartCommand`, before any repository/coroutine work;
-build the ongoing notification; react to `ACTION_START`/`ACTION_FINISH`) and delegates the actual
-recording logic to `data/trip/TripRecordingCoordinator.kt`, a plain, Robolectric-free-testable
-class with no Service/Activity/ViewModel/composable reference held anywhere.
+in continuous GPS recording. `TripRecordingService` itself is a thin shell owning only
+Android-specific mechanics: promote to foreground *immediately* in `onStartCommand` (before any
+repository/coroutine work), build the ongoing notification, translate each incoming `Intent` into a
+call. Every actual command-routing/race-prevention decision lives in
+`TripRecordingCommandController` - a plain Kotlin class with no Service/Activity/ViewModel/composable
+reference, fully unit-testable with fakes (`TripRecordingCommandControllerTest.kt`) without any
+Robolectric service shadow involved.
+
+Four distinct ways to arrive at the service, deliberately **not** treated identically:
+
+- **`ACTION_START`** (tapping "Start trip") - may create a brand-new trip via the idempotent
+  `TripRepository.startTrip()`.
+- **`ACTION_RESUME`** + `EXTRA_TRIP_ID` (tapping "Resume" on an interrupted trip) - the UI has
+  already re-validated precise-location permission and system location being enabled (see
+  "Permission flow" above) before sending this. The service atomically verifies the trip is still
+  `INTERRUPTED` and transitions it to `ACTIVE` via `TripRepository.resumeInterruptedTrip` - which
+  returns `false` (a safe no-op) for a stale/duplicate Resume or one targeting a trip that has since
+  finished elsewhere - and **never** calls `startTrip()`. If foreground promotion, the permission/
+  location checks, the atomic transition, or the coordinator's own registration all failed, the
+  trip is left (or returned) to `INTERRUPTED` rather than left stuck `ACTIVE` with nothing recording
+  behind it.
+- **`ACTION_FINISH`** (notification action or in-app button).
+- **A null `Intent`** - Android itself restarting an already-running `START_STICKY` service after
+  process death. May only *recover* an already-`ACTIVE` trip via `TripRepository.getActiveTripId()`
+  - never calls `startTrip()` or `resumeInterruptedTrip()`. This matters because a null restart can
+  race the app's own launch-time reconciliation (see "Honest recovery" below): if that reconciliation
+  already marked the trip `INTERRUPTED` by the time a *delayed* restart finally arrives, there is no
+  longer an `ACTIVE` trip to recover, and the restart correctly stops the service without creating
+  or changing anything, rather than resurrecting or duplicating a trip.
+
+Other reliability properties:
 
 - The ongoing notification (`FOREGROUND_SERVICE_TYPE_LOCATION`) opens the app straight to the
   Trips tab on tap, and has a "Finish" action targeting the service directly
@@ -316,46 +349,58 @@ class with no Service/Activity/ViewModel/composable reference held anywhere.
   the same idempotent `TripRepository.finishTrip`.
 - Repeated Start commands never create a duplicate trip or a duplicate location subscription -
   `TripRepository.startTrip()` returns the existing `ACTIVE` trip's id if one already exists, and
-  `TripRecordingCoordinator.start()` no-ops if already collecting. Repeated Finish commands are
-  equally harmless.
-- On Finish, `TripLocationClient.flush()` (backed by `FusedLocationProviderClient.flushLocations()`)
-  is requested and given a short, bounded grace period (2s) for any already-batched fixes to land
-  before the trip is marked finished - "flush when practical, never wait indefinitely."
-  `TripRepository.recordAcceptedBatch` is a further backstop regardless: a location callback that
-  arrives *after* `finishTrip` has already run finds the trip no longer `ACTIVE` and is silently
-  dropped - it can never append a point or increase distance post-Finish.
+  the controller always calls `coordinator.stop()` before `coordinator.start()` (itself idempotent
+  either way) to guarantee a clean subscription. Repeated Finish commands are equally harmless.
+- **Bounded, genuinely bounded, Finish.** `TripLocationClient.flush()` is wrapped in its own
+  documented timeout (3s) rather than trusted to return promptly - a real flush is backed by a Play
+  Services `Task` that can in principle never complete, and an earlier version of this code hung
+  Finish indefinitely on exactly that. A further short, separately-bounded grace period (2s) then
+  lets any fixes that flush *did* manage to deliver actually arrive through the still-active
+  collector before the trip is marked finished - "flush when practical, never wait indefinitely,
+  and cap the practical part too." `TripRepository.markFinishRequested` captures the cutoff instant
+  *before* either wait begins, so a live fix newly *captured* during that wait (not merely
+  delivered late) is never appended after the user already asked to stop - see "Sampling and
+  route-point acceptance" below. `TripRepository.recordAcceptedBatch` is a further backstop
+  regardless: a callback that arrives *after* `finishTrip` has already run finds the trip no longer
+  `ACTIVE` and is silently dropped - it can never append a point or increase distance post-Finish.
+- **A command can never be torn down by an older, delayed one - not just via cancellation.**
+  `TripRecordingCommandController` assigns a monotonically increasing generation id to every
+  command (`beginCommand()`, called synchronously in `onStartCommand` before any suspend work).
+  Cancelling the previous command's coroutine (which the service still does too) is not sufficient
+  on its own: cancellation is cooperative and only takes effect at a suspension point, so an older
+  command that has already returned from its *last* suspend call (e.g. finished Finish's own
+  flush/grace wait) keeps running its remaining, purely synchronous cleanup - `coordinator.stop()`,
+  tearing down the notification, stopping the service - to completion even after being cancelled.
+  Every `handleXxx` function therefore checks its own generation is still current *before* touching
+  the repository or coordinator at all, not only right before teardown; `handleFinish` checks a
+  second time immediately before its own `finishTrip` mutation, since time passes during its wait.
+  The one deliberate exception: a stale generation's genuine recording failure still honestly marks
+  its own specific trip `INTERRUPTED` (self-guarding, scoped to a trip id that generation actually
+  owned) - only the resulting coordinator/service teardown is generation-guarded. The final
+  `stopSelfResult(startId)` call (instead of a bare `stopSelf()`) adds Android's own independent
+  "don't stop if a newer start command has been delivered" guard on top.
 - Location updates are removed (`awaitClose` inside `FusedTripLocationClient`'s `callbackFlow`) on
   every terminal path: normal Finish, an error, or the service's own `onDestroy` as a safety net.
-- **Never starts automatically after boot.** There is no boot receiver anywhere in the manifest;
-  the service is only ever started by an explicit user action (Start/Finish) or by Android itself
-  restarting an already-running `START_STICKY` instance after process death.
-- **Explicit Start and an OS restart are handled by different code paths, deliberately.**
-  `onStartCommand` branches on whether the triggering `Intent` is null: an explicit `ACTION_START`
-  (always a non-null `Intent`, see `TripsScreen.kt`) may create a new trip via the idempotent
-  `TripRepository.startTrip()`, but a null-`Intent` OS restart may only *recover* an already-`ACTIVE`
-  trip via `TripRepository.getActiveTripId()` - it never calls `startTrip()`. This matters because
-  the two can race: if the app's own launch-time reconciliation (see "Honest recovery" below) has
-  already marked the trip `INTERRUPTED` by the time a *delayed* OS restart finally arrives, there is
-  no longer an `ACTIVE` trip to recover - the old code called `startTrip()` unconditionally here,
-  which would silently create and start recording a second, unrelated trip. The fixed restart path
-  instead finds nothing to recover and stops the service without creating or changing anything.
+- **Never starts automatically after boot.** There is no boot receiver anywhere in the manifest.
 - **A location-registration failure never leaves the app silently claiming to record.**
   `FusedLocationProviderClient.requestLocationUpdates()` can reject registration *asynchronously*
   (its returned `Task` failing, with no exception thrown at the call site) - `FusedTripLocationClient`
   attaches a failure listener to that `Task` and closes its flow with the resulting exception, so a
-  rejected registration is never silent. `TripRecordingCoordinator.start()` takes a cancellation-transparent
-  `onFailure` callback (via `Flow.catch`, which never fires for a normal `stop()`) that
-  `TripRecordingService` uses to mark the trip `TripState.INTERRUPTED` and tear down the foreground
-  notification/service - the same honest recovery UI described below, triggered by a live failure
-  instead of a launch-time check.
+  rejected registration is never silent. `TripRecordingCoordinator.start()` takes a
+  cancellation-transparent `onFailure` callback (via `Flow.catch`, which never fires for a normal
+  `stop()`) that the controller uses to mark the trip `TripState.INTERRUPTED` and tear down the
+  foreground notification/service - the same honest recovery UI described below, triggered by a
+  live failure instead of a launch-time check. This is deliberately narrower than "GPS toggled off"
+  - see "What counts as a failure" below.
 
 ### Honest recovery after process death or force-stop
 
 `trips.state` (`ACTIVE` / `FINISHED` / `INTERRUPTED`) in Room is the durable source of truth - the
 UI observes it directly and never assumes a ViewModel or Activity staying alive means recording is
 still active. If Android restarts the service after the process dies, it recovers the existing
-`ACTIVE` trip from Room via the same idempotent `startTrip()` call a fresh Start uses - no
-duplicate is ever created.
+`ACTIVE` trip from Room via `TripRepository.getActiveTripId()` - never `startTrip()` (see
+"Foreground service" above for exactly why that distinction matters) - so no duplicate is ever
+created.
 
 If the app was force-stopped (which cancels Android's own service-restart machinery) or the OS
 simply never restarts the service, nothing pretends the missing interval was recorded. On the next
@@ -364,15 +409,37 @@ in-process liveness flag (`TripRecordingService.isRunning`) is true; if not, the
 `INTERRUPTED` (durably, in Room) rather than silently left `ACTIVE` or silently finished. The
 Trips screen then lets you either:
 
-- **Resume (with a gap)** - `TripRepository.resumeInterruptedTrip` flips it back to `ACTIVE`,
-  preserving its existing distance/points, and the UI restarts the service.
+- **Resume (with a gap)** - re-validates precise-location permission and system location exactly
+  like a fresh Start (see "Permission flow" above), then sends `ACTION_RESUME` synchronously from
+  the button's own click handler - not routed through a ViewModel/coroutine, so the command reaches
+  the service even if the activity is backgrounded immediately afterward. The service is what
+  atomically transitions the trip back to `ACTIVE` and starts its collector (see "Foreground
+  service" above); the trip's existing distance/points are preserved either way.
 - **Finish at last point** - ends the trip honestly at its `lastAcceptedPointEpochSecond` (or its
   start time, if it never received a single accepted point), never at "now."
 
 This check has one inherent, accepted timing race: if Android is about to restart the service but
 simply hasn't yet at the exact moment of the check, the trip is reported interrupted a little
 prematurely. This needs real-device confirmation (see the device checklist below) rather than a
-speculative heartbeat/timeout mechanism built for a case that may not matter in practice.
+speculative heartbeat/timeout mechanism built for a case that may not matter in practice; the
+generation-safe restart path (see above) means this race is merely *premature*, not *harmful* - the
+delayed restart that eventually arrives simply stops itself rather than duplicating anything.
+
+### What counts as a failure (and what deliberately doesn't)
+
+`FusedTripLocationClient` does **not** override `LocationCallback.onLocationAvailability`. Google's
+own documentation describes a `false` availability signal as a best-effort estimate that fresh
+locations aren't currently obtainable (GPS toggled off, deep indoors) - not a terminal error, and
+not necessarily followed by the flow ever failing. Treating it as a failure would be dishonest in
+the *other* direction: a trip would be reported `INTERRUPTED` (requiring an explicit Resume) for a
+transient condition that often resolves itself within seconds. Only two things actually close the
+flow with an exception and interrupt a trip: a genuine registration failure (above), and an actual
+unexpected exception surfacing from location-callback handling itself. Temporary unavailability
+instead stays honestly reflected without any extra plumbing: no new points arrive, the existing
+fix-recency check in `TripsViewModel` already surfaces `GpsStatus.SEARCHING`, the trip simply stays
+`ACTIVE` throughout, and collection resumes on its own once location becomes available again. A more
+elaborate *sustained*-unavailability policy (e.g. auto-interrupting after some longer bound with no
+fixes at all) is deliberately out of scope for this MVP.
 
 ### Sampling and route-point acceptance (`domain/trip/`)
 
@@ -397,6 +464,24 @@ in ascending capture-time order. Distance accumulates only between *consecutive 
 (the first accepted point of a trip always contributes zero), and each accepted point's insert plus
 the trip's updated distance/last-point-timestamp commit together inside one Room transaction, so a
 crash between them can never leave the two inconsistent.
+
+Two further durable backstops run in `TripRepository.recordAcceptedBatch` itself, *before* a sample
+ever reaches the (deliberately trip-agnostic) acceptance policy above:
+
+- A sample captured before the trip's own `startEpochSecond` is rejected outright. Fused Location
+  can deliver a cached, pre-Start fix immediately after registration; without this, such a fix could
+  become the trip's very first "accepted" point.
+- A sample captured unreasonably far in the future relative to now (5 minutes) is rejected outright,
+  so a single bogus/corrupt timestamp can never become the last-accepted point and make every
+  subsequent genuine fix look non-monotonic (and therefore rejected) forever after.
+
+`RouteMath.haversineMeters()` clamps its intermediate squared-half-chord value to `[0, 1]` before
+taking square roots, so it always returns a finite, non-negative distance - including for antipodal/
+near-antipodal coordinate pairs, where floating-point rounding can otherwise push that value
+fractionally outside `[0, 1]` and produce `NaN`. This is not just a display concern: the
+implausible-jump check above compares `impliedSpeed > MAX_PLAUSIBLE_SPEED...`, and *any* comparison
+against `NaN` is `false` in IEEE 754 - an unclamped `NaN` would have silently defeated that
+rejection and let a GPS-teleport artifact through with a poisoned, non-finite persisted distance.
 
 ### Trip detail: offline route trace and delete
 
@@ -528,33 +613,47 @@ leak even if invoked.
 ### Trip Route Recording device checklist
 
 Automated tests cover the pure logic (acceptance policy, distance, route geometry, migration,
-repository idempotency/recovery, location-failure/interrupted-trip handling) but **cannot**
-exercise real permission dialogs, a real GPS receiver, or real process death - the following needs
-a physical device, and has not been run in this environment. **The trip recorder is not considered
-field-validated until every item below has actually been exercised on a physical device with the
-screen off and the app backgrounded, not merely compiled/unit-tested.**
+repository idempotency/recovery, cached-pre-start/future-skew rejection) and the service
+command-routing/generation-safety races (Start/Resume/Restart/Finish ordering, stale-command and
+stale-failure guarding, the bounded flush - see `TripRecordingCommandControllerTest.kt`) but
+**cannot** exercise real permission dialogs, a real GPS receiver, or real process death - the
+following needs a physical device, and has not been run in this environment. **The trip recorder is
+not considered field-validated until every item below has actually been exercised on a physical
+device with the screen off and the app backgrounded, not merely compiled/unit-tested.**
 
-- [ ] Location permission granted, and denied.
-- [ ] Approximate-only vs. precise location granted.
-- [ ] System location services disabled, then re-enabled via the in-app deep link.
-- [ ] Start a trip from the visible Trips screen.
+- [ ] Precise location permission granted, and denied.
+- [ ] Approximate-only location granted (confirm the "precise location required" dialog appears -
+      not a silent degraded recording, and not the old "start anyway" path, which no longer exists).
+- [ ] Permission revoked (via device Settings) *between* a trip becoming `INTERRUPTED` and tapping
+      Resume - confirm Resume re-prompts/re-validates rather than assuming still-granted.
+- [ ] System location services disabled *before* tapping Resume on an interrupted trip - confirm the
+      same location-disabled dialog Start uses appears for Resume too.
 - [ ] Screen off for at least 15 minutes while recording continues.
 - [ ] Switch to another app while recording continues.
 - [ ] Airplane mode / no data connection (recording is fully offline - GPS itself doesn't need a
       data connection, but worth confirming nothing degrades).
+- [ ] Finish from the in-app button, and separately from the notification action.
+- [ ] Process death (e.g. "don't keep activities" / low-memory kill) followed by `START_STICKY`
+      service restoration - confirm the *same* trip continues, not a duplicate.
+- [ ] Force-stop the app mid-trip, relaunch, and confirm the interrupted-trip recovery UI appears
+      honestly, with both Resume and Finish-at-last-point working correctly.
+- [ ] A *delayed* null-intent restart that arrives only after reopening the app (and therefore after
+      launch-time reconciliation already marked the trip `INTERRUPTED`) - confirm the app never ends
+      up with two trips or a silently-resurrected one. (Deterministically covered at the command-
+      controller level by automated tests; this confirms the real `Service`/OS behavior matches.)
+- [ ] Transient GPS unavailability and recovery: toggle system location services off then back on
+      *while a trip is actively recording* - confirm the trip stays `ACTIVE` throughout (never
+      `INTERRUPTED`), GPS status honestly shows "Searching", and point collection resumes on its own
+      once location becomes available again.
+- [ ] A real registration/provider failure, if reproducible (e.g. revoking location permission via
+      `adb shell pm revoke` while actively recording, which does throw) - confirm this, unlike
+      transient unavailability above, *does* honestly interrupt the trip.
+- [ ] Rapid Finish immediately followed by a new Start (e.g. double-tapping, or tapping Start again
+      right after the notification's Finish action) - confirm the new trip ends up genuinely
+      recording, not silently torn down by the just-issued Finish. (Deterministically covered at the
+      command-controller level by automated tests; this confirms real-world command timing matches.)
 - [ ] Weak GPS signal or an outdoor→indoor transition (GPS status should show "Weak"/"Searching"
       honestly, not "Good").
-- [ ] Finish from the in-app button, and separately from the notification action.
-- [ ] Process death (e.g. "don't keep activities" / low-memory kill) followed by service
-      restoration - confirm the *same* trip continues, not a duplicate.
-- [ ] Force-stop the app mid-trip, relaunch, and confirm the interrupted-trip recovery UI appears
-      honestly with both Resume and Finish-at-last-point working correctly.
-- [ ] Process death (or force-stop) mid-trip followed by a *delayed* restart that arrives after
-      reopening the app (and therefore after launch-time reconciliation already marked the trip
-      `INTERRUPTED`) - confirm the app never ends up with two trips or a silently-resurrected one.
-- [ ] A location provider/registration failure mid-trip (e.g. toggling location services off while
-      recording) - confirm the app shows the interrupted-trip recovery UI rather than continuing to
-      claim recording is active.
 - [ ] A real hike/walk: route shape looks plausible on the trace, distance is in a reasonable
       range for the actual distance covered, and battery use over an extended recording is
       acceptable.
@@ -595,8 +694,9 @@ screen off and the app backgrounded, not merely compiled/unit-tested.**
   above, not something the app can work around.
 - **Trip Route Recording is intentionally an MVP.** By design, this first version has no real map
   or map tiles, no Internet permission, no navigation/route planning, no automatic trip
-  start/stop, no `ACCESS_BACKGROUND_LOCATION`, no pause/resume (only Start/Finish), no
-  waypoints/photos/notes, no cloud sync/accounts/analytics/telemetry, and no network-based
+  start/stop, no `ACCESS_BACKGROUND_LOCATION`, no pause/resume *mid-recording* (Resume only applies
+  to an already-`INTERRUPTED` trip, never a live pause), no waypoints/photos/notes, no cloud
+  sync/accounts/analytics/telemetry, and no network-based
   elevation correction (altitude, when shown, is whatever the location provider itself supplied).
   **Estimated steps and GPX export were both cut from this first version too** - a trip currently
   reads no step data at all and can only be viewed in-app, not exported - to keep trips completely

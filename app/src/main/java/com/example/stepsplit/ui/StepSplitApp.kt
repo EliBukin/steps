@@ -55,22 +55,25 @@ fun StepSplitApp(
     container: AppContainer,
     onRequestPermission: () -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
-    initialRoute: String? = null,
+    navigationEvent: TripNotificationNavigationEvent? = null,
 ) {
     val navController = rememberNavController()
     val factory = remember(container) { ViewModelFactory(container) }
     val coroutineScope = rememberCoroutineScope()
 
-    // Set by MainActivity when launched from the trip-recording notification, e.g. - navigates
-    // there once rather than changing the NavHost's own start destination, so the normal back
-    // stack/tab-switching behavior is otherwise unaffected.
-    LaunchedEffect(initialRoute) {
-        if (initialRoute != null) {
-            navController.navigate(initialRoute) {
-                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
+    // Set by MainActivity when launched/redelivered from the trip-recording notification -
+    // navigates there once per event rather than changing the NavHost's own start destination, so
+    // the normal back stack/tab-switching behavior is otherwise unaffected. Keyed on the event's
+    // own [TripNotificationNavigationEvent.id] rather than its route string: two consecutive taps
+    // both targeting "trips" would otherwise share the same key (and the underlying
+    // `mutableStateOf` write wouldn't even trigger recomposition, since it'd be writing an
+    // identical value) and the second tap's navigation would silently never fire.
+    LaunchedEffect(navigationEvent?.id) {
+        val route = navigationEvent?.route ?: return@LaunchedEffect
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
         }
     }
 
@@ -108,7 +111,6 @@ fun StepSplitApp(
                 TripsScreen(
                     uiState = uiState,
                     onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
-                    onResumeInterruptedTrip = viewModel::resumeInterruptedTrip,
                     onFinishInterruptedTripAtLastPoint = viewModel::finishInterruptedTripAtLastPoint,
                     onRequestTripPermissions = onRequestTripPermissions,
                 )

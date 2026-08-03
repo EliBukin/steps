@@ -29,16 +29,37 @@ import kotlinx.coroutines.flow.callbackFlow
  * - [MAX_UPDATE_DELAY_MILLIS] (15s): lets the platform batch fixes and deliver them together when
  *   that saves power, without risking a large data-loss window if recording finishes mid-batch.
  *
- * `@SuppressLint("MissingPermission")`: permission is the caller's responsibility - the Start-trip
+ * `@SuppressLint("MissingPermission")`: permission is the caller's responsibility - the Start/Resume
  * flow in the Trips UI never starts a trip (and therefore never collects this) without first
- * confirming ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION is granted. If it is somehow missing
- * anyway, `requestLocationUpdates` throws [SecurityException] synchronously, which closes the flow
- * with that exception instead of crashing the process. `requestLocationUpdates` can *also* reject
+ * confirming ACCESS_FINE_LOCATION is granted. If it is somehow missing anyway,
+ * `requestLocationUpdates` throws [SecurityException] synchronously, which closes the flow with
+ * that exception instead of crashing the process. `requestLocationUpdates` can *also* reject
  * registration asynchronously (its returned `Task` completing unsuccessfully - e.g. location
  * settings that can't satisfy the request) without throwing anything at the call site; the returned
  * `Task`'s failure listener (below) closes the flow with that cause too, so a caller collecting
  * [locationUpdates] is guaranteed to observe *either* an accepted registration or a failure, never
  * silence. See [TripRecordingCoordinator] for how a resulting flow failure is handled.
+ *
+ * ## What actually closes this flow, and what deliberately does not
+ *
+ * Only two things close this flow with an exception: the registration-time failures above, and a
+ * genuinely unexpected exception surfacing from [LocationCallback] handling itself (Play Services
+ * has no other documented way to fail an already-accepted registration mid-collection, but if one
+ * ever did, it would propagate the same way). Both are real failures, and
+ * [TripRecordingCoordinator]'s `onFailure` correctly marks the trip `INTERRUPTED` for either.
+ *
+ * This class deliberately does **not** override [LocationCallback.onLocationAvailability]. Google's
+ * own documentation describes a `false` availability signal as a best-effort estimate that fresh
+ * locations are not currently obtainable (e.g. GPS toggled off, deep indoors) - not a terminal
+ * error, and not necessarily followed by the flow ever failing. Treating it as one would be
+ * dishonest in the other direction: a trip would be reported `INTERRUPTED` (with the user having to
+ * explicitly Resume) for a transient condition that often resolves itself within seconds. Instead,
+ * temporary unavailability is already reflected honestly without any extra plumbing here: no new
+ * [RawLocationSample]s arrive, and [com.example.stepsplit.ui.trips.TripsViewModel]'s existing
+ * fix-recency check already surfaces `GpsStatus.SEARCHING` once the last accepted point goes stale
+ * - the trip simply stays `ACTIVE` throughout, and collection resumes on its own once location
+ * becomes available again. A more elaborate *sustained*-unavailability policy (e.g. auto-interrupting
+ * after some longer bound with no fixes at all) is deliberately out of scope for this MVP.
  */
 class FusedTripLocationClient(private val context: Context) : TripLocationClient {
 

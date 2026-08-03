@@ -94,11 +94,9 @@
     <string name="trip_permission_rationale_title">נדרש מיקום לטיול הזה</string>
     <string name="trip_permission_rationale_message">Bukin\'s Split Step זקוקה למיקום מדויק כדי לתעד את מסלול הטיול שלך. המיקום ישמש רק בזמן הקלטת טיול, ולעולם לא ברקע מעבר לכך.</string>
     <string name="trip_permission_rationale_continue">המשך</string>
-    <string name="trip_permission_denied_message">נדרשת הרשאת מיקום כדי לתעד טיול.</string>
+    <string name="trip_permission_precise_required_title">נדרש מיקום מדויק</string>
+    <string name="trip_permission_denied_message">מסלול הטיול דורש הרשאת מיקום מדויק (GPS). מיקום משוער אינו מדויק מספיק כדי לתעד מסלול שימושי.</string>
     <string name="trip_permission_open_settings_action">פתיחת הגדרות האפליקציה</string>
-    <string name="trip_permission_approximate_title">ניתנה הרשאת מיקום משוער בלבד</string>
-    <string name="trip_permission_approximate_message">עם מיקום משוער בלבד, מסלול הטיול המוקלט יהיה הרבה פחות מדויק. להתחיל את הטיול בכל זאת?</string>
-    <string name="trip_permission_approximate_continue">התחלה בכל זאת</string>
     <string name="trip_location_services_disabled_message">שירותי המיקום במכשיר כבויים. יש להפעיל אותם כדי לתעד טיול.</string>
     <string name="trip_location_services_enable_action">הפעלת מיקום</string>
     <string name="trip_notification_permission_denied_notice">הרשאת ההתראות נדחתה - לא תוצג התראה קבועה, אך ההקלטה ממשיכה בכל זאת.</string>

@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,10 +43,12 @@ fun TripDetailScreen(
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    if (uiState.deleted) {
-        onBack()
-        return
+    // A one-shot navigation side effect must never run directly during composition - LaunchedEffect
+    // defers it to just after this composable enters composition/recomposes with deleted == true.
+    LaunchedEffect(uiState.deleted) {
+        if (uiState.deleted) onBack()
     }
+    if (uiState.deleted) return
     val trip = uiState.trip ?: return
 
     LazyColumn(
