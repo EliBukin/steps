@@ -13,6 +13,10 @@ import com.example.stepsplit.data.local.bucket.StepBucketEntity
 import com.example.stepsplit.data.local.manualwalk.ManualWalkEntity
 import com.example.stepsplit.data.local.override.SessionOverrideDao
 import com.example.stepsplit.data.local.override.SessionOverrideEntity
+import com.example.stepsplit.data.local.trip.TripDao
+import com.example.stepsplit.data.local.trip.TripEntity
+import com.example.stepsplit.data.local.trip.TripPointDao
+import com.example.stepsplit.data.local.trip.TripPointEntity
 
 /**
  * Deliberately no `fallbackToDestructiveMigration()`: this is a single-user local health/fitness
@@ -34,14 +38,18 @@ import com.example.stepsplit.data.local.override.SessionOverrideEntity
         WalkBoutEntity::class,
         SessionOverrideEntity::class,
         ManualWalkEntity::class,
+        TripEntity::class,
+        TripPointEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun stepBucketDao(): StepBucketDao
     abstract fun walkBoutDao(): WalkBoutDao
     abstract fun sessionOverrideDao(): SessionOverrideDao
+    abstract fun tripDao(): TripDao
+    abstract fun tripPointDao(): TripPointDao
 
     companion object {
         private const val DATABASE_NAME = "stepsplit.db"
@@ -61,8 +69,46 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 -> v3: adds the Trip Route Recording tables (`trips`, `trip_points`) - purely
+         * additive, touches no existing table, so every existing `step_buckets`, `walk_bouts`,
+         * `session_overrides`, and `manual_walks` row (including deprecated ones) is preserved
+         * exactly as-is. `trip_points.tripId` cascades on delete of its parent `trips` row.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `trips` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`startEpochSecond` INTEGER NOT NULL, " +
+                        "`endEpochSecond` INTEGER, " +
+                        "`startZoneId` TEXT NOT NULL, " +
+                        "`state` TEXT NOT NULL, " +
+                        "`distanceMeters` REAL NOT NULL, " +
+                        "`lastAcceptedPointEpochSecond` INTEGER, " +
+                        "`createdAtEpochSecond` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `trip_points` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`tripId` INTEGER NOT NULL, " +
+                        "`capturedAtEpochSecond` INTEGER NOT NULL, " +
+                        "`latitude` REAL NOT NULL, " +
+                        "`longitude` REAL NOT NULL, " +
+                        "`accuracyMeters` REAL NOT NULL, " +
+                        "`altitudeMeters` REAL, " +
+                        "`speedMetersPerSecond` REAL, " +
+                        "FOREIGN KEY(`tripId`) REFERENCES `trips`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_trip_points_tripId_capturedAtEpochSecond` " +
+                        "ON `trip_points` (`tripId`, `capturedAtEpochSecond`)",
+                )
+            }
+        }
+
         /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2)
+        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3)
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

@@ -6,6 +6,8 @@ import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.sessions.SessionsViewModel
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.today.TodayViewModel
+import com.example.stepsplit.ui.trips.TripDetailViewModel
+import com.example.stepsplit.ui.trips.TripsViewModel
 
 /** Hand-written [ViewModelProvider.Factory] wiring each screen's ViewModel to [AppContainer]. */
 class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.Factory {
@@ -30,6 +32,17 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
             container.stepRepository,
         )
 
+        TripsViewModel::class.java -> TripsViewModel(container.tripRepository, container.clock)
+
         else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     } as T
+
+    /** [TripDetailViewModel] takes a navigation-argument [tripId] the shared dispatch table above has no way to supply - a small per-call factory instead, constructed at the composable's own call site. */
+    fun forTrip(tripId: Long): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            require(modelClass == TripDetailViewModel::class.java) { "Unknown ViewModel class: ${modelClass.name}" }
+            return TripDetailViewModel(container.tripRepository, tripId) as T
+        }
+    }
 }

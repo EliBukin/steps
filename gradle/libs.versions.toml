@@ -14,6 +14,7 @@ datastore = "1.2.1"
 coroutines = "1.11.0"
 playServicesFitness = "21.3.0"
 playServicesBase = "18.10.0"
+playServicesLocation = "21.3.0"
 junit = "4.13.2"
 robolectric = "4.16.1"
 androidxTestCore = "1.7.0"
@@ -56,6 +57,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 play-services-fitness = { group = "com.google.android.gms", name = "play-services-fitness", version.ref = "playServicesFitness" }
 play-services-base = { group = "com.google.android.gms", name = "play-services-base", version.ref = "playServicesBase" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

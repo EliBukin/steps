@@ -5,6 +5,19 @@
     <!-- Required to subscribe to and read on-device step data via the Recording API. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
+    <!--
+      Trip Route Recording (see TripRecordingService): requested only when the user taps "Start
+      trip", never on app start. No ACCESS_BACKGROUND_LOCATION - this MVP only records while a
+      trip is actively running and explicitly foregrounded via TripRecordingService, never as a
+      passive background collector.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Lets the recording notification actually show on API 33+; a denial is handled honestly (see TripsViewModel), never assumed granted. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".StepSplitApplication"
         android:allowBackup="false"
@@ -20,12 +33,25 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.StepSplit">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Dedicated foreground service for manually recorded GPS trips - entirely separate from
+          the WorkManager-driven step-sync pipeline. Not exported: only this app ever starts it,
+          always via an explicit Start-trip user action (or the OS restarting an already-running
+          instance after process death - see TripRecordingService's own doc comment). There is no
+          boot receiver anywhere in this manifest, so a device reboot can never auto-start it.
+        -->
+        <service
+            android:name=".trip.service.TripRecordingService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!--
           WorkManager's default on-demand initialization is replaced with an explicit

@@ -4,7 +4,9 @@ A lightweight, fully offline Android app that counts daily steps and splits them
 walking** and **incidental/everyday** movement. Hebrew + RTL is the default UI language, with
 English as a fallback locale.
 
-No account, no cloud backend, no ads, no analytics, no location permission.
+No account, no cloud backend, no ads, no analytics. Location is used only while you are actively
+recording a manually started trip (see "Trip Route Recording" below) - never in the background,
+and never for the automatic step tracking above.
 
 ## What it does
 
@@ -14,8 +16,12 @@ No account, no cloud backend, no ads, no analytics, no location permission.
   workout-walk steps vs. incidental steps using a transparent, adjustable heuristic.
 - Shows today's totals, daily/weekly goal progress (uncapped - 120% displays as 120%, not clamped to 100%), and a 7-day history with a stacked bar chart.
 - Lets you manually correct any detected session's classification (workout vs. incidental) after
-  the fact - the only manual intervention the app offers.
-- Works fully offline. The only permission requested is `ACTIVITY_RECOGNITION`.
+  the fact - the only manual intervention the automatic step-tracking side of the app offers.
+- Lets you manually record a GPS route for an occasional hike or trip - a completely separate,
+  user-controlled feature (**Trips** tab) that never touches automatic step tracking. See "Trip
+  Route Recording" below.
+- Works fully offline. `ACTIVITY_RECOGNITION` is required for automatic step tracking; location
+  permissions are requested only if/when you start a trip.
 
 ## Architecture
 
@@ -24,16 +30,19 @@ data flow from Room/DataStore through a repository, into `StateFlow`-based ViewM
 Compose UI.
 
 ```
-ui/            Compose screens (Today, History, Sessions, Settings), navigation, theme
+ui/            Compose screens (Today, History, Sessions, Trips, Settings), navigation, theme
 di/            Hand-written AppContainer + ViewModelFactory (no DI framework)
-domain/        Pure Kotlin, no Android deps: classification, aggregation, time, models
+domain/        Pure Kotlin, no Android deps: classification, aggregation, time, models, trip
 data/
-  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides; manual_walks is
-               deprecated - see Schema notes)
+  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides, trips,
+               trip_points; manual_walks is deprecated - see Schema notes)
   settings/    Preferences DataStore (daily goal, thresholds, last sync time)
   stepsource/  StepSource interface + LocalRecordingStepSource + FakeStepSource
   repository/  StepRepository - the single place that imports, normalizes, classifies, merges
+  trip/        TripRepository + TripLocationClient (Fused/Fake) + TripRecordingCoordinator -
+               entirely separate from repository/ above
 sync/          StepSyncWorker (CoroutineWorker) + WorkManager scheduling/factory
+trip/service/  TripRecordingService - dedicated location foreground service, separate from sync/
 debug/         Debug-only sample data seeder
 ```
 
@@ -80,10 +89,16 @@ re-requesting the full history every time. Data older than what the API still re
 launch can never be recovered - this is an inherent, documented limitation of the platform API,
 not a bug.
 
-## Required permission
+## Required permissions
 
-Only `android.permission.ACTIVITY_RECOGNITION`. No location, no internet is required for normal
-operation (Play services calls are all on-device/local for this API).
+- `android.permission.ACTIVITY_RECOGNITION` - automatic step tracking. Requested at first launch.
+- `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION`, `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS` - Trip Route Recording only. Requested only
+  when you tap "Start trip", never at app launch and never just from opening the Trips tab. See
+  "Trip Route Recording" below for the full permission flow.
+
+No internet permission at all - the app is fully offline, including trip recording (no maps, no
+map tiles, no upload).
 
 ## Data storage and privacy
 
@@ -243,6 +258,170 @@ still fail for other reasons, and the UI never conflates the two:
 - `StepSyncWorker`'s retry behavior is unchanged: any `SyncResult.Failed` (whatever its category)
   still requests `Result.retry()`, so WorkManager keeps retrying transient failures with backoff.
 
+## Trip Route Recording (manual GPS trips)
+
+A second, completely independent recording mechanism for occasional hikes/trips - manually
+started, manually finished, and never confused with the automatic step tracking described above.
+**A manually recorded trip and an automatically detected walking session are different concepts.**
+They may overlap in time, but neither owns or mutates the other: a trip never inserts or edits
+`walk_bouts`, never creates a `session_overrides` row, never forces a workout classification, and
+never changes daily step totals or duplicates steps. The only thing it *reads* from the step-sync
+side is already-synced `step_buckets`, purely to show an estimated step count for a finished trip
+(see "Estimated steps" below) - it never writes there.
+
+There is no way to enable/disable the feature in Settings. The **Trips** tab (between Sessions and
+Settings, `Icons.Filled.Place`) is always visible; "off" simply means no trip is currently
+recording, and opening the tab alone requests no permission and starts no service.
+
+### Start / Finish, not continuous tracking
+
+- Exactly one trip may be active at a time; tapping "Start trip" again while one is already active
+  is a no-op (see `TripRepository.startTrip`'s idempotency below).
+- **No automatic trip detection, no geofencing, no continuous daily location tracking, no
+  background-location permission (`ACCESS_BACKGROUND_LOCATION`), no pause/resume.** Start and
+  Finish are the only two user-managed states in this MVP.
+- While idle, the app performs **zero** location requests and runs no location foreground
+  service - `TripLocationClient.locationUpdates()` is a cold `Flow`, only ever collected by
+  `TripRecordingCoordinator` while a trip is actually being recorded.
+
+### Permission flow
+
+Requested only after tapping "Start trip", with a rationale shown first:
+
+1. `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` (+ `POST_NOTIFICATIONS` on API 33+) via a
+   single `ActivityResultContracts.RequestMultiplePermissions()` launcher in `MainActivity`.
+2. **Precise granted** → the trip starts.
+3. **Only approximate granted** → a second dialog warns that the recorded route will be much less
+   precise before letting you start anyway (honest, not silently degraded).
+4. **Both denied** → no trip is created; a message explains location is required, with a button to
+   open the app's system settings page.
+5. **System location services disabled** → a dialog offers a button straight to
+   `Settings.ACTION_LOCATION_SOURCE_SETTINGS`.
+6. **Notification permission denied** (API 33+) → recording still proceeds (a foreground service
+   does not require it to run), but the active-recording screen honestly notes that no persistent
+   notification will be visible, rather than claiming one is shown.
+
+### Foreground service (`trip/service/TripRecordingService.kt`)
+
+A dedicated `Service`, entirely separate from `sync/StepSyncWorker` - no `WorkManager` involvement
+in continuous GPS recording. Deliberately kept thin: it owns only foreground-service mechanics
+(promote to foreground *immediately* in `onStartCommand`, before any repository/coroutine work;
+build the ongoing notification; react to `ACTION_START`/`ACTION_FINISH`) and delegates the actual
+recording logic to `data/trip/TripRecordingCoordinator.kt`, a plain, Robolectric-free-testable
+class with no Service/Activity/ViewModel/composable reference held anywhere.
+
+- The ongoing notification (`FOREGROUND_SERVICE_TYPE_LOCATION`) opens the app straight to the
+  Trips tab on tap, and has a "Finish" action targeting the service directly
+  (`PendingIntent.getService`) - both the notification action and the in-app Finish button call
+  the same idempotent `TripRepository.finishTrip`.
+- Repeated Start commands never create a duplicate trip or a duplicate location subscription -
+  `TripRepository.startTrip()` returns the existing `ACTIVE` trip's id if one already exists, and
+  `TripRecordingCoordinator.start()` no-ops if already collecting. Repeated Finish commands are
+  equally harmless.
+- On Finish, `TripLocationClient.flush()` (backed by `FusedLocationProviderClient.flushLocations()`)
+  is requested and given a short, bounded grace period (2s) for any already-batched fixes to land
+  before the trip is marked finished - "flush when practical, never wait indefinitely."
+  `TripRepository.recordAcceptedBatch` is a further backstop regardless: a location callback that
+  arrives *after* `finishTrip` has already run finds the trip no longer `ACTIVE` and is silently
+  dropped - it can never append a point or increase distance post-Finish.
+- Location updates are removed (`awaitClose` inside `FusedTripLocationClient`'s `callbackFlow`) on
+  every terminal path: normal Finish, an error, or the service's own `onDestroy` as a safety net.
+- **Never starts automatically after boot.** There is no boot receiver anywhere in the manifest;
+  the service is only ever started by an explicit user action (Start/Finish) or by Android itself
+  restarting an already-running `START_STICKY` instance after process death - and that restart
+  path resolves to the *same* trip via `startTrip()`'s idempotency, never a duplicate.
+
+### Honest recovery after process death or force-stop
+
+`trips.state` (`ACTIVE` / `FINISHED` / `INTERRUPTED`) in Room is the durable source of truth - the
+UI observes it directly and never assumes a ViewModel or Activity staying alive means recording is
+still active. If Android restarts the service after the process dies, it recovers the existing
+`ACTIVE` trip from Room via the same idempotent `startTrip()` call a fresh Start uses - no
+duplicate is ever created.
+
+If the app was force-stopped (which cancels Android's own service-restart machinery) or the OS
+simply never restarts the service, nothing pretends the missing interval was recorded. On the next
+app launch, `TripRepository.reconcileActiveTripOnLaunch` checks whether the service's own
+in-process liveness flag (`TripRecordingService.isRunning`) is true; if not, the trip is marked
+`INTERRUPTED` (durably, in Room) rather than silently left `ACTIVE` or silently finished. The
+Trips screen then lets you either:
+
+- **Resume (with a gap)** - `TripRepository.resumeInterruptedTrip` flips it back to `ACTIVE`,
+  preserving its existing distance/points, and the UI restarts the service.
+- **Finish at last point** - ends the trip honestly at its `lastAcceptedPointEpochSecond` (or its
+  start time, if it never received a single accepted point), never at "now."
+
+This check has one inherent, accepted timing race: if Android is about to restart the service but
+simply hasn't yet at the exact moment of the check, the trip is reported interrupted a little
+prematurely. This needs real-device confirmation (see the device checklist below) rather than a
+speculative heartbeat/timeout mechanism built for a case that may not matter in practice.
+
+### Sampling and route-point acceptance (`domain/trip/`)
+
+`FusedTripLocationClient` requests a hiking-oriented, conservative, centralized, and documented
+`LocationRequest` (`PRIORITY_HIGH_ACCURACY`, 10s desired interval, 5s minimum interval, 8m minimum
+displacement, up to 15s of platform batching) - tunable after real-device trail testing without
+touching any other layer.
+
+`RoutePointAcceptancePolicy.evaluate()` is a pure function (no clock/IO of its own) deciding
+accept/reject for each raw fix, documented and boundary-tested for every threshold:
+
+- Invalid coordinates (out of range, or the `(0,0)` "no fix" sentinel).
+- Accuracy worse than 50m, or non-positive.
+- Non-monotonic/duplicate capture timestamps relative to the last *accepted* point.
+- Samples older than 120s relative to when they were actually processed (stale/delayed delivery).
+- An implied speed above ~12 m/s (43 km/h) between consecutive accepted points - well above any
+  realistic hiking/trail-running pace, so it only ever rejects a clear GPS-teleport artifact, never
+  ordinary imperfect GPS noise.
+
+A batch of fixes (which the platform may deliver out of order when batching) is always processed
+in ascending capture-time order. Distance accumulates only between *consecutive accepted* points
+(the first accepted point of a trip always contributes zero), and each accepted point's insert plus
+the trip's updated distance/last-point-timestamp commit together inside one Room transaction, so a
+crash between them can never leave the two inconsistent.
+
+### Trip detail: offline route trace, estimated steps, GPX export
+
+- The route trace (`ui/trips/RouteTraceCanvas.kt`) is a plain Compose `Canvas` polyline over a
+  pure, unit-tested normalization function (`domain/trip/RouteTraceGeometry.kt`) - a simple
+  degree-based linear fit, **not** a real map/projection, and safe for empty, one-point, and
+  perfectly horizontal/vertical routes (all handled explicitly, not just assumed away). No Google
+  Maps, no map tiles, no API key/billing, no Internet permission, no routing, no offline map
+  downloads - the app's offline character is fully preserved.
+- **Estimated steps**: `TripStepEstimator` derives a trip's steps from already-synced
+  `step_buckets` by boundary-aware overlap - a minute bucket that only partially overlaps the trip
+  window contributes only that fraction of its steps (`steps * overlapSeconds / 60`), not the
+  whole minute. Since the underlying source data is minute-resolution, this is always presented as
+  *estimated*. If the normal step source hasn't synced through the trip's end yet,
+  `TripRepository.estimatedSteps` returns `TripStepEstimate.Pending` - never a guessed or silently
+  zero value - and the UI updates once a later sync catches up.
+- **Export GPX** uses Android's Storage Access Framework (`ActivityResultContracts.CreateDocument`),
+  so no broad storage permission is needed. `GpxFormatter` (pure, unit-tested) emits accepted route
+  points in chronological order with UTC timestamps, elevation only when actually supplied by the
+  location provider, fixed 7-decimal-place coordinates (never Kotlin's default scientific notation
+  for small magnitudes near the equator/prime meridian), correct XML escaping, and safe handling of
+  an empty or one-point trip. No cloud upload, no automatic sharing.
+- **Delete trip** cascades (`ON DELETE CASCADE` on `trip_points.tripId`) to remove every point with
+  it, with an in-app confirmation first.
+
+### Schema (v2 → v3)
+
+Additive-only, like every migration in this project - see "Schema notes" above for the general
+policy. `MIGRATION_2_3` adds exactly two new tables and touches nothing existing:
+
+- `trips`: stable id, start/optional-end timestamps, the trip's **starting** `zoneId` (so its
+  display date/time stay stable even across a later device timezone change), durable `state`,
+  accumulated accepted distance, latest-accepted-point timestamp, creation timestamp.
+- `trip_points`: trip id (foreign key, `ON DELETE CASCADE`), capture timestamp, latitude/longitude,
+  accuracy, optional altitude/speed, indexed on `(tripId, capturedAtEpochSecond)` for chronological
+  queries.
+
+`StepSplitDatabaseMigrationTest` extends the same file-driven approach used for v1→v2 (see "Migration
+testing" below) with a `v2 to v3 full schema migration` test: it builds a complete v2 database from
+the committed `2.json`, seeds one representative row into *all four* v2 tables (including the
+deprecated `manual_walks`), migrates, and asserts every existing row survives untouched *and* the
+two new tables are genuinely usable (a real insert through them, not just schema presence).
+
 ## UI and localization
 
 Hebrew (`res/values/strings.xml`) is the default resource set; English (`res/values-en/strings.xml`)
@@ -296,7 +475,10 @@ that database through a real `StepSplitDatabase` via
 `StepSplitDatabase.build()` makes in production. That forces Room's own open-time validation: it
 runs the real migration, then introspects every table's actual on-disk shape (columns, types,
 nullability, indices) and compares it field-by-field against what its compiled v2 entities expect,
-throwing if anything doesn't match. `MigrationTestHelper` was not used directly to drive this: as
+throwing if anything doesn't match. The same approach is reused by the `v2 to v3 full schema migration` test for the Trip Route
+Recording tables - see "Trip Route Recording" → "Schema (v2 → v3)" above.
+
+`MigrationTestHelper` was not used directly to drive this: as
 of Room 2.8.4 it has a database-path resolution issue under Robolectric with `applicationIdSuffix`
 set (found while first building this test). Parsing the already-exported JSON directly and letting
 a real `StepSplitDatabase` open the result gives the same validation guarantee without depending on
@@ -330,6 +512,32 @@ leak even if invoked.
    banner on the Today screen).
 5. Walk around - the activity should show up, detected and classified retrospectively, within the
    ~6-hour sync window, or the next time you foreground the app (which also triggers a sync).
+
+### Trip Route Recording device checklist
+
+Automated tests cover the pure logic (acceptance policy, distance, GPX, step-overlap, migration,
+repository idempotency/recovery) but **cannot** exercise real permission dialogs, a real GPS
+receiver, or real process death - the following needs a physical device, and has not been run in
+this environment:
+
+- [ ] Location permission granted, and denied.
+- [ ] Approximate-only vs. precise location granted.
+- [ ] System location services disabled, then re-enabled via the in-app deep link.
+- [ ] Start a trip from the visible Trips screen.
+- [ ] Screen off for at least 15 minutes while recording continues.
+- [ ] Switch to another app while recording continues.
+- [ ] Airplane mode / no data connection (recording is fully offline - GPS itself doesn't need a
+      data connection, but worth confirming nothing degrades).
+- [ ] Weak GPS signal or an outdoor→indoor transition (GPS status should show "Weak"/"Searching"
+      honestly, not "Good").
+- [ ] Finish from the in-app button, and separately from the notification action.
+- [ ] Process death (e.g. "don't keep activities" / low-memory kill) followed by service
+      restoration - confirm the *same* trip continues, not a duplicate.
+- [ ] Force-stop the app mid-trip, relaunch, and confirm the interrupted-trip recovery UI appears
+      honestly with both Resume and Finish-at-last-point working correctly.
+- [ ] A real hike/walk: route shape looks plausible on the trace, distance is in a reasonable
+      range for the actual distance covered, and battery use over an extended recording is
+      acceptable.
 
 ## Known limitations
 
@@ -365,3 +573,13 @@ leak even if invoked.
 - Very long gaps between app opens (beyond the Recording API's retention window) mean the steps
   taken during that gap are permanently unrecoverable - this is a platform limitation, documented
   above, not something the app can work around.
+- **Trip Route Recording is intentionally an MVP.** By design, this first version has no real map
+  or map tiles, no Internet permission, no navigation/route planning, no automatic trip
+  start/stop, no `ACCESS_BACKGROUND_LOCATION`, no pause/resume (only Start/Finish), no
+  waypoints/photos/notes, no cloud sync/accounts/analytics/telemetry, and no network-based
+  elevation correction (altitude, when shown, is whatever the location provider itself supplied).
+  None of these are bugs to fix incidentally - they are explicit scope exclusions for this change.
+- **Trip Route Recording has not been exercised on a real device or GPS receiver** in this
+  environment - see the device checklist above. The interrupted-trip-recovery liveness check also
+  has one documented, accepted timing race (see "Trip Route Recording" → "Honest recovery" above)
+  that needs real-device confirmation.

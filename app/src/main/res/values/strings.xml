@@ -5,6 +5,7 @@
     <string name="nav_today">היום</string>
     <string name="nav_history">היסטוריה</string>
     <string name="nav_sessions">הליכות</string>
+    <string name="nav_trips">טיולים</string>
     <string name="nav_settings">הגדרות</string>
 
     <string name="label_total_steps">סך הכול צעדים</string>
@@ -81,4 +82,70 @@
     <string name="cd_weekly_progress">התקדמות יעד שבועי, %1$d אחוז</string>
     <string name="cd_workout_segment">צעדי אימון: %1$s</string>
     <string name="cd_incidental_segment">צעדים יומיומיים: %1$s</string>
+
+    <string name="trips_title">טיולים</string>
+    <string name="trips_status_off_title">הקלטת מסלול כבויה</string>
+    <string name="trips_status_off_description">המיקום ישמש רק לאחר שתתחיל/י טיול - שום דבר לא מוקלט כל עוד הלשונית הזו פתוחה בלבד.</string>
+    <string name="trips_start_button">התחלת טיול</string>
+    <string name="trips_history_title">טיולים קודמים</string>
+    <string name="trips_history_empty">עדיין לא נרשמו טיולים</string>
+    <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
+
+    <string name="trip_permission_rationale_title">נדרש מיקום לטיול הזה</string>
+    <string name="trip_permission_rationale_message">Bukin\'s Split Step זקוקה למיקום מדויק כדי לתעד את מסלול הטיול שלך. המיקום ישמש רק בזמן הקלטת טיול, ולעולם לא ברקע מעבר לכך.</string>
+    <string name="trip_permission_rationale_continue">המשך</string>
+    <string name="trip_permission_denied_message">נדרשת הרשאת מיקום כדי לתעד טיול.</string>
+    <string name="trip_permission_open_settings_action">פתיחת הגדרות האפליקציה</string>
+    <string name="trip_permission_approximate_title">ניתנה הרשאת מיקום משוער בלבד</string>
+    <string name="trip_permission_approximate_message">עם מיקום משוער בלבד, מסלול הטיול המוקלט יהיה הרבה פחות מדויק. להתחיל את הטיול בכל זאת?</string>
+    <string name="trip_permission_approximate_continue">התחלה בכל זאת</string>
+    <string name="trip_location_services_disabled_message">שירותי המיקום במכשיר כבויים. יש להפעיל אותם כדי לתעד טיול.</string>
+    <string name="trip_location_services_enable_action">הפעלת מיקום</string>
+    <string name="trip_notification_permission_denied_notice">הרשאת ההתראות נדחתה - לא תוצג התראה קבועה, אך ההקלטה ממשיכה בכל זאת.</string>
+
+    <string name="trip_recording_indicator">מקליט/ה מסלול</string>
+    <string name="trip_elapsed_label">זמן שחלף</string>
+    <string name="trip_distance_label">מרחק</string>
+    <string name="trip_gps_status_label">GPS</string>
+    <string name="trip_gps_status_searching">מחפש</string>
+    <string name="trip_gps_status_weak">חלש</string>
+    <string name="trip_gps_status_good">טוב</string>
+    <string name="trip_points_count_label">%1$d נקודות מסלול נרשמו</string>
+    <string name="trip_screen_off_message">ההקלטה ממשיכה גם כשהמסך כבוי או כשעוברים לאפליקציה אחרת.</string>
+    <string name="trip_finish_button">סיום טיול</string>
+    <string name="trip_finish_confirm_title">לסיים את הטיול הזה?</string>
+    <string name="trip_finish_confirm_message">ההקלטה תיפסק והטיול יישמר.</string>
+    <string name="trip_finish_confirm_action">סיום</string>
+
+    <string name="trip_interrupted_title">הקלטת הטיול הופרעה</string>
+    <string name="trip_interrupted_message">האפליקציה לא הצליחה לוודא שההקלטה עדיין פעילה, ככל הנראה בעקבות עצירה כפויה. יש לבחור כיצד להמשיך.</string>
+    <string name="trip_interrupted_resume_action">המשך (עם פער)</string>
+    <string name="trip_interrupted_finish_action">סיום בנקודה האחרונה</string>
+
+    <string name="trip_detail_start_label">התחלה</string>
+    <string name="trip_detail_end_label">סיום</string>
+    <string name="trip_detail_duration_label">משך</string>
+    <string name="trip_detail_distance_label">מרחק</string>
+    <string name="trip_detail_steps_label">צעדים משוערים</string>
+    <string name="trip_detail_steps_pending">עדיין לא זמין - ממתין לסנכרון הצעדים</string>
+    <string name="trip_detail_export_gpx_action">ייצוא GPX</string>
+    <string name="trip_detail_delete_action">מחיקת טיול</string>
+    <string name="trip_detail_delete_confirm_title">למחוק את הטיול הזה?</string>
+    <string name="trip_detail_delete_confirm_message">פעולה זו תמחק לצמיתות את הטיול ואת המסלול שנרשם. לא ניתן לבטל פעולה זו.</string>
+    <string name="trip_detail_delete_confirm_action">מחיקה</string>
+    <string name="trip_detail_route_empty">לא נרשמו נקודות מסלול עבור טיול זה</string>
+
+    <string name="trip_unit_kilometers_format">%1$.2f ק״מ</string>
+    <string name="trip_unit_meters_format">%1$d מ׳</string>
+    <string name="trip_duration_hours_minutes_format">%1$dש\' %2$dד\'</string>
+    <string name="trip_duration_minutes_format">%1$d דק\'</string>
+
+    <string name="trip_notification_channel_name">הקלטת טיול</string>
+    <string name="trip_notification_title">מקליט/ה את הטיול שלך</string>
+    <string name="trip_notification_text">הקש/י לצפייה בהתקדמות</string>
+    <string name="trip_notification_finish_action">סיום</string>
+
+    <string name="cd_trip_recording_active">הקלטת טיול פעילה</string>
+    <string name="cd_trip_route_trace">מפת המסלול שנרשם</string>
+    <string name="cd_navigate_back">חזרה</string>
 </resources>

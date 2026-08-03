@@ -6,6 +6,10 @@ import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.LocalRecordingStepSource
 import com.example.stepsplit.data.stepsource.StepSource
+import com.example.stepsplit.data.trip.FusedTripLocationClient
+import com.example.stepsplit.data.trip.TripLocationClient
+import com.example.stepsplit.data.trip.TripRecordingCoordinator
+import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.sync.StepSyncWorkerFactory
 import java.time.Clock
@@ -44,4 +48,28 @@ class AppContainer(context: Context) {
     )
 
     val workerFactory: StepSyncWorkerFactory = StepSyncWorkerFactory(stepRepository)
+
+    // ---- Trip Route Recording (see data.trip.TripRepository) - entirely separate from the step
+    // sync pipeline above; nothing here is read or written by StepRepository, and vice versa. ----
+
+    val tripRepository: TripRepository = TripRepository(
+        database = database,
+        clock = clock,
+        stepSourceId = stepSource.id,
+    )
+
+    val locationClient: TripLocationClient = FusedTripLocationClient(context)
+
+    // Owns TripRecordingCoordinator's location-collecting coroutine - a plain SupervisorJob-backed
+    // scope living for the process lifetime, the same pattern as repositoryScope above. Recording
+    // itself only ever runs while TripRecordingService is alive (see that class), but the
+    // coordinator instance itself is process-lifetime like every other dependency here so a
+    // service restart after process death reuses it rather than needing its own construction path.
+    private val tripRecordingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val tripRecordingCoordinator: TripRecordingCoordinator = TripRecordingCoordinator(
+        repository = tripRepository,
+        locationClient = locationClient,
+        scope = tripRecordingScope,
+    )
 }
