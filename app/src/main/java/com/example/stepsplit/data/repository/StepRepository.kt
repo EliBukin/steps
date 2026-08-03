@@ -10,6 +10,7 @@ import com.example.stepsplit.data.stepsource.RawStepInterval
 import com.example.stepsplit.data.stepsource.StepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.data.stepsource.StepSourceReadException
+import com.example.stepsplit.data.stepsource.StepSourceUnavailableException
 import com.example.stepsplit.domain.aggregation.BucketNormalizer
 import com.example.stepsplit.domain.aggregation.DatedBucket
 import com.example.stepsplit.domain.aggregation.DateStepBreakdown
@@ -83,8 +84,10 @@ class StepRepository(
         // Runs first and unconditionally - a cached classification produced by an older
         // CLASSIFIER_VERSION must be recomputed from the raw data already in Room regardless of
         // whether the source below turns out to be unavailable, unsubscribed, or failing. It
-        // never performs a source read itself, so it can never be blocked by one.
-        ensureClassificationFreshLocked()
+        // never performs a source read itself, so it can never be blocked by one. Any failure here
+        // is converted into an ordinary SyncResult.Failed by ensureClassificationFreshOrFail rather
+        // than being allowed to propagate - see that function's own doc comment.
+        ensureClassificationFreshOrFail()?.let { return it }
 
         val availability = stepSource.checkAvailability()
         if (availability !is StepSourceAvailability.Available) {
@@ -119,12 +122,37 @@ class StepRepository(
 
             val bucketEntities = normalizeToEntities(rawIntervals, stepSource.id, zone, now, existingByMinute)
 
-            database.withTransaction {
+            // The raw-bucket reconciliation and the classifier's derived walk_bouts replacement
+            // (recomputeClassificationWithinTransaction, called from inside this same block) must
+            // commit as one atomic unit. Room's withTransaction is reentrant within the same
+            // coroutine - a nested call reuses the already-open transaction instead of starting a
+            // second one - so nesting them here means either both commit together, or (if
+            // recomputeClassificationWithinTransaction throws, or this coroutine is cancelled
+            // anywhere in here) BOTH roll back together. Without this, a failure/cancellation
+            // landing between the two could leave new raw step_buckets committed underneath a
+            // walk_bouts cache still derived from the OLD raw history; that stale cache would
+            // still carry the current CLASSIFIER_VERSION (it was validly computed once, just from
+            // data that has since changed), so hasRowsWithOtherClassifierVersion in
+            // ensureClassificationFreshLocked could never detect or repair it, and a subsequent
+            // unavailable/subscription-failed sync could return early via
+            // SyncResult.Unavailable/Failed without ever repairing it - exposing stale sessions
+            // indefinitely.
+            //
+            // recomputeClassificationWithinTransaction (not recomputeClassification) is used here
+            // deliberately: it does the classify-and-persist work only and returns what
+            // rescheduleFinalizationJob needs, WITHOUT calling it - see that function's own doc
+            // comment for why touching the in-memory finalizationJob from inside this still-open
+            // transaction would be wrong (a rollback or cancellation here must never leave a timer
+            // scheduled from data that turns out not to be durably committed). The reschedule call
+            // below only runs once this whole block has returned, i.e. only after Room has
+            // actually committed.
+            val recomputeResult = database.withTransaction {
                 database.stepBucketDao().deleteInRange(stepSource.id, reconcileStart, reconcileEndExclusive)
                 database.stepBucketDao().upsertAll(bucketEntities)
+                recomputeClassificationWithinTransaction()
             }
+            rescheduleFinalizationJob(recomputeResult.minuteBuckets, recomputeResult.thresholds, recomputeResult.computedAtEpochSecond)
 
-            recomputeClassification()
             // A genuinely successful sync is the only thing allowed to clear a previously
             // recorded failure - it must never look cleared just because the UI happened to poll
             // again, and it must never be replaced with a fake "zero steps" success. Recorded as
@@ -134,6 +162,13 @@ class StepRepository(
             SyncResult.Success(bucketEntities.size)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: StepSourceUnavailableException) {
+            // Availability was lost between the earlier upfront checkAvailability() (above) and
+            // this actual read, or mid-read - must never be treated as a successful empty read
+            // (see StepSource.readSteps's own doc comment). Thrown from stepSource.readSteps(),
+            // strictly before the transaction above ever runs, so no stored bucket, walk_bouts
+            // row, or the last-successful-sync timestamp is touched.
+            SyncResult.Unavailable(e.availability)
         } catch (e: StepSourceReadException) {
             recordFailure(SyncFailureCategory.READ_FAILED, e.message ?: "Unknown read failure")
         } catch (e: Exception) {
@@ -230,12 +265,54 @@ class StepRepository(
     }
 
     /**
-     * Reruns the classifier over the full raw history and atomically replaces the AUTO cache.
-     * Passes the current instant explicitly so the classifier can decide whether the most recent
-     * bout is finalized yet (see [WalkClassifier]'s own doc comment) without reading a clock
-     * itself - it stays a pure function of its inputs.
+     * Runs [ensureClassificationFreshLocked], converting any failure into a structured
+     * [SyncResult.Failed] (category [SyncFailureCategory.UNKNOWN]) instead of letting it escape
+     * [syncNow]. This matters because [syncNow] is called from ViewModels' own coroutine scopes
+     * (e.g. `viewModelScope.launch`) with no exception handling of their own - an uncaught
+     * exception here would crash the app rather than surface as ordinary, structured sync-failure
+     * state the UI already knows how to show. [CancellationException] is rethrown unchanged, never
+     * treated as a failure. A genuine failure here does NOT mark recovery as done - see
+     * [ensureClassificationFreshLocked]'s own guard - so the next [syncNow] call retries it, the
+     * same as any other local-only condition that failed to complete. Returns null when recovery
+     * succeeded (including the common case where nothing needed recomputing), signalling
+     * [syncNowLocked] to continue with the rest of the sync.
      */
-    private suspend fun recomputeClassification() {
+    private suspend fun ensureClassificationFreshOrFail(): SyncResult.Failed? = try {
+        ensureClassificationFreshLocked()
+        null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        recordFailure(SyncFailureCategory.UNKNOWN, e.message ?: "Unknown recovery failure")
+    }
+
+    /** What [rescheduleFinalizationJob] needs, returned by [recomputeClassificationWithinTransaction] so its caller can reschedule only once the transaction that produced it has actually committed. */
+    private data class ClassificationRecomputeResult(
+        val minuteBuckets: List<MinuteBucket>,
+        val thresholds: ClassificationThresholds,
+        val computedAtEpochSecond: Long,
+    )
+
+    /**
+     * The transactional half of classification recompute: reruns the classifier over the full raw
+     * history and atomically replaces the AUTO cache (and reconciles override anchors - see
+     * [reconcileOverrideAnchors]). Passes the current instant explicitly so the classifier can
+     * decide whether the most recent bout is finalized yet (see [WalkClassifier]'s own doc
+     * comment) without reading a clock itself - it stays a pure function of its inputs.
+     *
+     * Deliberately does NOT touch [finalizationJob] or call [rescheduleFinalizationJob] - that
+     * must only ever happen once the transaction this function opens (or joins, if already inside
+     * one - Room's `withTransaction` is reentrant within the same coroutine) has actually
+     * committed. Calling it from inside a still-open transaction would let a rollback or
+     * cancellation leave the in-memory timer scheduled from data that turns out not to be durably
+     * committed after all - Room would roll the database back while the timer mutation (and
+     * whatever coroutine it launched) stayed applied, since neither lives inside the transaction
+     * itself. [syncNowLocked] calls this directly (nested inside its own already-open outer
+     * transaction) and reschedules only after that outer transaction returns;
+     * [recomputeClassification] below is the standalone wrapper for every other caller, which owns
+     * its own outermost transaction and can safely reschedule immediately after.
+     */
+    private suspend fun recomputeClassificationWithinTransaction(): ClassificationRecomputeResult {
         val thresholds = settingsRepository.settings.first().thresholds
         val buckets = database.stepBucketDao().getAllActive()
         val minuteBuckets = buckets.map { MinuteBucket(it.startEpochSecond, it.steps) }
@@ -244,11 +321,133 @@ class StepRepository(
 
         val entities = classified.map { it.toEntity(computedAt) }
         database.withTransaction {
+            // Snapshotted before clearAll() below removes it - reconcileOverrideAnchors needs each
+            // override's PREVIOUS bout interval to decide whether a new bout is clearly the same
+            // walking session.
+            val previousBoutsByStart = database.walkBoutDao().getAll().associateBy { it.startEpochSecond }
             database.walkBoutDao().clearAll()
             database.walkBoutDao().insertAll(entities)
+            reconcileOverrideAnchors(previousBoutsByStart, classified)
         }
 
-        rescheduleFinalizationJob(minuteBuckets, thresholds, computedAt)
+        return ClassificationRecomputeResult(minuteBuckets, thresholds, computedAt)
+    }
+
+    /**
+     * Standalone entry point used by every caller that is NOT already inside its own outer
+     * transaction (recovery, threshold changes, the finalization timer's own rerun, debug
+     * import) - [recomputeClassificationWithinTransaction] here owns its own outermost
+     * transaction, so rescheduling immediately after it returns is always safe: it only runs once
+     * that transaction has actually committed. [syncNowLocked] does NOT call this - see
+     * [recomputeClassificationWithinTransaction]'s own doc comment for why.
+     */
+    private suspend fun recomputeClassification() {
+        val result = recomputeClassificationWithinTransaction()
+        rescheduleFinalizationJob(result.minuteBuckets, result.thresholds, result.computedAtEpochSecond)
+    }
+
+    /**
+     * Manual overrides are keyed by a bout's [SessionOverrideEntity.boutStartEpochSecond] anchor,
+     * but a classifier rerun can shift what that anchor actually represents for the very same
+     * walking session - e.g. an earlier active minute extends it backward, or a corrected/removed
+     * minute shortens it - or can even leave an override's anchor numerically unchanged while the
+     * bout at that anchor is no longer the same session at all (a split whose first fragment keeps
+     * the original start, or a merge whose combined bout keeps the first original bout's start).
+     * *Every* override is reconsidered here - never fast-pathed as "fine" purely because its exact
+     * anchor still exists in [newBouts] - specifically because that coincidence is exactly what the
+     * two bugs above hinge on.
+     *
+     * For every override, this looks for a single newly computed bout that overlaps the override's
+     * PREVIOUS bout interval (from [previousBoutsByStart], snapshotted before the replace above) by
+     * a strong majority in both directions (see [isStrongOneToOneOverlap]) - i.e. clearly the same
+     * walking session, not a coincidental adjacency:
+     * - If that single match is the override's own current anchor, it is *self-consistent* - left
+     *   untouched, and its anchor is reserved: no other override may reattach there, no matter what
+     *   the claim-count arithmetic below would otherwise suggest, since this override isn't going
+     *   anywhere.
+     * - If that single match is a *different* anchor, and no other override independently resolved
+     *   the same target (a claim-count of exactly one) and that target isn't reserved by a
+     *   self-consistent override, it is a genuine, unambiguous reattachment: the override is moved
+     *   (old row deleted, new one inserted at the new anchor).
+     * - Otherwise (zero or multiple candidates, or a target that lost the claim-count/reservation
+     *   arbitration) the match is ambiguous. If the override's own current anchor still coincides
+     *   with a live bout - which the overlap check just proved is NOT the same session anymore, or
+     *   which is legitimately owned by a different, self-consistent override - leaving it in place
+     *   would silently misapply it, so the row is deleted rather than risking that. If its current
+     *   anchor matches no live bout at all, it is genuinely, harmlessly orphaned (can never
+     *   accidentally reapply) and is left exactly as it was - preserved, never deleted, simply
+     *   inactive (see the README).
+     *
+     * All deletes (both moves' old anchors and evictions) run before any insert, so a mover's
+     * insert can never race against, or be clobbered by (via `OnConflictStrategy.REPLACE`),
+     * another row's own delete of that same target key - every target above is unique among movers
+     * and never a reserved anchor, so by the time inserts run each target is guaranteed free. This
+     * always runs from inside [recomputeClassificationWithinTransaction]'s own transaction, so a
+     * concurrent [observeSessions] can never see a transient, half-applied state.
+     */
+    private suspend fun reconcileOverrideAnchors(
+        previousBoutsByStart: Map<Long, WalkBoutEntity>,
+        newBouts: List<ClassifiedBout>,
+    ) {
+        val overrides = database.sessionOverrideDao().getAll()
+        if (overrides.isEmpty()) return
+        val newStarts = newBouts.map { it.startEpochSecond }.toSet()
+
+        val desiredTarget: Map<SessionOverrideEntity, Long?> = overrides.associateWith { override ->
+            val previous = previousBoutsByStart[override.boutStartEpochSecond] ?: return@associateWith null
+            newBouts.filter { candidate -> isStrongOneToOneOverlap(previous, candidate) }
+                .singleOrNull()
+                ?.startEpochSecond
+        }
+
+        val selfConsistent = overrides.filter { desiredTarget.getValue(it) == it.boutStartEpochSecond }
+        val reservedAnchors = selfConsistent.map { it.boutStartEpochSecond }.toSet()
+
+        val candidateMovers = overrides.filter { override ->
+            val target = desiredTarget.getValue(override)
+            target != null && target != override.boutStartEpochSecond
+        }
+        // A target claimed by more than one candidate mover is itself ambiguous (a merge target,
+        // or two unrelated overrides both resolving to the same destination) - neither claimant
+        // may take it.
+        val claimCounts = candidateMovers.groupingBy { desiredTarget.getValue(it) }.eachCount()
+        val movers = candidateMovers.filter { override ->
+            val target = desiredTarget.getValue(override)
+            claimCounts[target] == 1 && target !in reservedAnchors
+        }
+
+        val moverSet = movers.toSet()
+        val remaining = overrides - moverSet - selfConsistent.toSet()
+
+        for (override in movers) database.sessionOverrideDao().deleteByAnchor(override.boutStartEpochSecond)
+        for (override in remaining) {
+            if (override.boutStartEpochSecond in newStarts) {
+                database.sessionOverrideDao().deleteByAnchor(override.boutStartEpochSecond)
+            }
+        }
+        for (override in movers) {
+            val target = desiredTarget.getValue(override)!!
+            database.sessionOverrideDao().upsert(override.copy(boutStartEpochSecond = target))
+        }
+    }
+
+    /**
+     * True when [candidate] overlaps [previous] by at least [OVERLAP_MAJORITY_FRACTION] of BOTH
+     * intervals' own durations - i.e. neither interval is mostly something else. This is what
+     * keeps a split (each fragment covers only a minority of the original) or a merge (the
+     * combined bout is mostly *not* either original interval) from ever counting as a match; only
+     * a bout that is clearly, substantially the same walking session as before qualifies.
+     */
+    private fun isStrongOneToOneOverlap(previous: WalkBoutEntity, candidate: ClassifiedBout): Boolean {
+        val overlapStart = maxOf(previous.startEpochSecond, candidate.startEpochSecond)
+        val overlapEnd = minOf(previous.endEpochSecond, candidate.endEpochSecond)
+        val overlapSeconds = overlapEnd - overlapStart
+        if (overlapSeconds <= 0) return false
+        val previousDuration = previous.endEpochSecond - previous.startEpochSecond
+        val candidateDuration = candidate.endEpochSecond - candidate.startEpochSecond
+        if (previousDuration <= 0 || candidateDuration <= 0) return false
+        return overlapSeconds >= previousDuration * OVERLAP_MAJORITY_FRACTION &&
+            overlapSeconds >= candidateDuration * OVERLAP_MAJORITY_FRACTION
     }
 
     /**
@@ -364,6 +563,9 @@ class StepRepository(
          */
         val RETENTION_WINDOW: Duration = Duration.ofDays(10)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
+
+        /** See [reconcileOverrideAnchors]/[isStrongOneToOneOverlap]: how much of BOTH the old and new bout interval must overlap for a manual override to be reattached to the new bout. */
+        private const val OVERLAP_MAJORITY_FRACTION = 0.5
     }
 }
 

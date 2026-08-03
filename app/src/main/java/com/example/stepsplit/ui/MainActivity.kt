@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import com.example.stepsplit.StepSplitApplication
 import com.example.stepsplit.ui.theme.StepSplitTheme
+import com.example.stepsplit.util.ActivityRecognitionPermission
 
 class MainActivity : ComponentActivity() {
 
@@ -35,7 +36,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestActivityRecognitionPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (ActivityRecognitionPermission.isRequiredOn(Build.VERSION.SDK_INT)) {
             requestPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
         }
     }

@@ -1,9 +1,8 @@
 package com.example.stepsplit.data.stepsource
 
-import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
+import com.example.stepsplit.util.ActivityRecognitionPermission
 import com.example.stepsplit.util.await
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
@@ -32,9 +31,7 @@ class LocalRecordingStepSource(private val context: Context) : StepSource {
     private val client by lazy { FitnessLocal.getLocalRecordingClient(context) }
 
     override suspend fun checkAvailability(): StepSourceAvailability {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!ActivityRecognitionPermission.isGranted(context)) {
             return StepSourceAvailability.PermissionNotGranted
         }
 
@@ -61,13 +58,14 @@ class LocalRecordingStepSource(private val context: Context) : StepSource {
         }
     }
 
+    // checkAvailability() below already covers the permission check (via
+    // ActivityRecognitionPermission.isGranted) as part of Available, but lint's MissingPermission
+    // check can't trace a guard through that function call - it only recognizes a
+    // checkSelfPermission call directly in the same method as the @RequiresPermission call it
+    // guards.
+    @SuppressLint("MissingPermission")
     override suspend fun ensureSubscribed(): Boolean {
         if (checkAvailability() !is StepSourceAvailability.Available) return false
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
         return try {
             client.subscribe(LocalDataType.TYPE_STEP_COUNT_DELTA).await()
             true
@@ -79,7 +77,12 @@ class LocalRecordingStepSource(private val context: Context) : StepSource {
     }
 
     override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval> {
-        if (checkAvailability() !is StepSourceAvailability.Available) return emptyList()
+        val availability = checkAvailability()
+        if (availability !is StepSourceAvailability.Available) {
+            // Must not be conflated with a genuinely empty read - see StepSource.readSteps's own
+            // doc comment and StepSourceUnavailableException.
+            throw StepSourceUnavailableException(availability)
+        }
 
         val request = LocalDataReadRequest.Builder()
             .aggregate(LocalDataType.TYPE_STEP_COUNT_DELTA)

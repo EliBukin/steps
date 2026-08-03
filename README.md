@@ -349,11 +349,16 @@ leak even if invoked.
   shipped ~January 2026) and broke on first contact with this project's straightforward setup;
   the traditional `org.jetbrains.kotlin.android` + `org.jetbrains.kotlin.plugin.compose` + KSP
   plugin combination is used instead, which is still fully supported.
-- **Manual-override anchoring across classifier reruns is best-effort.** Overrides are keyed by a
-  bout's start-time anchor. If a future classifier change merges or splits bouts differently such
-  that a previously-overridden bout's start time shifts, that override becomes inactive (it is
-  preserved in the database, never deleted, but stops applying) rather than being intelligently
-  re-attached to the new boundary.
+- **Manual-override anchoring across classifier reruns is reconciled, but only for unambiguous
+  matches.** Overrides are keyed by a bout's start-time anchor; a classifier rerun that shifts the
+  same walking session's boundary (a corrected/removed first minute, an earlier minute extending it
+  backward, a threshold change, ...) would otherwise silently orphan the override. Every recompute
+  (`StepRepository.reconcileOverrideAnchors`) now looks for a single newly computed bout that
+  overlaps an orphaned override's previous interval by a strong majority (>=50%) in both
+  directions, and re-keys the override to it atomically with the bout replacement. If a session
+  ambiguously splits or merges (no candidate clears that majority, or more than one orphaned
+  override would otherwise claim the same new bout), the override is deliberately left exactly as
+  it was - preserved, never deleted, but inactive - rather than guessing.
 - **No Health Connect / accelerometer fallback.** If the Recording API is unavailable (old Play
   services, no Play services at all, etc.) the app shows an honest "unavailable" state rather than
   inventing a second step-counting mechanism, per the product constraints.

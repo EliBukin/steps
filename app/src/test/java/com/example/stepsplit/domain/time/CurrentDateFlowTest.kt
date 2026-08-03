@@ -65,4 +65,30 @@ class CurrentDateFlowTest {
         clock.currentZone = ZoneOffset.ofHours(-9)
         assertEquals(LocalDate.of(2026, 7, 28), currentDateFlow(clock).first())
     }
+
+    @Test
+    fun `a live timezone change is picked up within one bounded re-check while still collecting, without restarting`() = runTest {
+        // 20:00 UTC: in UTC-9 that's still 11:00 the same local day.
+        val instant = Instant.parse("2026-07-28T20:00:00Z")
+        val clock = MutableClock(instant, ZoneOffset.ofHours(-9))
+        val seen = mutableListOf<LocalDate>()
+
+        // One single collection stays active for the whole test - unlike the "fresh collection"
+        // tests above, nothing here ever restarts currentDateFlow.
+        val job = launch { currentDateFlow(clock).collect { seen.add(it) } }
+        testScheduler.runCurrent()
+        assertEquals(listOf(LocalDate.of(2026, 7, 28)), seen)
+
+        // The device's timezone changes live, mid-collection - no instant moves at all, only the
+        // zone (05:00 the NEXT local day in UTC+9) - modeling a flight landing or a manual
+        // timezone change while the app stays open. The internal bounded re-check (not the
+        // original, now-stale midnight delay computed under the OLD zone) is what must notice
+        // this.
+        clock.currentZone = ZoneOffset.ofHours(9)
+        testScheduler.advanceTimeBy(ZONE_CHECK_INTERVAL.toMillis())
+        testScheduler.runCurrent()
+
+        assertEquals(listOf(LocalDate.of(2026, 7, 28), LocalDate.of(2026, 7, 29)), seen)
+        job.cancel()
+    }
 }

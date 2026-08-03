@@ -39,7 +39,13 @@ class FakeStepSource(
         availability is StepSourceAvailability.Available && subscribeSucceeds
 
     override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval> {
-        if (availability !is StepSourceAvailability.Available) return emptyList()
+        // Mirrors LocalRecordingStepSource: unavailable-during-read must throw, never look like a
+        // genuinely empty (but successful) read - see StepSource.readSteps's own doc comment. In
+        // normal (non-racy) use this is unreachable, since StepRepository always checks
+        // availability itself first and never calls readSteps while unavailable; it only matters
+        // for tests that deliberately simulate availability being lost between that check and the
+        // actual read.
+        if (availability !is StepSourceAvailability.Available) throw StepSourceUnavailableException(availability)
         return intervals.filter {
             it.startEpochSecond >= fromInclusive.epochSecond && it.startEpochSecond < toExclusive.epochSecond
         }

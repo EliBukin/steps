@@ -12,6 +12,10 @@ interface SessionOverrideDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(override: SessionOverrideEntity)
 
+    /** Used only when reattaching an override to a new anchor (see StepRepository.reconcileOverrideAnchors) - the old row must be removed, not left behind under its stale key. */
+    @Query("DELETE FROM session_overrides WHERE boutStartEpochSecond = :boutStartEpochSecond")
+    suspend fun deleteByAnchor(boutStartEpochSecond: Long)
+
     @Query("SELECT * FROM session_overrides")
     suspend fun getAll(): List<SessionOverrideEntity>
 
