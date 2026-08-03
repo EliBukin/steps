@@ -216,8 +216,12 @@ class StepRepository(
      */
     private suspend fun ensureClassificationFreshLocked() {
         if (!recoveryPerformed) {
-            recoveryPerformed = true
+            // Set only after recomputeClassification() actually completes: if it throws or is
+            // cancelled, recovery has NOT happened, and a later call in this same process must
+            // retry it rather than silently skipping straight to the cheap version-only check
+            // below.
             recomputeClassification()
+            recoveryPerformed = true
             return
         }
         if (database.walkBoutDao().hasRowsWithOtherClassifierVersion(CLASSIFIER_VERSION)) {

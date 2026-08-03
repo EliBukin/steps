@@ -38,6 +38,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -67,6 +68,28 @@ private class TestSchedulerClock(
     override fun getZone(): ZoneId = zoneId
     override fun withZone(zone: ZoneId): Clock = TestSchedulerClock(scheduler, base, zone)
     override fun instant(): Instant = base.plusMillis(scheduler.currentTime)
+}
+
+/**
+ * A [Clock] that throws on its very first [instant] call and behaves like [TestSchedulerClock] on
+ * every call after that. Used only to prove
+ * [StepRepository.ensureClassificationFreshLocked] leaves its recovery flag unset when the first
+ * recomputation attempt fails, so a later call retries recovery rather than treating a failed
+ * attempt as done - a plain test-side fake `Clock`, not a production hook.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+private class ThrowOnceClock(
+    private val scheduler: TestCoroutineScheduler,
+    private val base: Instant,
+) : Clock() {
+    private var calls = 0
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+    override fun withZone(zone: ZoneId): Clock = this
+    override fun instant(): Instant {
+        calls++
+        if (calls == 1) throw RuntimeException("simulated recovery failure")
+        return base.plusMillis(scheduler.currentTime)
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -371,51 +394,65 @@ class StepRepositoryTest {
     // ---- Local trailing-bout finalization timer (rescheduleFinalizationJob) ----
 
     /**
-     * A fresh in-memory database backed by a single real background thread for BOTH query and
-     * transaction work, paired with that same [ExecutorService] so tests can deterministically
-     * confirm ("drain") when Room has actually finished the work a resumed coroutine handed it -
-     * see [awaitRoomQuiescence]. Room's default executor is an unordered multi-thread pool, which
-     * that reasoning depends on not being true, so timer tests use a dedicated database rather
-     * than the shared `database` field built in [setUp].
+     * Bundles a timer test's per-test-only resources - a dedicated in-memory Room database backed
+     * by a single real background thread for BOTH query and transaction work (so
+     * [awaitRoomQuiescence]'s "one sentinel task proves every earlier task is done" reasoning
+     * actually holds - Room's default executor is an unordered multi-thread pool), and a
+     * dedicated [TestCoroutineScheduler] independent of this test's own `runTest` scheduler (see
+     * [newScope]'s doc comment for why that independence matters) - together with every
+     * [CoroutineScope] created against that scheduler via [newScope]. `use { }` guarantees [close]
+     * runs even when an assertion throws mid-test, so no test leaks the executor's thread or
+     * leaves the database open.
      */
-    private fun buildTimerTestDatabase(): Pair<StepSplitDatabase, ExecutorService> {
-        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val executor = Executors.newSingleThreadExecutor()
-        val db = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java)
-            .setQueryExecutor(executor)
-            .setTransactionExecutor(executor)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private class TimerTestHarness : AutoCloseable {
+        val roomExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+        val database: StepSplitDatabase = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext<android.content.Context>(),
+            StepSplitDatabase::class.java,
+        )
+            .setQueryExecutor(roomExecutor)
+            .setTransactionExecutor(roomExecutor)
             .build()
-        return db to executor
+        val scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
+
+        private val scopes = mutableListOf<CoroutineScope>()
+
+        /**
+         * A fresh [CoroutineScope] on [scheduler], tracked here so [close] can cancel it too.
+         * [scheduler] is deliberately independent of this test's own `runTest` scheduler - sharing
+         * `runTest`'s own scheduler for a [StepRepository]'s finalization-timer scope was tried
+         * first and is unsafe: whenever the main test coroutine blocks waiting on Room's real
+         * executor thread, `runTest`'s own event loop can respond to the apparent idleness by
+         * auto-advancing virtual time to the next scheduled delay - here, the very finalization
+         * job under test - so it can start running *while the original, still-in-flight sync call
+         * has not returned yet*, corrupting the "not yet finalized" checkpoint the test is trying
+         * to observe. This was confirmed empirically: instrumenting `testScheduler.currentTime`
+         * immediately after a plain `syncNow()` call (with no `advanceTimeBy` in sight) showed it
+         * already sitting at the scheduled job's exact delay. A completely separate scheduler has
+         * no `runTest`/`runBlocking` event loop watching it at all, so it only ever advances via
+         * this test's own explicit [TestCoroutineScheduler.advanceTimeBy] /
+         * [TestCoroutineScheduler.runCurrent] calls.
+         */
+        fun newScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(scheduler)).also { scopes += it }
+
+        override fun close() {
+            scopes.forEach { it.cancel() }
+            database.close()
+            roomExecutor.shutdown()
+        }
     }
 
     /**
-     * A [TestCoroutineScheduler] deliberately independent of this test's own `runTest` scheduler,
-     * used only for a [StepRepository]'s finalization-timer [CoroutineScope] (and the
-     * [TestSchedulerClock] handed to that same repository). Sharing `runTest`'s own scheduler for
-     * this was tried first and is unsafe: whenever the main test coroutine blocks waiting on
-     * Room's real executor thread (see [buildTimerTestDatabase]), `runTest`'s own event loop can
-     * respond to the apparent idleness by auto-advancing virtual time to the next scheduled delay
-     * - here, the very finalization job under test - so it can start running *while the original,
-     * still-in-flight sync call has not returned yet*, corrupting the "not yet finalized"
-     * checkpoint the test is trying to observe. This was confirmed empirically: instrumenting
-     * `testScheduler.currentTime` immediately after a plain `syncNow()` call (with no
-     * `advanceTimeBy` in sight) showed it already sitting at the scheduled job's exact delay. A
-     * completely separate scheduler has no `runTest`/`runBlocking` event loop watching it at all,
-     * so it only ever advances via this test's own explicit [TestCoroutineScheduler.advanceTimeBy]
-     * / [TestCoroutineScheduler.runCurrent] calls below.
-     */
-    private fun timerScheduler(): TestCoroutineScheduler = TestCoroutineScheduler()
-
-    /**
-     * The scheduled timer's recompute crosses onto Room's own executor thread, independent of
-     * [scheduler]'s virtual time - advancing virtual time resolves the `delay()` call itself, but
-     * the Room work it then triggers can still be mid-flight on that real thread when
+     * The scheduled timer's recompute crosses onto Room's own executor thread, independent of the
+     * harness's virtual time - advancing virtual time resolves the `delay()` call itself, but the
+     * Room work it then triggers can still be mid-flight on that real thread when
      * [TestCoroutineScheduler.advanceTimeBy]/[TestCoroutineScheduler.runCurrent] return. Because
-     * [roomExecutor] is single-threaded (see [buildTimerTestDatabase]) and therefore processes
-     * submitted tasks strictly in the order they were submitted, a sentinel task's completion
-     * proves every task queued before it - including whichever Room call the timer's coroutine is
-     * currently suspended on - has already run and already signalled its continuation. This is a
-     * real synchronization barrier tied to an actual completion signal, not a timing guess.
+     * [roomExecutor] is single-threaded (see [TimerTestHarness]) and therefore processes submitted
+     * tasks strictly in the order they were submitted, a sentinel task's completion proves every
+     * task queued before it - including whichever Room call the timer's coroutine is currently
+     * suspended on - has already run and already signalled its continuation. This is a real
+     * synchronization barrier tied to an actual completion signal, not a timing guess.
      */
     private fun awaitRoomQuiescence(roomExecutor: ExecutorService) {
         val latch = CountDownLatch(1)
@@ -424,25 +461,25 @@ class StepRepositoryTest {
     }
 
     /**
-     * Repeatedly drains whatever [scheduler] has ready (`runCurrent`) and then blocks on
-     * [awaitRoomQuiescence] before draining again, so any cross-thread Room round trip a drained
-     * continuation just triggered gets a chance to complete and re-enqueue its own continuation
-     * before the next `runCurrent`. Used at "must still be withheld" checkpoints, where there is
-     * no positive condition to await instead.
+     * Repeatedly drains whatever [TimerTestHarness.scheduler] has ready (`runCurrent`) and then
+     * blocks on [awaitRoomQuiescence] before draining again, so any cross-thread Room round trip a
+     * drained continuation just triggered gets a chance to complete and re-enqueue its own
+     * continuation before the next `runCurrent`. Used at "must still be withheld" checkpoints,
+     * where there is no positive condition to await instead.
      */
-    private fun settle(scheduler: TestCoroutineScheduler, roomExecutor: ExecutorService) {
+    private fun settle(harness: TimerTestHarness) {
         repeat(SETTLE_ITERATIONS) {
-            scheduler.runCurrent()
-            awaitRoomQuiescence(roomExecutor)
+            harness.scheduler.runCurrent()
+            awaitRoomQuiescence(harness.roomExecutor)
         }
-        scheduler.runCurrent()
+        harness.scheduler.runCurrent()
     }
 
     /** Like [settle], but stops as soon as [repo] actually shows a finalized session rather than always spending the full iteration budget. */
-    private suspend fun awaitFinalizedSessions(repo: StepRepository, scheduler: TestCoroutineScheduler, roomExecutor: ExecutorService): List<WalkSession> {
+    private suspend fun awaitFinalizedSessions(repo: StepRepository, harness: TimerTestHarness): List<WalkSession> {
         repeat(SETTLE_ITERATIONS) {
-            scheduler.runCurrent()
-            awaitRoomQuiescence(roomExecutor)
+            harness.scheduler.runCurrent()
+            awaitRoomQuiescence(harness.roomExecutor)
             val sessions = repo.observeSessions().first()
             if (sessions.isNotEmpty()) return sessions
         }
@@ -451,314 +488,368 @@ class StepRepositoryTest {
 
     @Test
     fun `a trailing bout finalizes on its own once idleFinalizeMinutes passes, with no second source read`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val today = Instant.ofEpochSecond(baseEpoch).atZone(ZoneOffset.UTC).toLocalDate()
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val today = Instant.ofEpochSecond(baseEpoch).atZone(ZoneOffset.UTC).toLocalDate()
 
-        var readCount = 0
-        val countingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
-            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant) =
-                fakeSource.readSteps(fromInclusive, toExclusive).also { readCount++ }
+            var readCount = 0
+            val countingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+                override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant) =
+                    fakeSource.readSteps(fromInclusive, toExclusive).also { readCount++ }
+            }
+            // "Now" starts 1 minute after the final active bucket - well under the default
+            // 3-minute idleFinalizeMinutes, so this first sync must not finalize a session yet.
+            // Deriving the clock straight from the harness scheduler's currentTime means every
+            // advanceTimeBy below moves it automatically, with no separate manual bump that could
+            // ever drift out of sync.
+            val clock = TestSchedulerClock(harness.scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
+            val timedRepository = StepRepository(harness.database, countingSource, settingsRepository, clock, harness.newScope())
+
+            timedRepository.syncNow()
+            assertEquals(1, readCount)
+            assertTrue("must not appear as a session yet", timedRepository.observeSessions().first().isEmpty())
+            val earlyBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+            assertEquals(0L, earlyBreakdown.workoutSteps)
+            assertEquals(1600L, earlyBreakdown.incidentalSteps)
+
+            // Advance to exactly the idle-finalize deadline and drive the scheduled local timer -
+            // the job's own computed delay is 2 minutes (idleFinalizeMinutes=3 minus the 1 minute
+            // "now" already sits past the last active minute) - and no second call into syncNow(),
+            // so no second source read either.
+            harness.scheduler.advanceTimeBy(2 * 60_000L)
+            settle(harness)
+
+            val sessions = awaitFinalizedSessions(timedRepository, harness)
+            assertEquals("the local timer must never read from the step source", 1, readCount)
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            val laterBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+            assertEquals(1600L, laterBreakdown.workoutSteps)
+            assertEquals(0L, laterBreakdown.incidentalSteps)
         }
-        // "Now" starts 1 minute after the final active bucket - well under the default 3-minute
-        // idleFinalizeMinutes, so this first sync must not finalize a session yet. Deriving the
-        // clock straight from the dedicated scheduler's currentTime means every advanceTimeBy
-        // below moves it automatically, with no separate manual bump that could ever drift out of
-        // sync.
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
-        val timedRepository = StepRepository(timerDb, countingSource, settingsRepository, clock, CoroutineScope(StandardTestDispatcher(scheduler)))
-
-        timedRepository.syncNow()
-        assertEquals(1, readCount)
-        assertTrue("must not appear as a session yet", timedRepository.observeSessions().first().isEmpty())
-        val earlyBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
-        assertEquals(0L, earlyBreakdown.workoutSteps)
-        assertEquals(1600L, earlyBreakdown.incidentalSteps)
-
-        // Advance to exactly the idle-finalize deadline and drive the scheduled local timer - no
-        // second call into syncNow(), so no second source read either.
-        scheduler.advanceTimeBy(3 * 60_000L)
-        settle(scheduler, roomExecutor)
-
-        val sessions = awaitFinalizedSessions(timedRepository, scheduler, roomExecutor)
-        assertEquals("the local timer must never read from the step source", 1, readCount)
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        val laterBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
-        assertEquals(1600L, laterBreakdown.workoutSteps)
-        assertEquals(0L, laterBreakdown.incidentalSteps)
     }
 
     @Test
     fun `new activity before the deadline reschedules finalization to reflect the newest data`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
-        val timedRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, CoroutineScope(StandardTestDispatcher(scheduler)))
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val clock = TestSchedulerClock(harness.scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
+            val timedRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
 
-        // First sync: schedules a deadline 3 minutes (the default idleFinalizeMinutes) after the
-        // last active minute, i.e. at lastActiveMinuteEnd + 180s.
-        timedRepository.syncNow()
+            // First sync: schedules a deadline 2 minutes out (idleFinalizeMinutes=3 minus the 1
+            // minute "now" already sits past the last active minute), i.e. at relative t=120s.
+            timedRepository.syncNow()
 
-        // 60 (virtual) seconds later - still well before that deadline - new activity arrives and
-        // a sync picks it up, extending the bout by one more active minute.
-        scheduler.advanceTimeBy(60_000)
-        settle(scheduler, roomExecutor)
-        fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
-        timedRepository.syncNow()
+            // 60 (virtual) seconds later - still well before that deadline - new activity arrives
+            // and a sync picks it up, extending the bout by one more active minute.
+            harness.scheduler.advanceTimeBy(60_000)
+            settle(harness)
+            fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
+            timedRepository.syncNow()
 
-        // Advance to exactly the ORIGINAL (now-superseded) deadline - if new activity had not
-        // rescheduled it, this is when the bout would have finalized with the old, incomplete data.
-        scheduler.advanceTimeBy(61_000)
-        settle(scheduler, roomExecutor)
-        assertTrue(
-            "finalization must wait for the rescheduled deadline, not the original one",
-            timedRepository.observeSessions().first().isEmpty(),
-        )
+            // Advance to exactly the ORIGINAL (now-superseded) deadline at relative t=120s - if
+            // new activity had not rescheduled it, this is when the bout would have finalized with
+            // the old, incomplete data. (WalkClassifier's own idle check is inclusive of this exact
+            // boundary, but nothing is scheduled to run at it any more since the timer was already
+            // replaced above, so landing exactly on it is still safely withheld.)
+            harness.scheduler.advanceTimeBy(60_000)
+            settle(harness)
+            assertTrue(
+                "finalization must wait for the rescheduled deadline, not the original one",
+                timedRepository.observeSessions().first().isEmpty(),
+            )
 
-        // Advance the rest of the way to the actual (rescheduled) deadline: idleFinalizeMinutes
-        // after the newest active minute, i.e. lastActiveMinuteEnd + 120 + 180.
-        val target = lastActiveMinuteEnd + 120 + 180
-        val remainingSeconds = target - clock.instant().epochSecond
-        scheduler.advanceTimeBy(remainingSeconds * 1000)
+            // Advance the rest of the way to the actual (rescheduled) deadline: idleFinalizeMinutes
+            // after the newest active minute, i.e. lastActiveMinuteEnd + 120 + 180.
+            val target = lastActiveMinuteEnd + 120 + 180
+            val remainingSeconds = target - clock.instant().epochSecond
+            harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
 
-        val sessions = awaitFinalizedSessions(timedRepository, scheduler, roomExecutor)
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        // The original 20 minutes (1600 steps) plus the one extra minute that arrived before the
-        // original deadline (80 steps) - proof the newest data, not a stale snapshot, was used.
-        assertEquals(1680L, sessions.single().steps)
+            val sessions = awaitFinalizedSessions(timedRepository, harness)
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            // The original 20 minutes (1600 steps) plus the one extra minute that arrived before
+            // the original deadline (80 steps) - proof the newest data, not a stale snapshot, was
+            // used.
+            assertEquals(1680L, sessions.single().steps)
+        }
     }
 
     @Test
     fun `changing idleFinalizeMinutes reschedules the pending finalization to the new duration`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
-        val timedRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, CoroutineScope(StandardTestDispatcher(scheduler)))
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val clock = TestSchedulerClock(harness.scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
+            val timedRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
 
-        // First sync: schedules a deadline using the default 3-minute idleFinalizeMinutes.
-        timedRepository.syncNow()
+            // First sync: schedules a deadline using the default 3-minute idleFinalizeMinutes.
+            timedRepository.syncNow()
 
-        // Before that deadline, the user relaxes idleFinalizeMinutes to 10 minutes - finalization
-        // must now wait longer, not fire on the old 3-minute schedule.
-        scheduler.advanceTimeBy(60_000)
-        settle(scheduler, roomExecutor)
-        val longer = ClassificationThresholds.DEFAULT.copy(idleFinalizeMinutes = 10)
-        timedRepository.applyThresholds(longer)
+            // Before that deadline, the user relaxes idleFinalizeMinutes to 10 minutes -
+            // finalization must now wait longer, not fire on the old 3-minute schedule.
+            harness.scheduler.advanceTimeBy(60_000)
+            settle(harness)
+            val longer = ClassificationThresholds.DEFAULT.copy(idleFinalizeMinutes = 10)
+            timedRepository.applyThresholds(longer)
 
-        // Advance to just past the OLD 3-minute deadline - must still be withheld now that
-        // idleFinalizeMinutes is 10 minutes.
-        scheduler.advanceTimeBy(61_000)
-        settle(scheduler, roomExecutor)
-        assertTrue(timedRepository.observeSessions().first().isEmpty())
+            // Advance to exactly the OLD 3-minute deadline (relative t=120s) - must still be
+            // withheld now that idleFinalizeMinutes is 10 minutes and nothing is scheduled to run
+            // at this superseded time any more.
+            harness.scheduler.advanceTimeBy(60_000)
+            settle(harness)
+            assertTrue(timedRepository.observeSessions().first().isEmpty())
 
-        // Advance the rest of the way to the actual new deadline: 10 minutes after the last
-        // active minute.
-        val target = lastActiveMinuteEnd + 10 * 60
-        val remainingSeconds = target - clock.instant().epochSecond
-        scheduler.advanceTimeBy(remainingSeconds * 1000)
+            // Advance the rest of the way to the actual new deadline: 10 minutes after the last
+            // active minute.
+            val target = lastActiveMinuteEnd + 10 * 60
+            val remainingSeconds = target - clock.instant().epochSecond
+            harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
 
-        val sessions = awaitFinalizedSessions(timedRepository, scheduler, roomExecutor)
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            val sessions = awaitFinalizedSessions(timedRepository, harness)
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        }
     }
 
     // ---- Startup recovery of a pending finalization after simulated process death ----
 
     @Test
     fun `a pending finalization timer is restored after the repository is recreated, and finalizes without another source read`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
-        // Both simulated "processes" below share this one scheduler/clock - virtual time keeps
-        // advancing continuously across the simulated restart, exactly like a real device clock
-        // that never stops just because the app's process did.
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, baseInstant)
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
+            // Both simulated "processes" below share this one scheduler/clock - virtual time keeps
+            // advancing continuously across the simulated restart, exactly like a real device
+            // clock that never stops just because the app's process did.
+            val clock = TestSchedulerClock(harness.scheduler, baseInstant)
 
-        // The "first process": a real sync schedules a finalization timer 3 minutes (the default
-        // idleFinalizeMinutes) after the last active minute, on its own scope.
-        val firstProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val firstRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, firstProcessScope)
-        firstRepository.syncNow()
-        assertTrue(firstRepository.observeSessions().first().isEmpty())
+            // The "first process": a real sync schedules a finalization timer 2 minutes out
+            // (idleFinalizeMinutes=3 minus the 1 minute "now" already sits past the last active
+            // minute), on its own scope.
+            val firstRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
+            firstRepository.syncNow()
+            assertTrue(firstRepository.observeSessions().first().isEmpty())
 
-        // Simulate the process being killed: its scope (and whatever timer it scheduled) is torn
-        // down.
-        firstProcessScope.cancel()
+            // Simulate the process being killed: its scope (and whatever timer it scheduled) is
+            // cancelled by the harness's close() at the end of this test, same as every other
+            // scope here - but we don't need to wait until then, since a fresh StepRepository
+            // below never touches it.
 
-        // The "second process": a brand-new StepRepository over the SAME Room database, on its
-        // own new scope, with the step source now unavailable - modeling the app being reopened
-        // with no network/permission state recovered yet.
-        var readCount = 0
-        val countingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
-            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant) =
-                fakeSource.readSteps(fromInclusive, toExclusive).also { readCount++ }
+            // The "second process": a brand-new StepRepository over the SAME Room database, on its
+            // own new scope, with the step source now unavailable - modeling the app being
+            // reopened with no network/permission state recovered yet.
+            var readCount = 0
+            val countingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+                override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant) =
+                    fakeSource.readSteps(fromInclusive, toExclusive).also { readCount++ }
+            }
+            fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
+            val secondRepository = StepRepository(harness.database, countingSource, settingsRepository, clock, harness.newScope())
+
+            val result = secondRepository.syncNow()
+
+            assertTrue("an unavailable source must not block recovering the pending deadline", result is SyncResult.Unavailable)
+            assertEquals("recovery must never read from the step source", 0, readCount)
+            assertTrue(
+                "the deadline has not passed yet - recovery must not finalize early",
+                secondRepository.observeSessions().first().isEmpty(),
+            )
+
+            // Advance to the ORIGINAL deadline (2 minutes remaining: 3 minutes total minus the 1
+            // already elapsed before the simulated restart) - restored by the new process's own
+            // recovery, not by anything left over from the killed one.
+            harness.scheduler.advanceTimeBy(2 * 60_000L)
+            val sessions = awaitFinalizedSessions(secondRepository, harness)
+
+            assertEquals("the restored timer must never read from the step source either", 0, readCount)
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1600L, sessions.single().steps)
         }
-        fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
-        val secondProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val secondRepository = StepRepository(timerDb, countingSource, settingsRepository, clock, secondProcessScope)
-
-        val result = secondRepository.syncNow()
-
-        assertTrue("an unavailable source must not block recovering the pending deadline", result is SyncResult.Unavailable)
-        assertEquals("recovery must never read from the step source", 0, readCount)
-        assertTrue(
-            "the deadline has not passed yet - recovery must not finalize early",
-            secondRepository.observeSessions().first().isEmpty(),
-        )
-
-        // Advance to the ORIGINAL deadline (2 minutes remaining: 3 minutes total minus the 1
-        // already elapsed before the simulated restart) - restored by the new process's own
-        // recovery, not by anything left over from the killed one.
-        scheduler.advanceTimeBy(2 * 60_000L)
-        val sessions = awaitFinalizedSessions(secondRepository, scheduler, roomExecutor)
-
-        assertEquals("the restored timer must never read from the step source either", 0, readCount)
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        assertEquals(1600L, sessions.single().steps)
-        secondProcessScope.cancel()
     }
 
     @Test
     fun `recovery reclassifies immediately when the finalization deadline already elapsed while the process was dead`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, baseInstant)
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
+            val clock = TestSchedulerClock(harness.scheduler, baseInstant)
 
-        val firstProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val firstRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, firstProcessScope)
-        firstRepository.syncNow()
-        firstProcessScope.cancel()
+            val firstProcessScope = harness.newScope()
+            val firstRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, firstProcessScope)
+            firstRepository.syncNow()
+            firstProcessScope.cancel()
 
-        // Time passes well beyond the original 3-minute deadline while no repository exists at
-        // all - modeling a long-dead process, not just a quick restart. Nothing fires during this
-        // advance since the only timer that existed was just cancelled above.
-        scheduler.advanceTimeBy(10 * 60_000L)
+            // Time passes well beyond the original 3-minute deadline while no repository exists at
+            // all - modeling a long-dead process, not just a quick restart. Nothing fires during
+            // this advance since the only timer that existed was just cancelled above.
+            harness.scheduler.advanceTimeBy(10 * 60_000L)
 
-        fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
-        val secondProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val secondRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, secondProcessScope)
+            fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
+            val secondRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
 
-        val result = secondRepository.syncNow()
+            val result = secondRepository.syncNow()
 
-        assertTrue(result is SyncResult.Unavailable)
-        // No further time advance needed - the deadline was already in the past the moment
-        // recovery ran, so the classifier must finalize it as part of that very recompute.
-        val sessions = secondRepository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        secondProcessScope.cancel()
+            assertTrue(result is SyncResult.Unavailable)
+            // No further time advance needed - the deadline was already in the past the moment
+            // recovery ran, so the classifier must finalize it as part of that very recompute.
+            val sessions = secondRepository.observeSessions().first()
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        }
     }
 
     @Test
     fun `recovery still restores the pending timer when the source read fails, and the read failure remains correctly reported`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, baseInstant)
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
+            val clock = TestSchedulerClock(harness.scheduler, baseInstant)
 
-        val firstProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val firstRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, firstProcessScope)
-        firstRepository.syncNow()
-        firstProcessScope.cancel()
+            val firstRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
+            firstRepository.syncNow()
 
-        var readCount = 0
-        val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
-            override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
-                readCount++
-                throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
+            var readCount = 0
+            val failingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+                override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<com.example.stepsplit.data.stepsource.RawStepInterval> {
+                    readCount++
+                    throw com.example.stepsplit.data.stepsource.StepSourceReadException("simulated non-success status")
+                }
             }
+            val secondRepository = StepRepository(harness.database, failingSource, settingsRepository, clock, harness.newScope())
+
+            val result = secondRepository.syncNow()
+
+            assertTrue("a failing read must not block recovering the pending deadline", result is SyncResult.Failed)
+            assertEquals(SyncFailureCategory.READ_FAILED, (result as SyncResult.Failed).category)
+            assertEquals(1, readCount)
+            assertEquals(
+                SyncFailureCategory.READ_FAILED,
+                settingsRepository.settings.first().lastSyncFailure?.category,
+            )
+            assertTrue(secondRepository.observeSessions().first().isEmpty())
+
+            harness.scheduler.advanceTimeBy(2 * 60_000L)
+            val sessions = awaitFinalizedSessions(secondRepository, harness)
+
+            assertEquals("the restored timer must never read from the step source", 1, readCount)
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            // The recorded failure is orthogonal to local classification recovery - the timer's
+            // purely-local recompute must not have silently cleared or altered it.
+            assertEquals(
+                SyncFailureCategory.READ_FAILED,
+                settingsRepository.settings.first().lastSyncFailure?.category,
+            )
         }
-        val secondProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val secondRepository = StepRepository(timerDb, failingSource, settingsRepository, clock, secondProcessScope)
-
-        val result = secondRepository.syncNow()
-
-        assertTrue("a failing read must not block recovering the pending deadline", result is SyncResult.Failed)
-        assertEquals(SyncFailureCategory.READ_FAILED, (result as SyncResult.Failed).category)
-        assertEquals(1, readCount)
-        assertEquals(
-            SyncFailureCategory.READ_FAILED,
-            settingsRepository.settings.first().lastSyncFailure?.category,
-        )
-        assertTrue(secondRepository.observeSessions().first().isEmpty())
-
-        scheduler.advanceTimeBy(2 * 60_000L)
-        val sessions = awaitFinalizedSessions(secondRepository, scheduler, roomExecutor)
-
-        assertEquals("the restored timer must never read from the step source", 1, readCount)
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        // The recorded failure is orthogonal to local classification recovery - the timer's
-        // purely-local recompute must not have silently cleared or altered it.
-        assertEquals(
-            SyncFailureCategory.READ_FAILED,
-            settingsRepository.settings.first().lastSyncFailure?.category,
-        )
-        secondProcessScope.cancel()
     }
 
     @Test
     fun `new activity after recovery reschedules the restored finalization to reflect the newest data`() = runTest {
-        val (timerDb, roomExecutor) = buildTimerTestDatabase()
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val lastActiveMinuteEnd = baseEpoch + 20 * 60L
-        val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
-        val scheduler = timerScheduler()
-        val clock = TestSchedulerClock(scheduler, baseInstant)
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val baseInstant = Instant.ofEpochSecond(lastActiveMinuteEnd + 60)
+            val clock = TestSchedulerClock(harness.scheduler, baseInstant)
 
-        val firstProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val firstRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, firstProcessScope)
-        firstRepository.syncNow()
-        firstProcessScope.cancel()
+            val firstRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
+            firstRepository.syncNow()
 
-        // The "second process" recovers the pending deadline (2 minutes remaining), but this time
-        // the source is available again, so a normal sync can pick up new activity.
-        val secondProcessScope = CoroutineScope(StandardTestDispatcher(scheduler))
-        val secondRepository = StepRepository(timerDb, fakeSource, settingsRepository, clock, secondProcessScope)
-        secondRepository.syncNow()
+            // The "second process" recovers the pending deadline (2 minutes remaining), but this
+            // time the source is available again, so a normal sync can pick up new activity.
+            val secondRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
+            secondRepository.syncNow()
 
-        // Before the restored deadline, one more minute of activity arrives.
-        scheduler.advanceTimeBy(30_000)
-        settle(scheduler, roomExecutor)
-        fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
-        secondRepository.syncNow()
+            // Before the restored deadline, one more minute of activity arrives.
+            harness.scheduler.advanceTimeBy(30_000)
+            settle(harness)
+            fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
+            secondRepository.syncNow()
 
-        // Advance to exactly the ORIGINAL restored deadline - must still be withheld, since the
-        // new activity must have rescheduled it rather than leaving a duplicate original timer.
-        scheduler.advanceTimeBy(91_000)
-        settle(scheduler, roomExecutor)
-        assertTrue(
-            "finalization must wait for the rescheduled deadline, not the recovered-but-now-stale one",
-            secondRepository.observeSessions().first().isEmpty(),
-        )
+            // Advance to exactly the ORIGINAL restored deadline (relative t=120s) - must still be
+            // withheld, since the new activity must have rescheduled it rather than leaving a
+            // duplicate original timer; nothing is scheduled to run at this superseded time any
+            // more.
+            harness.scheduler.advanceTimeBy(90_000)
+            settle(harness)
+            assertTrue(
+                "finalization must wait for the rescheduled deadline, not the recovered-but-now-stale one",
+                secondRepository.observeSessions().first().isEmpty(),
+            )
 
-        // Advance the rest of the way to the actual rescheduled deadline: idleFinalizeMinutes
-        // after the newest active minute.
-        val target = lastActiveMinuteEnd + 120 + 180
-        val remainingSeconds = target - clock.instant().epochSecond
-        scheduler.advanceTimeBy(remainingSeconds * 1000)
-        val sessions = awaitFinalizedSessions(secondRepository, scheduler, roomExecutor)
+            // Advance the rest of the way to the actual rescheduled deadline: idleFinalizeMinutes
+            // after the newest active minute.
+            val target = lastActiveMinuteEnd + 120 + 180
+            val remainingSeconds = target - clock.instant().epochSecond
+            harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
+            val sessions = awaitFinalizedSessions(secondRepository, harness)
 
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-        assertEquals(1680L, sessions.single().steps)
-        secondProcessScope.cancel()
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1680L, sessions.single().steps)
+        }
+    }
+
+    // ---- Recovery failure/retry ordering (ensureClassificationFreshLocked) ----
+
+    @Test
+    fun `a failure during the first recovery attempt leaves it unmarked, so a later sync retries recovery`() = runTest {
+        TimerTestHarness().use { harness ->
+            // Raw buckets are seeded directly into Room, bypassing fakeSource/sync entirely - the
+            // point is to prove RECOVERY itself (not the normal end-of-sync recompute, which runs
+            // unconditionally and would mask a recovery-flag bug) is what schedules the
+            // finalization timer, so the source is kept unavailable for every syncNow() call
+            // below - a successful sync would call the normal recompute regardless of the flag.
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            for (i in 0 until 20) {
+                harness.database.stepBucketDao().upsertAll(
+                    listOf(
+                        StepBucketEntity(
+                            source = fakeSource.id,
+                            startEpochSecond = baseEpoch + i * 60L,
+                            endEpochSecond = baseEpoch + i * 60L + 60,
+                            steps = 80,
+                            zoneId = "UTC",
+                            localDate = "2026-03-10",
+                            importedAtEpochSecond = baseEpoch,
+                        ),
+                    ),
+                )
+            }
+            fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
+            val clock = ThrowOnceClock(harness.scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
+            val repo = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
+
+            // First sync: recovery's recomputeClassification() throws while reading "now" - the
+            // failure must propagate (not be silently absorbed) and must NOT mark recovery done.
+            try {
+                repo.syncNow()
+                fail("expected the simulated recovery failure to propagate")
+            } catch (e: RuntimeException) {
+                assertEquals("simulated recovery failure", e.message)
+            }
+
+            // Second sync: if the first failed attempt had incorrectly marked recovery as done,
+            // this would skip straight to the version-only check - which finds nothing stale in
+            // the still-empty walk_bouts table - and never schedule a finalization timer at all,
+            // so the bout would never finalize no matter how much time passes. A correct retry
+            // schedules the timer here instead.
+            val result = repo.syncNow()
+            assertTrue("still unavailable, but recovery must have retried and succeeded", result is SyncResult.Unavailable)
+            assertTrue(repo.observeSessions().first().isEmpty())
+
+            harness.scheduler.advanceTimeBy(2 * 60_000L)
+            val sessions = awaitFinalizedSessions(repo, harness)
+
+            assertEquals(1, sessions.size)
+            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        }
     }
 
     @Test
