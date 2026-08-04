@@ -74,33 +74,41 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `finishing an active trip marks it FINISHED with an end timestamp`() = runTest {
+    fun `finishing an active trip marks it FINISHED with the given end timestamp`() = runTest {
         val tripId = repository.startTrip()
-        clock.instant = fixedNow.plusSeconds(600)
-        repository.finishTrip(tripId)
+        val endAt = fixedNow.plusSeconds(600).epochSecond
+        repository.finishTrip(tripId, endAt)
 
         val trip = repository.getTrip(tripId)!!
         assertEquals(TripState.FINISHED.name, trip.state)
-        assertEquals(fixedNow.plusSeconds(600).epochSecond, trip.endEpochSecond)
+        assertEquals(endAt, trip.endEpochSecond)
     }
 
     @Test
     fun `finishing an already-finished trip is idempotent and does not move the end timestamp`() = runTest {
         val tripId = repository.startTrip()
-        clock.instant = fixedNow.plusSeconds(600)
-        repository.finishTrip(tripId)
+        repository.finishTrip(tripId, fixedNow.plusSeconds(600).epochSecond)
         val firstEnd = repository.getTrip(tripId)!!.endEpochSecond
 
-        clock.instant = fixedNow.plusSeconds(9_999) // would produce a different timestamp if reapplied
-        repository.finishTrip(tripId)
+        repository.finishTrip(tripId, fixedNow.plusSeconds(9_999).epochSecond) // would produce a different timestamp if reapplied
 
         assertEquals(firstEnd, repository.getTrip(tripId)!!.endEpochSecond)
     }
 
     @Test
     fun `finishing a trip that was never active does nothing`() = runTest {
-        repository.finishTrip(999L) // no such trip - must not throw
+        repository.finishTrip(999L, fixedNow.epochSecond) // no such trip - must not throw
         assertNull(repository.getTrip(999L))
+    }
+
+    @Test
+    fun `a Finish end time that would precede the trip's own start time is clamped to the start time`() = runTest {
+        val tripId = repository.startTrip() // startEpochSecond == fixedNow.epochSecond
+        repository.finishTrip(tripId, fixedNow.epochSecond - 1_000) // a bogus/earlier-than-start cutoff
+
+        val trip = repository.getTrip(tripId)!!
+        assertEquals(TripState.FINISHED.name, trip.state)
+        assertEquals(trip.startEpochSecond, trip.endEpochSecond)
     }
 
     @Test
@@ -188,7 +196,7 @@ class TripRepositoryTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 10)))
-        repository.finishTrip(tripId)
+        repository.finishTrip(tripId, t0 + 10)
         val distanceAfterFinish = repository.getTrip(tripId)!!.distanceMeters
         val pointCountAfterFinish = repository.getTripPoints(tripId).size
 
@@ -235,7 +243,7 @@ class TripRepositoryTest {
     @Test
     fun `reconcileActiveTripOnLaunch does nothing when there is no active trip`() = runTest {
         val tripId = repository.startTrip()
-        repository.finishTrip(tripId)
+        repository.finishTrip(tripId, fixedNow.epochSecond)
         repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
         assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
     }
@@ -323,7 +331,7 @@ class TripRepositoryTest {
     @Test
     fun `markTripInterrupted is a no-op for a trip that is not currently ACTIVE`() = runTest {
         val tripId = repository.startTrip()
-        repository.finishTrip(tripId)
+        repository.finishTrip(tripId, fixedNow.epochSecond)
 
         repository.markTripInterrupted(tripId)
 
@@ -419,12 +427,12 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `markFinishRequested rejects a sample captured after the Finish cutoff even while the trip is still ACTIVE`() = runTest {
+    fun `beginFinish rejects a sample captured after the Finish cutoff even while the trip is still ACTIVE`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 10)))
 
-        repository.markFinishRequested(tripId, cutoffEpochSecond = t0 + 15)
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 15)
 
         // A fix the GPS chip happens to capture *after* Finish was requested, while the trip is
         // technically still ACTIVE during the bounded flush/grace wait - must not be appended.
@@ -437,17 +445,74 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `finishTrip clears the Finish cutoff so a later trip is never affected by a stale one`() = runTest {
+    fun `beginFinish unconditionally overwrites whatever cutoff was previously outstanding for the same token`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 20) // a fresh Finish attempt for the same token
+
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 15)))
+        assertEquals(1, repository.getTripPoints(tripId).size) // accepted under the *new* cutoff (20), not the old one (10)
+    }
+
+    @Test
+    fun `cancelFinish releases the cutoff only when the token still matches, never an already-superseded one`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
+
+        // An older/unrelated token can never clear a still-active cutoff it doesn't own.
+        repository.cancelFinish(token = 999L)
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 20)))
+        assertEquals(0, repository.getTripPoints(tripId).size) // still rejected - the real cutoff (token 1) is untouched
+
+        // The owning token releases it correctly.
+        repository.cancelFinish(token = 1L)
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.001, 34.0, t0 + 20)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `cancelFinish for one trip's token can never clear a different, newer Finish's cutoff on the same trip`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10) // an older, now-abandoned Finish
+        repository.beginFinish(tripId, token = 2L, cutoffEpochSecond = t0 + 250) // a newer Finish supersedes it, same trip
+
+        repository.cancelFinish(token = 1L) // the old, superseded Finish's own cancellation-triggered cleanup
+
+        // The newer Finish's cutoff (token 2) must still be in effect - proven by a sample past the
+        // OLD cutoff (10) but still within the NEW one (250, and within MAX_FUTURE_SKEW_SECONDS of
+        // "now") being accepted.
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 200)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `clearAbandonedFinishCutoff clears a cutoff for the given trip regardless of which token owns it`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
+
+        repository.clearAbandonedFinishCutoff(tripId)
+
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 20)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `clearAbandonedFinishCutoff only ever touches the given trip's own cutoff`() = runTest {
         val firstTripId = repository.startTrip()
-        repository.markFinishRequested(firstTripId, cutoffEpochSecond = fixedNow.epochSecond)
-        repository.finishTrip(firstTripId)
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(firstTripId, token = 1L, cutoffEpochSecond = t0 + 10)
+        repository.finishTrip(firstTripId, t0 + 10)
 
         val secondTripId = repository.startTrip()
-        val t0 = clock.instant.epochSecond
-        // Well after the first trip's cutoff (fixedNow), but still within MAX_FUTURE_SKEW_SECONDS
-        // of "now" - this test is specifically about the stale cutoff, not the future-skew guard.
-        repository.recordAcceptedBatch(secondTripId, listOf(sample(32.0, 34.0, t0 + 5)))
+        repository.beginFinish(secondTripId, token = 2L, cutoffEpochSecond = t0 + 30)
 
-        assertEquals(1, repository.getTripPoints(secondTripId).size)
+        repository.clearAbandonedFinishCutoff(firstTripId) // unrelated to secondTripId's own live cutoff
+
+        repository.recordAcceptedBatch(secondTripId, listOf(sample(32.0, 34.0, t0 + 40)))
+        assertEquals(0, repository.getTripPoints(secondTripId).size) // still correctly rejected by its own cutoff (30)
     }
 }

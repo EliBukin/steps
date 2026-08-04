@@ -34,12 +34,16 @@ class TripRepository(
 ) {
     private val tripMutex = Mutex()
 
-    // In-memory only, deliberately not a Room column (no new schema for this MVP revision): the
-    // single trip currently mid-Finish, and the cutoff timestamp captured the instant Finish was
-    // requested - see markFinishRequested's doc comment. Finishing is a short-lived, single-process
-    // operation; if the process dies mid-finish the trip is simply recovered like any other
-    // mid-recording death, via the ordinary reconcileActiveTripOnLaunch -> INTERRUPTED path.
-    private var finishCutoff: Pair<Long, Long>? = null
+    // In-memory only, deliberately not a Room column (no new schema for this MVP revision): at most
+    // one trip is ever mid-Finish at a time, and [token] (an opaque, caller-chosen id - in practice
+    // TripRecordingCommandController's own command generation) is what makes this cutoff owned rather
+    // than a shared, freely-overwritable field - see beginFinish/cancelFinish's own doc comments for
+    // why that ownership matters. Finishing is a short-lived, single-process operation; if the
+    // process dies mid-finish the trip is simply recovered like any other mid-recording death, via
+    // the ordinary reconcileActiveTripOnLaunch -> INTERRUPTED path.
+    private data class FinishCutoff(val tripId: Long, val token: Long, val cutoffEpochSecond: Long)
+
+    private var finishCutoff: FinishCutoff? = null
 
     /**
      * Idempotent: if a trip is already ACTIVE, its existing id is returned and no new row is
@@ -62,26 +66,71 @@ class TripRepository(
         database.tripDao().insert(trip)
     }
 
-    /** Idempotent: a trip that is not currently ACTIVE (already finished, interrupted, or unknown) is left untouched. */
-    suspend fun finishTrip(tripId: Long) = tripMutex.withLock {
+    /**
+     * Transitions [tripId] to FINISHED at exactly [endEpochSecond] - the *same* instant the caller
+     * captured as its Finish cutoff (see [beginFinish]), not whenever this call happens to run. A
+     * bounded flush plus grace period (see
+     * [com.example.stepsplit.trip.service.TripRecordingCommandController.handleFinish]) can add
+     * several real seconds between "the user asked to stop" and this call actually executing; using
+     * `clock.instant()` here instead would silently pad the stored trip duration by that same amount,
+     * even though [recordAcceptedBatch] is simultaneously rejecting any point captured after the
+     * cutoff - the persisted duration must not claim more than the accepted points can back up.
+     * [endEpochSecond] is defensively clamped to never precede the trip's own start time. Idempotent:
+     * a trip that is not currently ACTIVE (already finished, interrupted, or unknown) is left
+     * untouched. Does not itself touch [finishCutoff] - see [cancelFinish].
+     */
+    suspend fun finishTrip(tripId: Long, endEpochSecond: Long) = tripMutex.withLock {
         val trip = database.tripDao().getById(tripId) ?: return@withLock
         if (trip.state != TripState.ACTIVE.name) return@withLock
-        database.tripDao().update(trip.copy(state = TripState.FINISHED.name, endEpochSecond = clock.instant().epochSecond))
-        if (finishCutoff?.first == tripId) finishCutoff = null
+        val safeEnd = maxOf(endEpochSecond, trip.startEpochSecond)
+        database.tripDao().update(trip.copy(state = TripState.FINISHED.name, endEpochSecond = safeEnd))
     }
 
     /**
-     * Records the instant Finish was requested for [tripId], *before* the service's bounded flush
-     * (see [com.example.stepsplit.trip.service.TripRecordingCommandController.handleFinish]) waits
-     * for any already-batched fixes to arrive. [recordAcceptedBatch] then rejects any sample
-     * *captured* after [cutoffEpochSecond] even though the trip is technically still ACTIVE during
-     * that wait - a live fix the GPS chip happens to produce while the service is merely waiting out
-     * the flush window must not be silently appended after the user already asked to stop. Fixes
-     * captured *before* the cutoff but only *delivered* during the wait (exactly what flush() is
-     * for) are unaffected.
+     * Begins a Finish for [tripId], owned by [token] (an opaque caller-chosen id -
+     * [com.example.stepsplit.trip.service.TripRecordingCommandController] passes its own command
+     * generation), capturing [cutoffEpochSecond] once, *before* the service's bounded flush waits for
+     * any already-batched fixes to arrive. [recordAcceptedBatch] then rejects any sample *captured*
+     * after [cutoffEpochSecond] even though the trip is technically still ACTIVE during that wait - a
+     * live fix the GPS chip happens to produce while the service is merely waiting out the flush
+     * window must not be silently appended after the user already asked to stop. Fixes captured
+     * *before* the cutoff but only *delivered* during the wait (exactly what flush() is for) are
+     * unaffected. Unconditionally overwrites any previous cutoff: a fresh Finish always owns the
+     * cutoff going forward, regardless of what an older, already-abandoned one left behind.
      */
-    suspend fun markFinishRequested(tripId: Long, cutoffEpochSecond: Long) = tripMutex.withLock {
-        finishCutoff = tripId to cutoffEpochSecond
+    suspend fun beginFinish(tripId: Long, token: Long, cutoffEpochSecond: Long) = tripMutex.withLock {
+        finishCutoff = FinishCutoff(tripId, token, cutoffEpochSecond)
+    }
+
+    /**
+     * Releases [token]'s ownership of the Finish cutoff it began via [beginFinish], if it still owns
+     * one - a no-op otherwise. This is the *cancellation-safe* half of the begin/cancel pair: a
+     * cancelled or superseded Finish (see `TripRecordingCommandController.handleFinish`'s `finally`
+     * block, invoked from a `NonCancellable` context so it still runs even mid-cancellation) must
+     * release its own cutoff so a sample genuinely captured after it - by whatever recording
+     * eventually replaces it - is never rejected against a Finish that was actually abandoned.
+     * Scoped strictly to [token]: an older, already-superseded Finish can therefore never clear a
+     * newer one's still-active cutoff, even for the same trip id.
+     */
+    suspend fun cancelFinish(token: Long) = tripMutex.withLock {
+        if (finishCutoff?.token == token) finishCutoff = null
+    }
+
+    /**
+     * Clears any Finish cutoff outstanding for [tripId], regardless of which token owns it. Safe to
+     * call **only** from a caller that has already confirmed, via its own generation/currency check,
+     * that it is itself the single current command: since at most one generation is ever current at a
+     * time, any cutoff still outstanding for this exact trip at that point cannot belong to the
+     * caller (a command never holds a cutoff of its own before it has begun one) and must therefore
+     * already be abandoned. [TripRecordingCommandController.startCollecting] uses this immediately
+     * before (re)starting live collection for [tripId] - Start, Resume, and restart recovery all funnel
+     * through it - so a stale cutoff left behind by a cancelled Finish cannot reject the very first
+     * points the *new* collector accepts while [cancelFinish]'s own cancellation-triggered cleanup is
+     * still in flight. This is deliberately narrower than an unscoped "clear everything" API: it only
+     * ever touches the cutoff for the one trip id the caller is itself about to take ownership of.
+     */
+    suspend fun clearAbandonedFinishCutoff(tripId: Long) = tripMutex.withLock {
+        if (finishCutoff?.tripId == tripId) finishCutoff = null
     }
 
     /**
@@ -115,7 +164,7 @@ class TripRepository(
             var distance = trip.distanceMeters
             var latestAcceptedEpochSecond = trip.lastAcceptedPointEpochSecond
             val nowEpochSecond = clock.instant().epochSecond
-            val cutoffEpochSecond = finishCutoff?.takeIf { it.first == tripId }?.second
+            val cutoffEpochSecond = finishCutoff?.takeIf { it.tripId == tripId }?.cutoffEpochSecond
 
             for (sample in samples.sortedBy { it.capturedAtEpochSecond }) {
                 if (sample.capturedAtEpochSecond < trip.startEpochSecond) continue

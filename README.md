@@ -345,40 +345,71 @@ Other reliability properties:
 
 - The ongoing notification (`FOREGROUND_SERVICE_TYPE_LOCATION`) opens the app straight to the
   Trips tab on tap, and has a "Finish" action targeting the service directly
-  (`PendingIntent.getService`) - both the notification action and the in-app Finish button call
-  the same idempotent `TripRepository.finishTrip`.
+  (`PendingIntent.getService`) - both the notification action and the in-app Finish button reach
+  the same `handleFinish`.
 - Repeated Start commands never create a duplicate trip or a duplicate location subscription -
   `TripRepository.startTrip()` returns the existing `ACTIVE` trip's id if one already exists, and
   the controller always calls `coordinator.stop()` before `coordinator.start()` (itself idempotent
   either way) to guarantee a clean subscription. Repeated Finish commands are equally harmless.
-- **Bounded, genuinely bounded, Finish.** `TripLocationClient.flush()` is wrapped in its own
-  documented timeout (3s) rather than trusted to return promptly - a real flush is backed by a Play
-  Services `Task` that can in principle never complete, and an earlier version of this code hung
-  Finish indefinitely on exactly that. A further short, separately-bounded grace period (2s) then
-  lets any fixes that flush *did* manage to deliver actually arrive through the still-active
-  collector before the trip is marked finished - "flush when practical, never wait indefinitely,
-  and cap the practical part too." `TripRepository.markFinishRequested` captures the cutoff instant
-  *before* either wait begins, so a live fix newly *captured* during that wait (not merely
-  delivered late) is never appended after the user already asked to stop - see "Sampling and
-  route-point acceptance" below. `TripRepository.recordAcceptedBatch` is a further backstop
-  regardless: a callback that arrives *after* `finishTrip` has already run finds the trip no longer
-  `ACTIVE` and is silently dropped - it can never append a point or increase distance post-Finish.
-- **A command can never be torn down by an older, delayed one - not just via cancellation.**
-  `TripRecordingCommandController` assigns a monotonically increasing generation id to every
-  command (`beginCommand()`, called synchronously in `onStartCommand` before any suspend work).
-  Cancelling the previous command's coroutine (which the service still does too) is not sufficient
-  on its own: cancellation is cooperative and only takes effect at a suspension point, so an older
-  command that has already returned from its *last* suspend call (e.g. finished Finish's own
-  flush/grace wait) keeps running its remaining, purely synchronous cleanup - `coordinator.stop()`,
-  tearing down the notification, stopping the service - to completion even after being cancelled.
-  Every `handleXxx` function therefore checks its own generation is still current *before* touching
-  the repository or coordinator at all, not only right before teardown; `handleFinish` checks a
-  second time immediately before its own `finishTrip` mutation, since time passes during its wait.
-  The one deliberate exception: a stale generation's genuine recording failure still honestly marks
-  its own specific trip `INTERRUPTED` (self-guarding, scoped to a trip id that generation actually
-  owned) - only the resulting coordinator/service teardown is generation-guarded. The final
-  `stopSelfResult(startId)` call (instead of a bare `stopSelf()`) adds Android's own independent
-  "don't stop if a newer start command has been delivered" guard on top.
+- **Bounded, genuinely bounded, Finish - and the end time it persists is honest too.**
+  `TripLocationClient.flush()` is wrapped in its own documented timeout (3s) rather than trusted to
+  return promptly - a real flush is backed by a Play Services `Task` that can in principle never
+  complete, and an earlier version of this code hung Finish indefinitely on exactly that. A further
+  short, separately-bounded grace period (2s) then lets any fixes that flush *did* manage to deliver
+  actually arrive through the still-active collector before the trip is marked finished - "flush
+  when practical, never wait indefinitely, and cap the practical part too." The Finish *request*
+  instant is captured exactly once, before either wait begins, and reused for two things that must
+  agree: it is handed to `TripRepository.beginFinish` so `recordAcceptedBatch` rejects a live fix
+  newly *captured* during that wait (not merely delivered late - see "Sampling and route-point
+  acceptance" below), and it is the *exact* value later persisted as the trip's `endEpochSecond` via
+  `TripRepository.finishTrip(tripId, endEpochSecond)` - never a fresh `clock.instant()` taken again
+  after the wait, which would silently pad the stored duration by however long flush/grace actually
+  took. `recordAcceptedBatch` is a further backstop regardless: a callback that arrives *after*
+  `finishTrip` has already run finds the trip no longer `ACTIVE` and is silently dropped - it can
+  never append a point or increase distance post-Finish.
+- **A cancelled or superseded Finish releases only its own cutoff - never leaves a stale one behind.**
+  `beginFinish`/`cancelFinish` are a *token-owned* pair (the token is the command's own generation,
+  see below): cancelling a Finish that a newer command has superseded runs `cancelFinish` from a
+  `NonCancellable` `finally` block, so it still executes even while that Finish's own coroutine is
+  being cancelled, and it releases *only* the cutoff it itself installed - an older, already-abandoned
+  Finish can never clear a different, newer Finish's still-active cutoff for the same trip. On top of
+  that, `TripRecordingCommandController.startCollecting` - the single place Start, Resume, and
+  restart recovery all funnel through before (re)starting live collection - proactively clears any
+  cutoff still outstanding for the trip it is about to take over via
+  `TripRepository.clearAbandonedFinishCutoff`, closing the narrow window between a cancelled Finish
+  being dispatched and its own cancellation-triggered cleanup actually running. Without either half of
+  this, an abandoned cutoff would silently reject every subsequent GPS sample for that trip, forever.
+- **A command can never be torn down by an older, delayed one - not just via cancellation, and not
+  just via a currency check.** `TripRecordingCommandController` assigns a monotonically increasing
+  generation id to every command (`beginCommand()`, called synchronously in `onStartCommand` before
+  any suspend work). Cancelling the previous command's coroutine (which the service still does too)
+  is not sufficient on its own: cancellation is cooperative and only takes effect at a suspension
+  point, so an older command that has already returned from its *last* suspend call keeps running
+  its remaining, purely synchronous cleanup to completion even after being cancelled. Nor is a plain
+  "check currency, then act" enough on its own: a concurrent `beginCommand()` can be accepted in the
+  gap between the check and the act, and the stale command's action still runs afterward regardless.
+  `CommandGenerationGate.runIfCurrent` closes that gap by making the check and the synchronous act
+  (`coordinator.start`/`stop`, requesting service teardown) one atomic operation - the *only* two
+  places that ever touch the coordinator or request teardown, `startCollecting` and `stopIfCurrent`,
+  go through it, so once a newer generation is accepted, an older one can never start, stop, replace,
+  or tear down a collector on its behalf again. Every `handleXxx` function also checks its own
+  generation is still current *before* touching the repository at all; `handleFinish` checks a second
+  time immediately before its own `finishTrip` mutation, since time passes during its wait. A
+  collector's own failure callback is generation-guarded too: a stale collector's failure can never
+  mark `INTERRUPTED` a trip a newer generation has since idempotently reclaimed - see "What counts as
+  a failure" below for why this had to change. The final `stopSelfResult(startId)` call (instead of a
+  bare `stopSelf()`) adds Android's own independent "don't stop if a newer start command has been
+  delivered" guard on top - and `stopServiceIfOwned` only removes the foreground notification *after*
+  confirming `stopSelfResult` actually honored this `startId`, never before: removing it first and
+  then discovering the stop was refused would leave the service alive with no foreground notification.
+- **A foreground-promotion failure never leaves a trip silently claiming to record.** Promoting to
+  foreground can itself fail (a `SecurityException` or, on API 31+, a
+  `ForegroundServiceStartNotAllowedException`) before any command-specific work even begins. When it
+  does, `handleForegroundPromotionFailure` runs instead of the command that was actually requested:
+  it never creates or resumes a trip and never fabricates a successful Finish, but if some *earlier*
+  command left a trip `ACTIVE`, that trip just lost its only live collector along with this failed
+  promotion, so it is honestly reconciled to `INTERRUPTED` immediately - the same terminal state
+  `reconcileActiveTripOnLaunch` would eventually reach on the next app launch, just applied right away.
 - Location updates are removed (`awaitClose` inside `FusedTripLocationClient`'s `callbackFlow`) on
   every terminal path: normal Finish, an error, or the service's own `onDestroy` as a safety net.
 - **Never starts automatically after boot.** There is no boot receiver anywhere in the manifest.
@@ -440,6 +471,20 @@ fix-recency check in `TripsViewModel` already surfaces `GpsStatus.SEARCHING`, th
 `ACTIVE` throughout, and collection resumes on its own once location becomes available again. A more
 elaborate *sustained*-unavailability policy (e.g. auto-interrupting after some longer bound with no
 fixes at all) is deliberately out of scope for this MVP.
+
+**A failure also only counts if the collector reporting it still owns the trip.** An earlier revision
+had `handleRecordingFailure` mark its trip `INTERRUPTED` unconditionally, regardless of which
+generation it belonged to, on the reasoning that the mutation was "scoped to a trip id that generation
+actually owned" and therefore safe no matter what. That reasoning had a real gap: `TripRepository
+.startTrip()` is idempotent, so a *newer* Start can legitimately reuse the very same `ACTIVE` trip id
+and begin a fresh collector for it before an *older*, already-superseded collector's own delayed
+failure callback gets a chance to run. The stale failure would then interrupt the trip the new
+collector was still actively, successfully recording to - `recordAcceptedBatch` would start silently
+dropping every one of its points, since the trip was no longer `ACTIVE`, while the collector itself
+kept running with nothing telling it anything was wrong. `handleRecordingFailure` now checks its own
+generation is still current before touching the repository at all, exactly like every other `handleXxx`
+function - a stale collector's failure is now a complete no-op, and only a failure from the collector
+that genuinely still owns the trip interrupts it.
 
 ### Sampling and route-point acceptance (`domain/trip/`)
 
@@ -613,13 +658,18 @@ leak even if invoked.
 ### Trip Route Recording device checklist
 
 Automated tests cover the pure logic (acceptance policy, distance, route geometry, migration,
-repository idempotency/recovery, cached-pre-start/future-skew rejection) and the service
-command-routing/generation-safety races (Start/Resume/Restart/Finish ordering, stale-command and
-stale-failure guarding, the bounded flush - see `TripRecordingCommandControllerTest.kt`) but
-**cannot** exercise real permission dialogs, a real GPS receiver, or real process death - the
-following needs a physical device, and has not been run in this environment. **The trip recorder is
-not considered field-validated until every item below has actually been exercised on a physical
-device with the screen off and the app backgrounded, not merely compiled/unit-tested.**
+repository idempotency/recovery, cached-pre-start/future-skew rejection), the command-generation
+races at the command/generation-ordering level (Start/Resume/Restart/Finish ordering, stale-command
+and stale-failure guarding, token-owned Finish-cutoff cancellation, the bounded flush and its honest
+end-time - see `TripRecordingCommandControllerTest.kt`), the atomic ownership primitive itself under
+real thread concurrency (`CommandGenerationGateTest.kt`), and the notification-vs-`stopSelfResult`
+ordering decision with fakes modeling Android's own contract (`ServiceStopCoordinatorTest.kt`). None
+of this exercises a real `android.app.Service` lifecycle, a real permission dialog, a real GPS
+receiver, or real process death - `TripRecordingService` itself (the thin shell around the tested
+controller) has no Robolectric or instrumented coverage at all. The following needs a physical
+device, and has not been run in this environment. **The trip recorder is not considered
+field-validated until every item below has actually been exercised on a physical device with the
+screen off and the app backgrounded, not merely compiled/unit-tested.**
 
 - [ ] Precise location permission granted, and denied.
 - [ ] Approximate-only location granted (confirm the "precise location required" dialog appears -
@@ -657,6 +707,18 @@ device with the screen off and the app backgrounded, not merely compiled/unit-te
 - [ ] A real hike/walk: route shape looks plausible on the trace, distance is in a reasonable
       range for the actual distance covered, and battery use over an extended recording is
       acceptable.
+- [ ] Tap Finish, then immediately tap Start again (or trigger a Resume) before Finish's ~5s
+      flush/grace window has elapsed - confirm the trip that results is the *new* one, genuinely
+      recording, and that no GPS point after that moment is silently rejected as though Finish's
+      cutoff were still in effect. (Deterministically covered at the command-controller level by
+      automated tests; this confirms real Android command/coroutine timing matches.)
+- [ ] Trigger a foreground-service start restriction (e.g. a delayed `START_STICKY` restart arriving
+      while the app is fully backgrounded on API 31+, or revoking the notification permission right
+      before a restart on API 33+) - confirm any trip left `ACTIVE` is honestly reconciled to
+      `INTERRUPTED` rather than silently staying `ACTIVE` with nothing recording behind it.
+- [ ] Force-stop or kill the app in the few seconds between tapping Finish and it actually completing
+      (mid flush/grace-period) - confirm the trip recovers through the ordinary interrupted-trip path
+      on relaunch, not left in some intermediate state.
 
 ## Known limitations
 

@@ -41,6 +41,13 @@ import kotlinx.coroutines.launch
  *
  * There is no boot receiver anywhere in this app's manifest, so a device reboot can never reach
  * this class at all.
+ *
+ * A fifth path that is not a distinct command but can happen on any of the four above: foreground
+ * promotion itself can fail (see `promoteToForeground`'s own comment). When it does, this command
+ * never reaches [TripRecordingCommandController] at all - instead
+ * [TripRecordingCommandController.handleForegroundPromotionFailure] runs, which honestly reconciles
+ * any trip an *earlier* command left ACTIVE, since this service is about to stop with nothing left
+ * collecting for it.
  */
 class TripRecordingService : Service() {
 
@@ -70,12 +77,17 @@ class TripRecordingService : Service() {
             // Before any slow work (repository/coroutine dispatch) - a foreground service must
             // promote itself immediately after being started. Deliberately a broad catch: both
             // SecurityException and (API 31+) ForegroundServiceStartNotAllowedException are
-            // possible here, and no durable trip state has been touched yet at this point, so any
-            // promotion failure must simply stop the service, never crash the process or leave a
-            // trip transitioned with nothing actually promoted to foreground behind it.
+            // possible here.
             promoteToForeground()
         } catch (e: Exception) {
-            stopSelfResult(startId)
+            // No durable trip state has been touched *by this command* at this point, but an
+            // already-ACTIVE trip left over from an earlier command just lost its live recording
+            // along with this failed promotion - see handleForegroundPromotionFailure's own doc
+            // comment for why that must still be honestly reconciled, not just silently abandoned.
+            pendingCommand?.cancel()
+            pendingCommand = serviceScope.launch {
+                commandController.handleForegroundPromotionFailure(generation, startId)
+            }
             return START_NOT_STICKY
         }
 
@@ -104,12 +116,19 @@ class TripRecordingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * [stopServiceIfOwned] confirms [android.app.Service.stopSelfResult] actually honored this
+     * [startId] - Android's own independent guard, refusing the stop if a newer start command has
+     * been delivered since - *before* the foreground notification is removed. Removing the
+     * notification unconditionally first (the previous, buggy ordering) could leave the service
+     * alive with no foreground notification, if a newer start had already superseded this one.
+     */
     private fun stopServiceForStartId(startId: Int) {
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        // stopSelfResult additionally refuses to stop if a newer start command has been delivered
-        // since `startId` - a second, independent guard on top of the controller's own generation
-        // check, at the one point that actually tears down the Android service itself.
-        stopSelfResult(startId)
+        stopServiceIfOwned(
+            startId = startId,
+            stopSelfResult = ::stopSelfResult,
+            removeForegroundNotification = { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) },
+        )
     }
 
     private fun promoteToForeground() {

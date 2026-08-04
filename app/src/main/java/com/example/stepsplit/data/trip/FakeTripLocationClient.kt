@@ -36,6 +36,10 @@ class FakeTripLocationClient(
 
     val activeSubscriptionCount: Int get() = channels.size
 
+    /** Set synchronously as the very first action of [flush], *before* [neverCompletingFlush] can suspend it - lets a test deterministically await "flush has been entered" without a sleep. */
+    @Volatile var flushInvoked: Boolean = false
+        private set
+
     fun emit(batch: List<RawLocationSample>) {
         channels.toList().forEach { it.trySend(batch) }
     }
@@ -57,6 +61,7 @@ class FakeTripLocationClient(
 
     /** Suspends forever when [neverCompletingFlush] is set, exercising a caller's own bounded timeout around this call; otherwise a normal no-op, like the production default. */
     override suspend fun flush() {
+        flushInvoked = true
         if (neverCompletingFlush) awaitCancellation()
     }
 }
