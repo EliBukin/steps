@@ -20,12 +20,25 @@ import org.junit.Test
  * command's action still runs afterward and can stop or replace whatever the newer command just
  * started. [CommandGenerationGate.runIfCurrent] makes the check and the act a single atomic
  * operation instead, so that gap cannot exist - see the class's own doc comment.
+ *
+ * [freshGate] builds every gate here with its own private, zero-based token counter rather than the
+ * production default (a single counter shared across every gate instance in the process - see
+ * [CommandGenerationGate]'s own "Generation identity across instances" doc section) purely so this
+ * file's assertions can keep comparing against small, predictable literal generation numbers
+ * regardless of how many other gates earlier tests in this same JVM process happened to construct.
+ * The cross-instance uniqueness guarantee itself is proven separately, using the real production
+ * default, in `TripRecordingCommandControllerTest`'s two-controller-instance tests.
  */
 class CommandGenerationGateTest {
 
+    private fun freshGate(): CommandGenerationGate {
+        val counter = AtomicLong(0L)
+        return CommandGenerationGate(nextToken = counter::incrementAndGet)
+    }
+
     @Test
     fun `a current generation's action runs and returns its result`() {
-        val gate = CommandGenerationGate()
+        val gate = freshGate()
         val gen = gate.begin()
 
         val result = gate.runIfCurrent(gen) { "ran" }
@@ -35,7 +48,7 @@ class CommandGenerationGateTest {
 
     @Test
     fun `a generation superseded by a later begin can never run its action again`() {
-        val gate = CommandGenerationGate()
+        val gate = freshGate()
         val gen1 = gate.begin()
         gate.begin() // gen2 - supersedes gen1
 
@@ -58,7 +71,7 @@ class CommandGenerationGateTest {
      */
     @Test
     fun `an older command whose action is genuinely in flight blocks a concurrent newer begin, and once superseded it can never act again`() {
-        val gate = CommandGenerationGate()
+        val gate = freshGate()
         val gen1 = gate.begin()
         val log = Collections.synchronizedList(mutableListOf<String>())
         val actionEntered = CountDownLatch(1)
@@ -104,7 +117,7 @@ class CommandGenerationGateTest {
 
     @Test
     fun `isCurrent reflects the latest accepted generation without mutating it`() {
-        val gate = CommandGenerationGate()
+        val gate = freshGate()
         val gen1 = gate.begin()
         assertTrue(gate.isCurrent(gen1))
 
@@ -112,5 +125,93 @@ class CommandGenerationGateTest {
         assertTrue(gate.isCurrent(gen2) && !gate.isCurrent(gen1))
         // Calling isCurrent again must not itself advance the generation.
         assertTrue(gate.isCurrent(gen2))
+    }
+
+    @Test
+    fun `begin draws its generation from the injected token source, not a private zero-based counter`() {
+        val sharedCounter = AtomicLong(100L)
+        val gateA = CommandGenerationGate(nextToken = sharedCounter::incrementAndGet)
+        val gateB = CommandGenerationGate(nextToken = sharedCounter::incrementAndGet)
+
+        // Two different gate instances drawing from the same source can never collide - the exact
+        // property CommandGenerationGate's production default (a single process-wide counter) relies
+        // on to keep TripRepository's ownership tokens safe across separate controller/service
+        // instances - see the class's own "Generation identity across instances" doc section.
+        val genA = gateA.begin()
+        val genB = gateB.begin()
+
+        assertEquals(101L, genA)
+        assertEquals(102L, genB)
+        assertTrue(genA != genB)
+    }
+
+    @Test
+    fun `shutdown on a gate with no in-flight action closes it immediately and runs the final stop exactly once`() {
+        val gate = freshGate()
+        val gen = gate.begin()
+        var stopCount = 0
+
+        gate.shutdown { stopCount++ }
+        gate.shutdown { stopCount++ } // idempotent - a second call must not run finalStop again
+
+        assertEquals(1, stopCount)
+        assertNull(gate.runIfCurrent(gen) { "must never run" })
+        assertTrue(!gate.isCurrent(gen))
+    }
+
+    @Test
+    fun `shutdown permanently rejects a generation issued after closing too`() {
+        val gate = freshGate()
+        gate.shutdown {}
+
+        val genAfterClose = gate.begin()
+
+        assertNull(gate.runIfCurrent(genAfterClose) { "must never run" })
+        assertTrue(!gate.isCurrent(genAfterClose))
+    }
+
+    /**
+     * The exact scenario `TripRecordingCommandController.shutdown`'s own doc comment describes: an
+     * older action is already genuinely inside the atomic gate (see the in-flight test above for why
+     * that reproduction technique is faithful) when shutdown is requested concurrently. Shutdown must
+     * wait for that action to finish - never pre-empt or interleave with it - and only then perform
+     * the final stop, so the last observable state is always the stopped one. Afterward, the gate
+     * permanently rejects every further action, for the superseded generation *and* for a fresh one
+     * issued post-shutdown.
+     */
+    @Test
+    fun `shutdown waits for an in-flight action to finish, then performs the final stop, and permanently rejects everything after`() {
+        val gate = freshGate()
+        val gen1 = gate.begin()
+        val log = Collections.synchronizedList(mutableListOf<String>())
+        val actionEntered = CountDownLatch(1)
+        val releaseAction = CountDownLatch(1)
+
+        val oldActionThread = thread {
+            gate.runIfCurrent(gen1) {
+                log.add("gen1 action started")
+                actionEntered.countDown()
+                releaseAction.await(5, TimeUnit.SECONDS)
+                log.add("gen1 action finished")
+            }
+        }
+        assertTrue(actionEntered.await(5, TimeUnit.SECONDS))
+
+        val shutdownThread = thread { gate.shutdown { log.add("final stop") } }
+
+        releaseAction.countDown()
+        oldActionThread.join(5_000)
+        shutdownThread.join(5_000)
+
+        // The final stop only ever ran after gen1's own in-flight action fully finished - proven by
+        // log order, not by timing.
+        assertEquals(listOf("gen1 action started", "gen1 action finished", "final stop"), log)
+
+        // Permanently closed: neither the superseded gen1 nor a brand-new generation issued after
+        // shutdown can ever act again.
+        assertNull(gate.runIfCurrent(gen1) { "must never run" })
+        val gen2 = gate.begin()
+        assertNull(gate.runIfCurrent(gen2) { "must never run" })
+        assertTrue(!gate.isCurrent(gen2))
     }
 }

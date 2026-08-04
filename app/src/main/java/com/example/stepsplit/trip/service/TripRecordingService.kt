@@ -62,6 +62,7 @@ class TripRecordingService : Service() {
             locationClient = container.locationClient,
             clock = container.clock,
             onStopRequested = ::stopServiceForStartId,
+            reconciliationScope = container.tripRecordingScope,
         )
     }
 
@@ -106,10 +107,15 @@ class TripRecordingService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        // Safety net for every terminal path, including one this class didn't itself initiate
-        // (e.g. the system killing the service outright): the location subscription must never
-        // outlive the service.
-        container.tripRecordingCoordinator.stop()
+        // Safety net for every terminal path, including one this class didn't itself initiate (e.g.
+        // the system killing the service outright): commandController.shutdown() atomically closes
+        // the command generation gate (permanently rejecting every existing/future command's attempt
+        // to start, stop, or replace a collector from this instant on - see that method's own doc
+        // comment) and stops whatever collector is currently running as the same atomic step, so the
+        // location subscription can never outlive the service. Purely synchronous - it never blocks
+        // this (main) thread on the suspending Room work its own trip reconciliation needs, which it
+        // fires separately on a scope that outlives serviceScope.
+        commandController.shutdown()
         serviceScope.cancel()
         super.onDestroy()
     }

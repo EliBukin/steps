@@ -322,20 +322,79 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `markTripInterrupted transitions an ACTIVE trip to INTERRUPTED`() = runTest {
+    fun `markTripInterruptedIfStillOwned transitions an ACTIVE trip to INTERRUPTED when isCurrent is true and no newer recording owns it`() = runTest {
         val tripId = repository.startTrip()
-        repository.markTripInterrupted(tripId)
+        repository.beginRecording(tripId, token = 1L)
+
+        val interrupted = repository.markTripInterruptedIfStillOwned(tripId, token = 1L) { true }
+
+        assertTrue(interrupted)
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
     }
 
     @Test
-    fun `markTripInterrupted is a no-op for a trip that is not currently ACTIVE`() = runTest {
+    fun `markTripInterruptedIfStillOwned succeeds even with no prior recording registration - the promotion-failure case`() = runTest {
+        val tripId = repository.startTrip()
+        // No beginRecording call at all - mirrors handleForegroundPromotionFailure, whose own
+        // generation never started a collector and therefore never registered ownership.
+        val interrupted = repository.markTripInterruptedIfStillOwned(tripId, token = 1L) { true }
+
+        assertTrue(interrupted)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+    }
+
+    @Test
+    fun `markTripInterruptedIfStillOwned is a no-op for a trip that is not currently ACTIVE`() = runTest {
         val tripId = repository.startTrip()
         repository.finishTrip(tripId, fixedNow.epochSecond)
 
-        repository.markTripInterrupted(tripId)
+        val interrupted = repository.markTripInterruptedIfStillOwned(tripId, token = 1L) { true }
 
+        assertFalse(interrupted)
         assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
+    }
+
+    /**
+     * Proves the [isCurrent] half of the guard in isolation, with no gate involved at all: even
+     * though token 1 still exactly owns [beginRecording]'s recording-ownership state, a `false`
+     * [isCurrent] alone must still block the interrupt - the "a newer command has merely been
+     * dispatched, but has not yet registered anything" gap a pure token comparison cannot see on its
+     * own (see the method's own doc comment for why neither check is sufficient alone).
+     */
+    @Test
+    fun `markTripInterruptedIfStillOwned is a no-op when isCurrent is false, even though the token still exactly owns the recording`() = runTest {
+        val tripId = repository.startTrip()
+        repository.beginRecording(tripId, token = 1L)
+
+        val interrupted = repository.markTripInterruptedIfStillOwned(tripId, token = 1L) { false }
+
+        assertFalse(interrupted)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+    }
+
+    /**
+     * The core race the token half of this method's guard exists to close: a newer collector
+     * (token 2) idempotently reused the same ACTIVE trip and registered its own, newer ownership
+     * *before* an older failure's (token 1) delayed interrupt attempt gets to run - see
+     * [beginRecording]'s monotonic compare-and-set. [isCurrent] is passed as `{ true }` throughout so
+     * this isolates the token comparison specifically: even with nothing to say otherwise from the
+     * gate's own perspective, the older attempt must still be a complete no-op - the trip stays
+     * ACTIVE and the newer registration is left completely intact.
+     */
+    @Test
+    fun `markTripInterruptedIfStillOwned is a no-op once a newer token has registered as the recording owner`() = runTest {
+        val tripId = repository.startTrip()
+        repository.beginRecording(tripId, token = 1L)
+        repository.beginRecording(tripId, token = 2L) // a newer collector has since taken over
+
+        val interrupted = repository.markTripInterruptedIfStillOwned(tripId, token = 1L) { true }
+
+        assertFalse(interrupted)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+
+        // Token 2 can still legitimately interrupt its own, still-current ownership.
+        assertTrue(repository.markTripInterruptedIfStillOwned(tripId, token = 2L) { true })
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
     }
 
     /**
@@ -488,20 +547,26 @@ class TripRepositoryTest {
         assertEquals(1, repository.getTripPoints(tripId).size)
     }
 
+    /**
+     * [beginRecording] replaces the previous, unowned `clearAbandonedFinishCutoff(tripId)` escape
+     * hatch: a fresh collector registration for a trip supersedes an *older* Finish cutoff still
+     * outstanding for it (see that method's own doc comment for why "older token" is what actually
+     * proves "abandoned", not merely a trip id match).
+     */
     @Test
-    fun `clearAbandonedFinishCutoff clears a cutoff for the given trip regardless of which token owns it`() = runTest {
+    fun `beginRecording clears an older, abandoned Finish cutoff for the same trip`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
 
-        repository.clearAbandonedFinishCutoff(tripId)
+        repository.beginRecording(tripId, token = 2L) // a newer collector taking over supersedes it
 
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 20)))
         assertEquals(1, repository.getTripPoints(tripId).size)
     }
 
     @Test
-    fun `clearAbandonedFinishCutoff only ever touches the given trip's own cutoff`() = runTest {
+    fun `beginRecording only ever clears the given trip's own cutoff`() = runTest {
         val firstTripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.beginFinish(firstTripId, token = 1L, cutoffEpochSecond = t0 + 10)
@@ -510,9 +575,87 @@ class TripRepositoryTest {
         val secondTripId = repository.startTrip()
         repository.beginFinish(secondTripId, token = 2L, cutoffEpochSecond = t0 + 30)
 
-        repository.clearAbandonedFinishCutoff(firstTripId) // unrelated to secondTripId's own live cutoff
+        repository.beginRecording(firstTripId, token = 3L) // unrelated to secondTripId's own live cutoff
 
         repository.recordAcceptedBatch(secondTripId, listOf(sample(32.0, 34.0, t0 + 40)))
         assertEquals(0, repository.getTripPoints(secondTripId).size) // still correctly rejected by its own cutoff (30)
+    }
+
+    /**
+     * The required regression case: a stale Start's registration reaches [beginRecording] *after* a
+     * newer Finish has already installed its own cutoff for the same trip - exactly what can happen
+     * when the stale Start's own suspend chain is delayed relative to the newer Finish's. Because
+     * [beginRecording] only clears a cutoff *older* than its own token, and here the Finish's token
+     * (2) is newer than the stale Start's (1), the Finish's cutoff must survive completely untouched.
+     */
+    @Test
+    fun `a stale Start's registration reaching beginRecording after a newer Finish installed its cutoff never clears it`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+
+        // The newer Finish (token 2) installs its cutoff first...
+        repository.beginFinish(tripId, token = 2L, cutoffEpochSecond = t0 + 50)
+        // ...and only afterward does the stale Start's registration (token 1) finally run.
+        repository.beginRecording(tripId, token = 1L)
+
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 60)))
+        assertEquals(0, repository.getTripPoints(tripId).size) // still rejected - the newer cutoff (50) survived
+    }
+
+    @Test
+    fun `beginRecording is a monotonic compare-and-set - a stale registration can never reclaim ownership from a newer one`() = runTest {
+        val tripId = repository.startTrip()
+        repository.beginRecording(tripId, token = 5L)
+
+        repository.beginRecording(tripId, token = 3L) // stale - must not reclaim ownership
+
+        // Proven via markTripInterruptedIfStillOwned: token 3 can no longer interrupt (it never
+        // regained ownership), but token 5 still legitimately can.
+        assertFalse(repository.markTripInterruptedIfStillOwned(tripId, token = 3L) { true })
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertTrue(repository.markTripInterruptedIfStillOwned(tripId, token = 5L) { true })
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+    }
+
+    @Test
+    fun `finishTripIfOwner finishes the trip only when token still owns the outstanding Finish cutoff`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
+
+        val finished = repository.finishTripIfOwner(tripId, t0 + 10, token = 1L)
+
+        assertTrue(finished)
+        assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
+        assertEquals(t0 + 10, repository.getTrip(tripId)!!.endEpochSecond)
+    }
+
+    /**
+     * The `handleFinish` race this method exists to close: a newer Finish (token 2) has installed its
+     * own cutoff for the same trip - superseding the older one (token 1) - before the older Finish's
+     * own bounded flush/grace wait finishes and it attempts to commit. The older attempt must be a
+     * complete no-op; only the trip's *own current* Finish owner can actually transition it.
+     */
+    @Test
+    fun `finishTripIfOwner is a no-op once a newer Finish has superseded the token's own cutoff`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        repository.beginFinish(tripId, token = 1L, cutoffEpochSecond = t0 + 10)
+        repository.beginFinish(tripId, token = 2L, cutoffEpochSecond = t0 + 90) // a newer Finish supersedes it
+
+        val finished = repository.finishTripIfOwner(tripId, t0 + 10, token = 1L)
+
+        assertFalse(finished)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+    }
+
+    @Test
+    fun `finishTripIfOwner is a no-op when no Finish cutoff was ever begun for that token`() = runTest {
+        val tripId = repository.startTrip()
+
+        val finished = repository.finishTripIfOwner(tripId, fixedNow.epochSecond, token = 1L)
+
+        assertFalse(finished)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
     }
 }

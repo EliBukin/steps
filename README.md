@@ -362,46 +362,91 @@ Other reliability properties:
   agree: it is handed to `TripRepository.beginFinish` so `recordAcceptedBatch` rejects a live fix
   newly *captured* during that wait (not merely delivered late - see "Sampling and route-point
   acceptance" below), and it is the *exact* value later persisted as the trip's `endEpochSecond` via
-  `TripRepository.finishTrip(tripId, endEpochSecond)` - never a fresh `clock.instant()` taken again
-  after the wait, which would silently pad the stored duration by however long flush/grace actually
-  took. `recordAcceptedBatch` is a further backstop regardless: a callback that arrives *after*
-  `finishTrip` has already run finds the trip no longer `ACTIVE` and is silently dropped - it can
-  never append a point or increase distance post-Finish.
-- **A cancelled or superseded Finish releases only its own cutoff - never leaves a stale one behind.**
-  `beginFinish`/`cancelFinish` are a *token-owned* pair (the token is the command's own generation,
-  see below): cancelling a Finish that a newer command has superseded runs `cancelFinish` from a
-  `NonCancellable` `finally` block, so it still executes even while that Finish's own coroutine is
-  being cancelled, and it releases *only* the cutoff it itself installed - an older, already-abandoned
-  Finish can never clear a different, newer Finish's still-active cutoff for the same trip. On top of
-  that, `TripRecordingCommandController.startCollecting` - the single place Start, Resume, and
-  restart recovery all funnel through before (re)starting live collection - proactively clears any
-  cutoff still outstanding for the trip it is about to take over via
-  `TripRepository.clearAbandonedFinishCutoff`, closing the narrow window between a cancelled Finish
-  being dispatched and its own cancellation-triggered cleanup actually running. Without either half of
-  this, an abandoned cutoff would silently reject every subsequent GPS sample for that trip, forever.
+  `TripRepository.finishTripIfOwner(tripId, endEpochSecond, token)` - never a fresh `clock.instant()`
+  taken again after the wait, which would silently pad the stored duration by however long flush/grace
+  actually took. `finishTripIfOwner` only actually finishes the trip if `token` still exactly owns the
+  outstanding Finish cutoff at that instant - atomically, inside its own lock hold - rather than the
+  `handleFinish` coroutine's own (necessarily earlier, and therefore potentially stale by the time the
+  wait finishes) currency check; a newer command superseding this one during the wait either installs
+  its own newer cutoff (a token mismatch) or starts a fresh collector, whose own `beginRecording` call
+  clears an older cutoff outright - either way this becomes a safe no-op instead of finishing a trip a
+  newer collector has since taken back over. `recordAcceptedBatch` is a further backstop regardless: a
+  callback that arrives *after* a trip has actually finished finds it no longer `ACTIVE` and is
+  silently dropped - it can never append a point or increase distance post-Finish.
+- **Every ownership token is process-unique, not just unique within one controller instance.**
+  `CommandGenerationGate` draws every generation it issues (`beginCommand()`) from a single counter
+  shared across *every* `CommandGenerationGate` instance in the process - not a counter private to
+  each one. A fresh `TripRecordingCommandController` (and gate) is constructed for every new
+  `TripRecordingService` instance, e.g. across a stop-then-restart within the same process; if each
+  gate instead numbered its own generations from zero, two different instances could issue the exact
+  same numeric value, and `TripRepository` - which uses these values as ownership tokens for its
+  Finish-cutoff and recording-ownership state, comparing them only for equality/ordering with no idea
+  which gate issued which - could then mistake an old instance's stale token for a legitimately
+  current one belonging to a different, newer instance. A single shared counter makes that collision
+  structurally impossible.
+- **A cancelled or superseded Finish releases only its own cutoff - never leaves a stale one behind,
+  and never clears a genuinely newer one.** `beginFinish`/`cancelFinish` are a *token-owned* pair (the
+  token is the command's own process-unique generation, above): cancelling a Finish that a newer
+  command has superseded runs `cancelFinish` from a `NonCancellable` `finally` block, so it still
+  executes even while that Finish's own coroutine is being cancelled, and it releases *only* the
+  cutoff it itself installed by exact token match - an older, already-abandoned Finish can never clear
+  a different, newer Finish's still-active cutoff for the same trip, even one belonging to an entirely
+  different controller/service instance, since the tokens themselves can never collide. On top of
+  that, `TripRepository.beginRecording` - which `TripRecordingCommandController.startCollecting` (the
+  single place Start, Resume, and restart recovery all funnel through) calls immediately before
+  (re)starting live collection - atomically supersedes any *older* cutoff still outstanding for the
+  trip it is about to take over, as part of the same locked step that registers its own recording
+  ownership (see below): a fresh collector registration only ever clears a cutoff whose token is
+  strictly older than its own, so it can never clear one belonging to a genuinely newer, still-current
+  Finish, even if this registration itself turns out to be stale by the time it runs. This replaced an
+  earlier, unowned `clearAbandonedFinishCutoff(tripId)` API that cleared by trip id alone under a
+  caller-side currency check performed *before* the clear itself - not atomic with it, and therefore
+  able to wipe out a legitimately newer Finish's cutoff installed in that gap.
 - **A command can never be torn down by an older, delayed one - not just via cancellation, and not
-  just via a currency check.** `TripRecordingCommandController` assigns a monotonically increasing
-  generation id to every command (`beginCommand()`, called synchronously in `onStartCommand` before
-  any suspend work). Cancelling the previous command's coroutine (which the service still does too)
-  is not sufficient on its own: cancellation is cooperative and only takes effect at a suspension
-  point, so an older command that has already returned from its *last* suspend call keeps running
-  its remaining, purely synchronous cleanup to completion even after being cancelled. Nor is a plain
-  "check currency, then act" enough on its own: a concurrent `beginCommand()` can be accepted in the
-  gap between the check and the act, and the stale command's action still runs afterward regardless.
-  `CommandGenerationGate.runIfCurrent` closes that gap by making the check and the synchronous act
-  (`coordinator.start`/`stop`, requesting service teardown) one atomic operation - the *only* two
-  places that ever touch the coordinator or request teardown, `startCollecting` and `stopIfCurrent`,
-  go through it, so once a newer generation is accepted, an older one can never start, stop, replace,
-  or tear down a collector on its behalf again. Every `handleXxx` function also checks its own
-  generation is still current *before* touching the repository at all; `handleFinish` checks a second
-  time immediately before its own `finishTrip` mutation, since time passes during its wait. A
-  collector's own failure callback is generation-guarded too: a stale collector's failure can never
-  mark `INTERRUPTED` a trip a newer generation has since idempotently reclaimed - see "What counts as
-  a failure" below for why this had to change. The final `stopSelfResult(startId)` call (instead of a
-  bare `stopSelf()`) adds Android's own independent "don't stop if a newer start command has been
-  delivered" guard on top - and `stopServiceIfOwned` only removes the foreground notification *after*
-  confirming `stopSelfResult` actually honored this `startId`, never before: removing it first and
-  then discovering the stop was refused would leave the service alive with no foreground notification.
+  just via a currency check.** Cancelling the previous command's coroutine (which the service still
+  does too) is not sufficient on its own: cancellation is cooperative and only takes effect at a
+  suspension point, so an older command that has already returned from its *last* suspend call keeps
+  running its remaining, purely synchronous cleanup to completion even after being cancelled. Nor is a
+  plain "check currency, then act" enough on its own: a concurrent `beginCommand()` can be accepted in
+  the gap between the check and the act, and the stale command's action still runs afterward
+  regardless. `CommandGenerationGate.runIfCurrent` closes that gap by making the check and the
+  synchronous act (`coordinator.start`/`stop`, requesting service teardown) one atomic operation - the
+  *only* two places that ever touch the coordinator or request teardown, `startCollecting` and
+  `stopIfCurrent`, go through it, so once a newer generation is accepted, an older one can never
+  start, stop, replace, or tear down a collector on its behalf again.
+
+  A currency check alone is not enough for a *repository* mutation either, for the same reason: real
+  time - a dispatcher hop, Room's own background executor, a bounded wait - can pass between checking
+  `isCurrent()` and a separate suspending mutation call actually committing, during which a newer
+  command can be accepted and even complete its own conflicting mutation first. `handleFinish`'s own
+  `finishTrip` mutation, and a collector's failure callback's own `INTERRUPTED` mutation, both used to
+  rely on exactly that unsafe two-step pattern. Both now go through an atomic repository operation
+  instead - `TripRepository.finishTripIfOwner` and `TripRepository.markTripInterruptedIfStillOwned`
+  respectively - that validates ownership *at* the mutation, inside the same lock hold, never merely
+  before a separate suspending call leading to it; see "What counts as a failure" below for the
+  concrete race this closes for a collector's own failure. The final `stopSelfResult(startId)` call
+  (instead of a bare `stopSelf()`) adds Android's own independent "don't stop if a newer start command
+  has been delivered" guard on top - and `stopServiceIfOwned` only removes the foreground notification
+  *after* confirming `stopSelfResult` actually honored this `startId`, never before: removing it first
+  and then discovering the stop was refused would leave the service alive with no foreground
+  notification.
+- **`onDestroy` is an atomic terminal ownership transition, not just a best-effort stop.**
+  `TripRecordingService.onDestroy` calls `TripRecordingCommandController.shutdown()`, which atomically
+  (inside `CommandGenerationGate`'s own lock) permanently closes the gate and stops whatever collector
+  is currently running as one indivisible step - so a handler that has already suspended past its own
+  last currency check, and resumes only *after* `onDestroy` has run, still cannot start, stop, or
+  replace a collector, or invoke the service's own stop callback: `CommandGenerationGate.runIfCurrent`
+  rejects every generation, including a brand-new one, once the gate is closed. If some other action
+  is already genuinely in flight inside the gate at the moment `shutdown()` is called, shutdown simply
+  waits for it to finish (the same mutual exclusion `runIfCurrent` always provides) before performing
+  its own final stop, so the last observable state is always the stopped one. The coordinator itself
+  uses a process-lifetime `CoroutineScope` (`AppContainer.tripRecordingScope`), not one scoped to any
+  one service instance, specifically so that a properly-closed gate - not the coordinator's own scope
+  lifetime - is what actually prevents a stale handler from resurrecting GPS collection with no live
+  foreground service or notification behind it. A trip left `ACTIVE` by this shutdown with no
+  collector behind it is reconciled to `INTERRUPTED` the same way a live collector failure is (see
+  below) - fired on that same process-lifetime scope, never blocking `onDestroy` itself (the Android
+  main thread) on the suspending Room work that reconciliation needs.
 - **A foreground-promotion failure never leaves a trip silently claiming to record.** Promoting to
   foreground can itself fail (a `SecurityException` or, on API 31+, a
   `ForegroundServiceStartNotAllowedException`) before any command-specific work even begins. When it
@@ -472,19 +517,46 @@ fix-recency check in `TripsViewModel` already surfaces `GpsStatus.SEARCHING`, th
 elaborate *sustained*-unavailability policy (e.g. auto-interrupting after some longer bound with no
 fixes at all) is deliberately out of scope for this MVP.
 
-**A failure also only counts if the collector reporting it still owns the trip.** An earlier revision
-had `handleRecordingFailure` mark its trip `INTERRUPTED` unconditionally, regardless of which
-generation it belonged to, on the reasoning that the mutation was "scoped to a trip id that generation
-actually owned" and therefore safe no matter what. That reasoning had a real gap: `TripRepository
-.startTrip()` is idempotent, so a *newer* Start can legitimately reuse the very same `ACTIVE` trip id
-and begin a fresh collector for it before an *older*, already-superseded collector's own delayed
-failure callback gets a chance to run. The stale failure would then interrupt the trip the new
-collector was still actively, successfully recording to - `recordAcceptedBatch` would start silently
-dropping every one of its points, since the trip was no longer `ACTIVE`, while the collector itself
-kept running with nothing telling it anything was wrong. `handleRecordingFailure` now checks its own
-generation is still current before touching the repository at all, exactly like every other `handleXxx`
-function - a stale collector's failure is now a complete no-op, and only a failure from the collector
-that genuinely still owns the trip interrupts it.
+**A failure also only counts if the collector reporting it still owns the trip - validated atomically,
+at the mutation itself, not via a currency check performed before it.** An earlier revision had
+`handleRecordingFailure` mark its trip `INTERRUPTED` unconditionally, regardless of which generation
+it belonged to, on the reasoning that the mutation was "scoped to a trip id that generation actually
+owned" and therefore safe no matter what. That reasoning had a real gap: `TripRepository.startTrip()`
+is idempotent, so a *newer* Start can legitimately reuse the very same `ACTIVE` trip id and begin a
+fresh collector for it before an *older*, already-superseded collector's own delayed failure callback
+gets a chance to run. The stale failure would then interrupt the trip the new collector was still
+actively, successfully recording to - `recordAcceptedBatch` would start silently dropping every one of
+its points, since the trip was no longer `ACTIVE`, while the collector itself kept running with
+nothing telling it anything was wrong.
+
+A later revision fixed this with `if (!isCurrent(generation)) return` as `handleRecordingFailure`'s
+first line - but that pattern has its own gap, one step further in: the check and the eventual
+`markTripInterrupted` mutation were still two separate operations, so a failure that passed the check
+could still be delayed *during* the suspending repository call itself, with a newer command completing
+its own conflicting work in between. `handleRecordingFailure` now calls
+`TripRepository.markTripInterruptedIfStillOwned(tripId, generation) { isCurrent(generation) }`
+instead, which validates two things atomically, inside its own lock hold, immediately before touching
+Room - never merely before the suspending call that leads to it:
+
+- **Gate currency** - the `isCurrent(generation)` lambda passed in, (re-)evaluated fresh at the actual
+  mutation point. This is what catches a newer command that has merely been *dispatched* (its
+  generation reserved) but has not yet done anything else - `TripRepository` has no way to know about
+  it from token state alone, since nothing has registered anything with it yet.
+- **Recording ownership** - whether a *different, newer* token has since registered itself (via
+  `TripRepository.beginRecording`) as the trip's actual current recording owner. This is what catches
+  a newer collector belonging to a genuinely different controller/service instance, which the gate
+  currency check above cannot see at all, since it only reflects *this* instance's own gate.
+
+Neither check is sufficient alone; both are necessary and are evaluated together, inside the same
+`tripMutex` hold, which is what actually closes the gap - `tripMutex` (a suspend-aware `Mutex`, unlike
+a plain `synchronized` block) serializes every trip mutation across its *entire* suspend duration,
+including Room's own background dispatch, so no other command's own mutation can run between this
+check and the actual write. `handleForegroundPromotionFailure` uses the same atomic operation, the
+same way, for the equivalent case of an *earlier* command's trip losing its collector - see the
+"Foreground service" section above. A stale collector's failure - or a stale promotion failure - is
+now a complete no-op regardless of how long it was delayed or where exactly that delay occurred, and
+only a failure/reconciliation attempt that genuinely still owns (or has nothing newer contesting) the
+trip interrupts it.
 
 ### Sampling and route-point acceptance (`domain/trip/`)
 
@@ -658,18 +730,27 @@ leak even if invoked.
 ### Trip Route Recording device checklist
 
 Automated tests cover the pure logic (acceptance policy, distance, route geometry, migration,
-repository idempotency/recovery, cached-pre-start/future-skew rejection), the command-generation
-races at the command/generation-ordering level (Start/Resume/Restart/Finish ordering, stale-command
-and stale-failure guarding, token-owned Finish-cutoff cancellation, the bounded flush and its honest
-end-time - see `TripRecordingCommandControllerTest.kt`), the atomic ownership primitive itself under
-real thread concurrency (`CommandGenerationGateTest.kt`), and the notification-vs-`stopSelfResult`
-ordering decision with fakes modeling Android's own contract (`ServiceStopCoordinatorTest.kt`). None
-of this exercises a real `android.app.Service` lifecycle, a real permission dialog, a real GPS
-receiver, or real process death - `TripRecordingService` itself (the thin shell around the tested
-controller) has no Robolectric or instrumented coverage at all. The following needs a physical
-device, and has not been run in this environment. **The trip recorder is not considered
-field-validated until every item below has actually been exercised on a physical device with the
-screen off and the app backgrounded, not merely compiled/unit-tested.**
+repository idempotency/recovery, cached-pre-start/future-skew rejection, the atomic
+`beginRecording`/`markTripInterruptedIfStillOwned`/`finishTripIfOwner` ownership operations in
+isolation with explicit tokens - see `TripRepositoryTest.kt`), the command-generation races at the
+command/generation-ordering level (Start/Resume/Restart/Finish ordering, stale-command and
+stale-failure guarding with a genuine mid-mutation pause via an intercepting `TripRecordingRepository`
+- not merely a command made stale before its handler starts, terminal shutdown correctly rejecting a
+handler paused after its own last repository suspension, a ghost `ACTIVE` trip left with no collector
+being honestly reconciled to `INTERRUPTED`, two separate controller instances never colliding on
+Finish-cutoff tokens, the bounded flush and its honest end-time - see
+`TripRecordingCommandControllerTest.kt`), the atomic ownership primitive itself - including its
+terminal shutdown state - under real thread concurrency (`CommandGenerationGateTest.kt`), and the
+notification-vs-`stopSelfResult` ordering decision with fakes modeling Android's own contract
+(`ServiceStopCoordinatorTest.kt`). None of this exercises a real `android.app.Service` lifecycle
+(`onCreate`/`onStartCommand`/`onDestroy` dispatch, real `stopSelfResult`/`startForeground` calls), a
+real permission dialog, a real GPS receiver, or real process death - `TripRecordingService` itself
+(the thin shell around the tested controller) has no Robolectric or instrumented coverage at all, so
+none of the automated tests demonstrate that `onDestroy` is actually invoked reliably by the real
+Android lifecycle, only that `TripRecordingCommandController.shutdown()` behaves correctly once
+called. The following needs a physical device, and has not been run in this environment. **The trip
+recorder is not considered field-validated until every item below has actually been exercised on a
+physical device with the screen off and the app backgrounded, not merely compiled/unit-tested.**
 
 - [ ] Precise location permission granted, and denied.
 - [ ] Approximate-only location granted (confirm the "precise location required" dialog appears -
@@ -719,6 +800,13 @@ screen off and the app backgrounded, not merely compiled/unit-tested.**
 - [ ] Force-stop or kill the app in the few seconds between tapping Finish and it actually completing
       (mid flush/grace-period) - confirm the trip recovers through the ordinary interrupted-trip path
       on relaunch, not left in some intermediate state.
+- [ ] Finish a trip (service stops itself), then immediately start a new one, all within the same app
+      session (no process death in between) - confirm the new trip's service instance records
+      normally and is never affected by the previous instance's own teardown. (The underlying
+      atomicity - a handler resuming after `TripRecordingCommandController.shutdown()` cannot start a
+      collector, and two controller instances never collide on ownership tokens - is deterministically
+      covered at the controller level by automated tests; this confirms real Android `Service`
+      destruction/recreation timing, which those tests do not exercise, matches.)
 
 ## Known limitations
 

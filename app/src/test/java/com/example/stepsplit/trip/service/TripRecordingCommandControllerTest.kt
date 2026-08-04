@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.trip.FakeTripLocationClient
 import com.example.stepsplit.data.trip.TripRecordingCoordinator
+import com.example.stepsplit.data.trip.TripRecordingRepository
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.trip.RawLocationSample
@@ -12,6 +13,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +36,64 @@ private class MutableClock(var instant: Instant, private val zoneId: ZoneOffset 
     override fun getZone(): ZoneId = zoneId
     override fun withZone(zone: ZoneId): Clock = this
     override fun instant(): Instant = instant
+}
+
+/**
+ * A deterministic rendezvous point for pausing a coroutine at an exact suspend boundary and
+ * resuming it on command - never a sleep. [pauseHere] is called from inside the code under test
+ * (via [InterceptingRepository]); the test thread drives it with [awaitEntered] (block until the
+ * paused code has actually reached [pauseHere]), [release] (let it continue), and [awaitCompleted]
+ * (block until the wrapped call has fully returned).
+ */
+private class Handoff {
+    private val entered = CompletableDeferred<Unit>()
+    private val releaseSignal = CompletableDeferred<Unit>()
+    private val completed = CompletableDeferred<Unit>()
+
+    suspend fun pauseHere() {
+        entered.complete(Unit)
+        releaseSignal.await()
+    }
+
+    suspend fun awaitEntered(timeoutMs: Long = 5_000) = withTimeout(timeoutMs) { entered.await() }
+
+    fun release() {
+        releaseSignal.complete(Unit)
+    }
+
+    fun markCompleted() {
+        completed.complete(Unit)
+    }
+
+    suspend fun awaitCompleted(timeoutMs: Long = 5_000) = withTimeout(timeoutMs) { completed.await() }
+}
+
+/**
+ * Delegates every [TripRecordingRepository] call unchanged to [delegate] except the (at most) two
+ * intercepted below, each optionally paused via its own [Handoff] - this is the "narrow production
+ * interface" [TripRecordingRepository] exists for: it lets a test deterministically suspend
+ * [TripRecordingCommandController] mid-flight at an exact repository-call boundary without a fake
+ * Room-backed implementation or a sleep, while every other call still hits the real
+ * [TripRepository] passed as [delegate] so the rest of the scenario behaves identically to
+ * production.
+ */
+private class InterceptingRepository(
+    private val delegate: TripRecordingRepository,
+    private val markTripInterruptedIfStillOwnedHandoff: Handoff? = null,
+    private val beginRecordingHandoff: Handoff? = null,
+) : TripRecordingRepository by delegate {
+    override suspend fun markTripInterruptedIfStillOwned(tripId: Long, token: Long, isCurrent: () -> Boolean): Boolean {
+        markTripInterruptedIfStillOwnedHandoff?.pauseHere()
+        val result = delegate.markTripInterruptedIfStillOwned(tripId, token, isCurrent)
+        markTripInterruptedIfStillOwnedHandoff?.markCompleted()
+        return result
+    }
+
+    override suspend fun beginRecording(tripId: Long, token: Long) {
+        delegate.beginRecording(tripId, token)
+        beginRecordingHandoff?.pauseHere()
+        beginRecordingHandoff?.markCompleted()
+    }
 }
 
 /**
@@ -87,15 +147,17 @@ class TripRecordingCommandControllerTest {
     }
 
     private fun buildController(
-        repository: TripRepository,
+        repository: TripRecordingRepository,
         coordinator: TripRecordingCoordinator,
         locationClient: FakeTripLocationClient,
+        reconciliationScope: CoroutineScope = coordinatorScope,
     ) = TripRecordingCommandController(
         repository = repository,
         coordinator = coordinator,
         locationClient = locationClient,
         clock = clock,
         onStopRequested = { startId -> stoppedStartIds.add(startId) },
+        reconciliationScope = reconciliationScope,
     )
 
     private suspend fun awaitSubscriptionCount(client: FakeTripLocationClient, expected: Int, timeoutMs: Long = 2_000) {
@@ -520,5 +582,158 @@ class TripRecordingCommandControllerTest {
 
         assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
         assertTrue(stoppedStartIds.isEmpty())
+    }
+
+    // Required regression test: a stale failure's atomic mutation is genuinely paused - not merely
+    // stale before it starts (see the class's own historical test 9b above, which reserves the newer
+    // generation *before* triggering the failure and therefore never exercises this gap) - while a
+    // newer collector fully, successfully takes over the very same (idempotently reused) ACTIVE trip.
+    // TripRecordingRepository.markTripInterruptedIfStillOwned's atomic owner comparison, evaluated at
+    // the actual mutation point rather than via a caller-side isCurrent() check before this suspending
+    // call, is what must make the older failure's eventual mutation a complete no-op.
+    @Test
+    fun `a delayed stale failure paused inside its own atomic mutation cannot interrupt a trip a newer collector has already taken over`() = runBlocking {
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, markTripInterruptedIfStillOwnedHandoff = handoff)
+        val racyController = buildController(interceptingRepository, coordinator, locationClient)
+
+        val startGenA = racyController.beginCommand()
+        racyController.handleStart(startGenA, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+
+        // A's collector fails - its failure handler enters handleRecordingFailure, which the
+        // intercepting repository pauses immediately before its atomic ownership-checked mutation.
+        locationClient.failActiveCollection(IllegalStateException("registration lost"))
+        handoff.awaitEntered()
+
+        // B starts fresh for the same trip - still ACTIVE, since A's delayed mutation has not
+        // committed yet - and B's own registration (beginRecording) genuinely completes and wins
+        // ownership before A is released.
+        val startGenB = racyController.beginCommand()
+        racyController.handleStart(startGenB, startId = 2)
+        awaitSubscriptionCount(1)
+        assertEquals(tripId, repository.getActiveTripId())
+
+        // Release A's paused failure and wait for its (now-stale) mutation attempt to fully resolve.
+        handoff.release()
+        handoff.awaitCompleted()
+
+        // A complete no-op: no Room state mutation (trip is still ACTIVE), B's collector is
+        // untouched, and A never requested service teardown.
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+        assertTrue(stoppedStartIds.isEmpty())
+
+        // A point from B is genuinely persisted, proving B's collector is still the live one.
+        val postFailureTime = fixedNow.epochSecond + 30
+        locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, postFailureTime)))
+        withTimeout(5_000) { repository.observeTripPoints(tripId).first { it.isNotEmpty() } }
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    // Required regression test: a Start/Resume handler paused after its last repository suspension
+    // (beginRecording) but before the synchronous coordinator.start() call - the exact gap
+    // TripRecordingCommandController.shutdown's terminal gate closure must close, since cancelling
+    // the previous command's coroutine alone cannot stop a handler that has already returned from its
+    // last suspend point (see the class's own top-level doc comment).
+    @Test
+    fun `a Start handler paused after its last repository suspension cannot start a collector once shutdown has run`() = runBlocking {
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, beginRecordingHandoff = handoff)
+        val shutdownController = buildController(interceptingRepository, coordinator, locationClient)
+
+        val startGen = shutdownController.beginCommand()
+        val handlerJob = launch { shutdownController.handleStart(startGen, startId = 1) }
+        handoff.awaitEntered()
+
+        shutdownController.shutdown()
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() }
+
+        assertEquals(0, locationClient.activeSubscriptionCount)
+        assertTrue(stoppedStartIds.isEmpty())
+    }
+
+    // Required regression test: an old action already inside the atomic gate must finish before
+    // shutdown performs its final stop, and the gate must permanently reject everything afterward -
+    // proven at the gate-primitive level with real thread concurrency in
+    // CommandGenerationGateTest.`shutdown waits for an in-flight action to finish...`; this test
+    // proves the *controller*-level wiring of that same guarantee using a real, already-started
+    // collector instead of a synthetic gate action.
+    @Test
+    fun `shutdown waits for an in-flight command to finish before performing its own final stop`() = runBlocking {
+        val startGen = controller.beginCommand()
+        controller.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+
+        controller.shutdown()
+
+        // The final observable state is stopped: no collector left running (coordinator.stop()
+        // cancels the collecting job; the fake client's own unsubscription happens asynchronously as
+        // that cancellation is actually processed, hence awaitSubscriptionCount rather than an
+        // immediate assertEquals here), and the trip left with no collector behind it is honestly
+        // reconciled to INTERRUPTED (see the ghost-trip test below for that specifically), never
+        // silently left claiming to record.
+        awaitSubscriptionCount(0)
+        awaitTripState(tripId, TripState.INTERRUPTED)
+
+        // The gate is now permanently closed: a fresh command reserved on the very same controller
+        // instance can never start a collector again.
+        val genAfterShutdown = controller.beginCommand()
+        controller.handleStart(genAfterShutdown, startId = 2)
+        assertEquals(0, locationClient.activeSubscriptionCount)
+    }
+
+    // Required regression test: an in-flight command that created/resumed an ACTIVE trip immediately
+    // before shutdown must not leave a ghost ACTIVE trip with no collector behind it.
+    @Test
+    fun `shutdown honestly reconciles a trip left ACTIVE with no collector to INTERRUPTED - no ghost ACTIVE trip survives`() = runBlocking {
+        val shutdownController = buildController(repository, coordinator, locationClient)
+        val startGen = shutdownController.beginCommand()
+        shutdownController.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+
+        shutdownController.shutdown()
+
+        awaitTripState(tripId, TripState.INTERRUPTED)
+        awaitSubscriptionCount(0)
+    }
+
+    // Required regression test: two separate controller instances (simulating two
+    // TripRecordingService instances, e.g. across a stop-then-restart within the same process) must
+    // never issue colliding Finish-cutoff tokens. Before CommandGenerationGate drew every generation
+    // from a single process-wide counter, each instance's gate numbered its own generations from
+    // scratch, so both calls below could easily have both returned "1" - in which case A's delayed
+    // cleanup, cancelFinish(1), would have cleared B's still-live cutoff too, since cancelFinish only
+    // ever compares by numeric token equality.
+    @Test
+    fun `two controller instances never collide on Finish-cutoff tokens - an old delayed cleanup cannot clear a newer instance's live cutoff`() = runBlocking {
+        val controllerA = buildController(repository, coordinator, locationClient)
+        val controllerB = buildController(repository, coordinator, locationClient)
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+
+        val finishGenA = controllerA.beginCommand()
+        val finishGenB = controllerB.beginCommand()
+        assertNotEquals(finishGenA, finishGenB)
+
+        repository.beginFinish(tripId, finishGenA, t0 + 10) // A's (older) Finish cutoff
+        repository.beginFinish(tripId, finishGenB, t0 + 100) // B's (newer) Finish cutoff supersedes it
+
+        // A's own delayed NonCancellable cleanup (see handleFinish's `finally` block) finally runs,
+        // long after A was superseded.
+        repository.cancelFinish(finishGenA)
+
+        // A point after A's cutoff (10) but before B's (100) is still accepted - B's cutoff, not A's,
+        // is what's in effect, proving A's cleanup did not clear it.
+        repository.recordAcceptedBatch(tripId, listOf(RawLocationSample(32.0, 34.0, 10f, t0 + 50)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+
+        // A point after B's own cutoff (100) is still correctly rejected.
+        repository.recordAcceptedBatch(tripId, listOf(RawLocationSample(32.001, 34.0, 10f, t0 + 150)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
     }
 }

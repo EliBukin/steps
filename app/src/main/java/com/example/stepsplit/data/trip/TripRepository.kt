@@ -31,19 +31,30 @@ import kotlinx.coroutines.sync.withLock
 class TripRepository(
     private val database: StepSplitDatabase,
     private val clock: Clock,
-) {
+) : TripRecordingRepository {
     private val tripMutex = Mutex()
 
     // In-memory only, deliberately not a Room column (no new schema for this MVP revision): at most
     // one trip is ever mid-Finish at a time, and [token] (an opaque, caller-chosen id - in practice
-    // TripRecordingCommandController's own command generation) is what makes this cutoff owned rather
-    // than a shared, freely-overwritable field - see beginFinish/cancelFinish's own doc comments for
-    // why that ownership matters. Finishing is a short-lived, single-process operation; if the
-    // process dies mid-finish the trip is simply recovered like any other mid-recording death, via
-    // the ordinary reconcileActiveTripOnLaunch -> INTERRUPTED path.
+    // TripRecordingCommandController's own command generation, process-unique across every
+    // controller/service instance - see CommandGenerationGate's own doc comment) is what makes this
+    // cutoff owned rather than a shared, freely-overwritable field - see beginFinish/cancelFinish's
+    // own doc comments for why that ownership matters. Finishing is a short-lived, single-process
+    // operation; if the process dies mid-finish the trip is simply recovered like any other
+    // mid-recording death, via the ordinary reconcileActiveTripOnLaunch -> INTERRUPTED path.
     private data class FinishCutoff(val tripId: Long, val token: Long, val cutoffEpochSecond: Long)
 
     private var finishCutoff: FinishCutoff? = null
+
+    // In-memory only, same rationale as [finishCutoff] above: which token most recently registered
+    // itself (via [beginRecording]) as the one actually driving live collection for a trip. [token]
+    // values are process-unique *and* monotonically increasing (see CommandGenerationGate), which is
+    // what lets [beginRecording] and [markTripInterruptedIfStillOwned] stay correct under arbitrary
+    // suspend-induced reordering using nothing but a numeric comparison - see both methods' own doc
+    // comments.
+    private data class RecordingOwner(val tripId: Long, val token: Long)
+
+    private var recordingOwner: RecordingOwner? = null
 
     /**
      * Idempotent: if a trip is already ACTIVE, its existing id is returned and no new row is
@@ -51,7 +62,7 @@ class TripRepository(
      * a start command) safe, and is exactly the same path an OS-triggered service restart after
      * process death uses to recover the existing trip rather than creating a duplicate.
      */
-    suspend fun startTrip(): Long = tripMutex.withLock {
+    override suspend fun startTrip(): Long = tripMutex.withLock {
         database.tripDao().getByState(TripState.ACTIVE.name)?.let { return@withLock it.id }
         val now = clock.instant()
         val trip = TripEntity(
@@ -80,8 +91,31 @@ class TripRepository(
      * untouched. Does not itself touch [finishCutoff] - see [cancelFinish].
      */
     suspend fun finishTrip(tripId: Long, endEpochSecond: Long) = tripMutex.withLock {
-        val trip = database.tripDao().getById(tripId) ?: return@withLock
-        if (trip.state != TripState.ACTIVE.name) return@withLock
+        finishTripLocked(tripId, endEpochSecond)
+    }
+
+    /**
+     * The ownership-checked sibling [com.example.stepsplit.trip.service
+     * .TripRecordingCommandController.handleFinish] actually calls, atomically combining the owner
+     * comparison with the same mutation [finishTrip] performs - never a caller-side currency check
+     * followed by an unguarded [finishTrip] call. [token] must still be the exact token that owns the
+     * outstanding [FinishCutoff] for [tripId] (installed by [beginFinish]) at the instant this
+     * acquires [tripMutex], not merely at some earlier point before the caller's own bounded
+     * flush/grace wait: a newer command superseding this one during that wait either installs its own
+     * newer Finish cutoff (a token mismatch below) or starts a fresh collector, whose own
+     * [beginRecording] call clears an *older* cutoff outright (see that method's doc comment) - either
+     * way this becomes a safe no-op instead of finishing a trip a newer collector has since taken back
+     * over. Returns whether it actually finished the trip.
+     */
+    override suspend fun finishTripIfOwner(tripId: Long, endEpochSecond: Long, token: Long): Boolean = tripMutex.withLock {
+        if (finishCutoff?.let { it.tripId == tripId && it.token == token } != true) return@withLock false
+        finishTripLocked(tripId, endEpochSecond)
+        true
+    }
+
+    private suspend fun finishTripLocked(tripId: Long, endEpochSecond: Long) {
+        val trip = database.tripDao().getById(tripId) ?: return
+        if (trip.state != TripState.ACTIVE.name) return
         val safeEnd = maxOf(endEpochSecond, trip.startEpochSecond)
         database.tripDao().update(trip.copy(state = TripState.FINISHED.name, endEpochSecond = safeEnd))
     }
@@ -98,7 +132,7 @@ class TripRepository(
      * unaffected. Unconditionally overwrites any previous cutoff: a fresh Finish always owns the
      * cutoff going forward, regardless of what an older, already-abandoned one left behind.
      */
-    suspend fun beginFinish(tripId: Long, token: Long, cutoffEpochSecond: Long) = tripMutex.withLock {
+    override suspend fun beginFinish(tripId: Long, token: Long, cutoffEpochSecond: Long) = tripMutex.withLock {
         finishCutoff = FinishCutoff(tripId, token, cutoffEpochSecond)
     }
 
@@ -112,25 +146,43 @@ class TripRepository(
      * Scoped strictly to [token]: an older, already-superseded Finish can therefore never clear a
      * newer one's still-active cutoff, even for the same trip id.
      */
-    suspend fun cancelFinish(token: Long) = tripMutex.withLock {
+    override suspend fun cancelFinish(token: Long) = tripMutex.withLock {
         if (finishCutoff?.token == token) finishCutoff = null
     }
 
     /**
-     * Clears any Finish cutoff outstanding for [tripId], regardless of which token owns it. Safe to
-     * call **only** from a caller that has already confirmed, via its own generation/currency check,
-     * that it is itself the single current command: since at most one generation is ever current at a
-     * time, any cutoff still outstanding for this exact trip at that point cannot belong to the
-     * caller (a command never holds a cutoff of its own before it has begun one) and must therefore
-     * already be abandoned. [TripRecordingCommandController.startCollecting] uses this immediately
-     * before (re)starting live collection for [tripId] - Start, Resume, and restart recovery all funnel
-     * through it - so a stale cutoff left behind by a cancelled Finish cannot reject the very first
-     * points the *new* collector accepts while [cancelFinish]'s own cancellation-triggered cleanup is
-     * still in flight. This is deliberately narrower than an unscoped "clear everything" API: it only
-     * ever touches the cutoff for the one trip id the caller is itself about to take ownership of.
+     * Atomically registers [token] as the owner of live recording for [tripId] - called once by
+     * [com.example.stepsplit.trip.service.TripRecordingCommandController.startCollecting], for every
+     * one of Start, Resume, and restart recovery, immediately before it (re)starts a collector. A
+     * monotonic compare-and-set, not an unconditional overwrite: [token] only takes ownership if it is
+     * numerically greater than whatever token (if any) currently owns [recordingOwner], so a stale
+     * call that only reaches this point *after* a genuinely newer registration already ran - exactly
+     * what can happen once its own caller resumes from a suspend point after being superseded - cannot
+     * clobber that newer registration back to itself. Because every token in this app is drawn from
+     * the same process-wide, strictly increasing source (see
+     * [com.example.stepsplit.trip.service.CommandGenerationGate]'s own doc
+     * comment on generation identity), "numerically greater" and "issued later" are the same thing
+     * here, so this ordering check is sound regardless of which thread/dispatcher actually executes
+     * first. This is the sole ownership state [markTripInterruptedIfStillOwned] reads.
+     *
+     * Also atomically supersedes an *older* outstanding Finish cutoff for the same [tripId] as part of
+     * the same locked step: a fresh collector registration inherently means the previous Finish
+     * attempt for this trip, whatever it was, is no longer the live state, so any cutoff installed by
+     * a token strictly older than this one is abandoned and must not silently reject this collector's
+     * first points. A cutoff installed by a token *newer* than [token] is left completely untouched -
+     * it belongs to a genuinely more current Finish this (by definition, older) registration must
+     * never interfere with. This replaces the previous unscoped `clearAbandonedFinishCutoff(tripId)`
+     * API, which decided "abandoned" purely from a trip id match under a caller-side currency check
+     * that was not atomic with the clear itself, and could therefore wipe out a legitimately newer
+     * Finish's cutoff installed in the gap between that check and this call actually running.
      */
-    suspend fun clearAbandonedFinishCutoff(tripId: Long) = tripMutex.withLock {
-        if (finishCutoff?.tripId == tripId) finishCutoff = null
+    override suspend fun beginRecording(tripId: Long, token: Long) = tripMutex.withLock {
+        if ((recordingOwner?.token ?: NO_OWNER_TOKEN) >= token) return@withLock
+        recordingOwner = RecordingOwner(tripId, token)
+        val abandonedCutoff = finishCutoff
+        if (abandonedCutoff != null && abandonedCutoff.tripId == tripId && abandonedCutoff.token < token) {
+            finishCutoff = null
+        }
     }
 
     /**
@@ -209,16 +261,64 @@ class TripRepository(
     }
 
     /**
-     * Transitions [tripId] from ACTIVE to INTERRUPTED - the same terminal state
-     * [reconcileActiveTripOnLaunch] uses, but triggered by a live recording failure (see
-     * [TripRecordingCoordinator]'s `onFailure` callback) rather than an app-launch check. A no-op
-     * if the trip is not currently ACTIVE (already finished/interrupted, or a stale/duplicate
-     * failure callback), so this is safe to call more than once for the same failure.
+     * Atomically: transitions [tripId] from ACTIVE to INTERRUPTED only if (a) [isCurrent] - a fast,
+     * synchronous, non-suspending predicate, evaluated as the very first action *inside* this call's
+     * [tripMutex] hold - still says so, and (b) no recording registered via [beginRecording] with a
+     * token *newer* than [token] currently owns [tripId]. Two distinct callers rely on this, both
+     * from [com.example.stepsplit.trip.service.TripRecordingCommandController]:
+     * - `handleRecordingFailure`, passing its own failing collector's generation as [token] and
+     *   `{ gate.isCurrent(generation) }` as [isCurrent] - the normal case is `token` matching
+     *   [recordingOwner] exactly (this collector still owns the trip) and [isCurrent] still true,
+     *   neither of which is rejected below, so the interrupt proceeds.
+     * - `handleForegroundPromotionFailure`, the same way, even though it never started a collector of
+     *   its own (promotion fails before any command-specific work runs) and so has no owner token of
+     *   its own to match exactly - it passes its own generation purely as a "no collector newer than
+     *   this has taken over since" threshold for (b), honestly reconciling a trip an *earlier* command
+     *   left ACTIVE once this command's own attempt to keep recording it alive has failed.
+     * - [com.example.stepsplit.trip.service.TripRecordingCommandController.shutdown]'s reconciliation,
+     *   which passes `{ true }` for [isCurrent]: by the time it runs, the gate is *always* permanently
+     *   closed (that is the point of calling it), so gate currency is meaningless there and (b) - the
+     *   token comparison alone - is what protects a genuinely newer controller/service instance that
+     *   has since taken over the same trip.
+     *
+     * Both checks close a distinct gap, and neither is sufficient alone:
+     * - (a) alone misses a newer collector belonging to a *different* controller/service instance -
+     *   [isCurrent] as passed by `handleRecordingFailure`/`handleForegroundPromotionFailure` only
+     *   reflects *this* instance's own gate, which has no way to know about a different instance's
+     *   generations at all (see [com.example.stepsplit.trip.service.CommandGenerationGate]'s own doc
+     *   comment on generation identity).
+     * - (b) alone misses the case where a newer command has merely been *dispatched* (its generation
+     *   reserved) but has not yet reached the point of registering a [beginRecording] call for
+     *   anything - [recordingOwner] would still show the older token as owner, even though the older
+     *   command is no longer actually current, because nothing has told [TripRecordingRepository]
+     *   about the newer one yet.
+     * Evaluating (a) as the very first statement inside this call's own [tripMutex] hold - not before
+     * it, and not via a separate suspending call - is what makes it safe: [tripMutex] serializes every
+     * trip mutation across its *entire* suspend duration (unlike a plain `synchronized` block, which
+     * only covers synchronous code), so no other command's own [tripMutex]-guarded mutation - in
+     * particular a newer [beginRecording] or [TripRepository.startTrip] call - can run between this
+     * check and the [database.tripDao().update] below, regardless of how many real suspension points
+     * (Room's own background executor included) separate them. A caller-side check performed *before*
+     * calling this function at all would not have that property - see the class doc comment on this
+     * pattern generally, and [com.example.stepsplit.trip.service.TripRecordingCommandController]'s own
+     * historical regression test for `handleRecordingFailure` for the concrete race this specifically
+     * has to survive (a newer command merely reserved, not yet doing anything else, at the moment of
+     * the failure).
+     *
+     * A no-op (`false`) if the trip is not currently ACTIVE regardless (already finished/interrupted,
+     * or a stale/duplicate failure), so this is safe to call more than once. On a successful
+     * interrupt, also releases [recordingOwner] if it still names [tripId] - the trip is no longer
+     * being recorded by anyone, by definition.
      */
-    suspend fun markTripInterrupted(tripId: Long) = tripMutex.withLock {
-        val trip = database.tripDao().getById(tripId) ?: return@withLock
-        if (trip.state != TripState.ACTIVE.name) return@withLock
+    override suspend fun markTripInterruptedIfStillOwned(tripId: Long, token: Long, isCurrent: () -> Boolean): Boolean = tripMutex.withLock {
+        if (!isCurrent()) return@withLock false
+        val owner = recordingOwner
+        if (owner != null && owner.tripId == tripId && owner.token > token) return@withLock false
+        val trip = database.tripDao().getById(tripId) ?: return@withLock false
+        if (trip.state != TripState.ACTIVE.name) return@withLock false
         database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
+        if (owner != null && owner.tripId == tripId) recordingOwner = null
+        true
     }
 
     /**
@@ -231,7 +331,7 @@ class TripRepository(
      * use that to decide whether to start collecting at all. Does not itself touch the recording
      * service or coordinator - the caller does that only after this returns `true`.
      */
-    suspend fun resumeInterruptedTrip(tripId: Long): Boolean = tripMutex.withLock {
+    override suspend fun resumeInterruptedTrip(tripId: Long): Boolean = tripMutex.withLock {
         val trip = database.tripDao().getById(tripId) ?: return@withLock false
         if (trip.state != TripState.INTERRUPTED.name) return@withLock false
         database.tripDao().update(trip.copy(state = TripState.ACTIVE.name))
@@ -249,7 +349,7 @@ class TripRepository(
     suspend fun getTrip(tripId: Long): TripEntity? = database.tripDao().getById(tripId)
 
     /** Used by [com.example.stepsplit.trip.service.TripRecordingService] to resolve which trip a Finish command applies to without needing it passed through the triggering Intent - only one trip can ever be ACTIVE. */
-    suspend fun getActiveTripId(): Long? = database.tripDao().getByState(TripState.ACTIVE.name)?.id
+    override suspend fun getActiveTripId(): Long? = database.tripDao().getByState(TripState.ACTIVE.name)?.id
 
     fun observeTrip(tripId: Long): Flow<TripSummary?> = database.tripDao().observeById(tripId).map { it?.toSummary() }
 
@@ -267,6 +367,9 @@ class TripRepository(
     private companion object {
         /** Generous enough to tolerate ordinary GPS-vs-device clock drift, tight enough that a corrupt/bogus far-future timestamp can never become the last-accepted point - see [recordAcceptedBatch]'s doc comment. */
         const val MAX_FUTURE_SKEW_SECONDS = 300L
+
+        /** Lower than every real token (see [com.example.stepsplit.trip.service.CommandGenerationGate]'s counter, which starts at 1) so the very first [beginRecording] call always wins its compare-and-set. */
+        const val NO_OWNER_TOKEN = -1L
     }
 }
 

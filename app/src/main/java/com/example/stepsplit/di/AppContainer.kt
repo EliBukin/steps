@@ -64,7 +64,10 @@ class AppContainer(context: Context) {
     // itself only ever runs while TripRecordingService is alive (see that class), but the
     // coordinator instance itself is process-lifetime like every other dependency here so a
     // service restart after process death reuses it rather than needing its own construction path.
-    private val tripRecordingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Not private: TripRecordingService also uses it as TripRecordingCommandController's
+    // reconciliationScope (see that class's shutdown() doc comment) - the fire-and-forget trip
+    // reconciliation onDestroy triggers must outlive serviceScope, which onDestroy cancels.
+    val tripRecordingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val tripRecordingCoordinator: TripRecordingCoordinator = TripRecordingCoordinator(
         repository = tripRepository,
