@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simplified single-tone silhouette of the launcher mark (loop + footprints + pin) for
+     Android 13+ themed icons. The system re-tints this using only its alpha channel, so the
+     shapes are drawn bold and flat rather than mirroring the gradient/gloss of the full-color
+     foreground - see ic_launcher_foreground (mipmap, per density) for that version. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M24.168,50.026 A29.417,29.417 0 1,0 83.002,50.026 A29.417,29.417 0 1,0 24.168,50.026 Z
+                           M35.555,50.026 A18.03,18.03 0 1,1 71.614,50.026 A18.03,18.03 0 1,1 35.555,50.026 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M74.019,72.451 L78.794,73.412 A5.694,5.694 0 1,0 81.041,62.249
+                           L76.267,61.288 A5.694,5.694 0 1,0 74.019,72.451 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M42.316,41.13 L42.316,49.433 A4.152,4.152 0 1,0 50.619,49.433
+                           L50.619,41.13 A4.152,4.152 0 1,0 42.316,41.13 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M52.399,46.586 L52.399,56.432 A4.27,4.27 0 1,0 60.939,56.432
+                           L60.939,46.586 A4.27,4.27 0 1,0 52.399,46.586 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M81.104,65.209C78.874,65.209 77.071,67.013 77.071,69.242c0,3.025 4.033,7.49 4.033,7.49
+                           s4.033,-4.465 4.033,-7.49c0,-2.23 -1.803,-4.033 -4.033,-4.033z
+                           M81.104,70.683c-0.795,0 -1.44,-0.645 -1.44,-1.44s0.645,-1.44 1.44,-1.44
+                           1.44,0.645 1.44,1.44 -0.645,1.44 -1.44,1.44z" />
+</vector>

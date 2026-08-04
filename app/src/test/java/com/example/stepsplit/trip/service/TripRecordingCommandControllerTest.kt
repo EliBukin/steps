@@ -80,19 +80,28 @@ private class Handoff {
 private class InterceptingRepository(
     private val delegate: TripRecordingRepository,
     private val markTripInterruptedIfStillOwnedHandoff: Handoff? = null,
-    private val beginRecordingHandoff: Handoff? = null,
+    private val claimTripForStartHandoff: Handoff? = null,
+    private val claimTripForResumeHandoff: Handoff? = null,
 ) : TripRecordingRepository by delegate {
-    override suspend fun markTripInterruptedIfStillOwned(tripId: Long, token: Long, isCurrent: () -> Boolean): Boolean {
+    override suspend fun markTripInterruptedIfStillOwned(token: Long, isCurrent: () -> Boolean): Boolean {
         markTripInterruptedIfStillOwnedHandoff?.pauseHere()
-        val result = delegate.markTripInterruptedIfStillOwned(tripId, token, isCurrent)
+        val result = delegate.markTripInterruptedIfStillOwned(token, isCurrent)
         markTripInterruptedIfStillOwnedHandoff?.markCompleted()
         return result
     }
 
-    override suspend fun beginRecording(tripId: Long, token: Long) {
-        delegate.beginRecording(tripId, token)
-        beginRecordingHandoff?.pauseHere()
-        beginRecordingHandoff?.markCompleted()
+    override suspend fun claimTripForStart(token: Long, isCurrent: () -> Boolean): Long? {
+        val result = delegate.claimTripForStart(token, isCurrent)
+        claimTripForStartHandoff?.pauseHere()
+        claimTripForStartHandoff?.markCompleted()
+        return result
+    }
+
+    override suspend fun claimTripForResume(tripId: Long, token: Long, isCurrent: () -> Boolean): Long? {
+        claimTripForResumeHandoff?.pauseHere()
+        val result = delegate.claimTripForResume(tripId, token, isCurrent)
+        claimTripForResumeHandoff?.markCompleted()
+        return result
     }
 }
 
@@ -557,7 +566,10 @@ class TripRecordingCommandControllerTest {
 
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
         assertEquals(listOf(2), stoppedStartIds)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        // coordinator.stop()'s cancellation is processed asynchronously - the fake client's own
+        // unsubscription happens once that cancellation actually runs, not synchronously with the
+        // stop() call itself - hence awaitSubscriptionCount rather than an immediate assertEquals here.
+        awaitSubscriptionCount(0)
     }
 
     @Test
@@ -608,7 +620,7 @@ class TripRecordingCommandControllerTest {
         handoff.awaitEntered()
 
         // B starts fresh for the same trip - still ACTIVE, since A's delayed mutation has not
-        // committed yet - and B's own registration (beginRecording) genuinely completes and wins
+        // committed yet - and B's own atomic claim (claimTripForStart) genuinely completes and wins
         // ownership before A is released.
         val startGenB = racyController.beginCommand()
         racyController.handleStart(startGenB, startId = 2)
@@ -632,20 +644,27 @@ class TripRecordingCommandControllerTest {
         assertEquals(1, repository.getTripPoints(tripId).size)
     }
 
-    // Required regression test: a Start/Resume handler paused after its last repository suspension
-    // (beginRecording) but before the synchronous coordinator.start() call - the exact gap
+    // Required regression test: a Start handler paused after its last repository suspension
+    // (claimTripForStart, whose atomic claim has already committed and registered ownership by this
+    // point) but before the synchronous coordinator.start() call - the exact gap
     // TripRecordingCommandController.shutdown's terminal gate closure must close, since cancelling
     // the previous command's coroutine alone cannot stop a handler that has already returned from its
-    // last suspend point (see the class's own top-level doc comment).
+    // last suspend point (see the class's own top-level doc comment). Also proves shutdown's own
+    // reconciliation honestly cleans up the trip this claim left ACTIVE-but-uncollected, since
+    // coordinator.start() never got to run for it.
     @Test
     fun `a Start handler paused after its last repository suspension cannot start a collector once shutdown has run`() = runBlocking {
         val handoff = Handoff()
-        val interceptingRepository = InterceptingRepository(delegate = repository, beginRecordingHandoff = handoff)
+        val interceptingRepository = InterceptingRepository(delegate = repository, claimTripForStartHandoff = handoff)
         val shutdownController = buildController(interceptingRepository, coordinator, locationClient)
 
         val startGen = shutdownController.beginCommand()
         val handlerJob = launch { shutdownController.handleStart(startGen, startId = 1) }
         handoff.awaitEntered()
+        // The atomic claim already committed and registered ownership by this point - the trip exists
+        // and is ACTIVE, even though coordinator.start() has not run yet.
+        val tripId = repository.getActiveTripId()!!
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
 
         shutdownController.shutdown()
         handoff.release()
@@ -653,6 +672,9 @@ class TripRecordingCommandControllerTest {
 
         assertEquals(0, locationClient.activeSubscriptionCount)
         assertTrue(stoppedStartIds.isEmpty())
+        // No ghost ACTIVE trip survives: shutdown's own reconciliation honestly interrupts the trip
+        // this paused claim left ACTIVE with no collector ever actually started for it.
+        awaitTripState(tripId, TripState.INTERRUPTED)
     }
 
     // Required regression test: an old action already inside the atomic gate must finish before
@@ -735,5 +757,365 @@ class TripRecordingCommandControllerTest {
         // A point after B's own cutoff (100) is still correctly rejected.
         repository.recordAcceptedBatch(tripId, listOf(RawLocationSample(32.001, 34.0, 10f, t0 + 150)))
         assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    // Required regression test - reproduces the exact previously-failing interleaving: Start/Resume
+    // resolving/claiming a trip and registering ownership used to be two separate suspending steps
+    // (a repository trip-resolve call, then later a separate beginRecording() call), leaving a real
+    // gap in which a *different*, shutting-down controller's own reconciliation could observe the
+    // trip as ACTIVE-with-no-owner-yet and interrupt it, even though a genuinely newer collector was
+    // about to (or already had) taken it over. TripRecordingRepository.claimTripForStart now performs
+    // trip resolution and ownership registration as one atomic step, so this can no longer happen -
+    // proven here by pausing controller A's shutdown reconciliation right before its own atomic
+    // mutation while controller B, a distinct instance, fully and successfully claims the same
+    // (idempotently reused) trip and starts collecting for it.
+    @Test
+    fun `a stale shutdown reconciliation paused before its mutation cannot interrupt a trip a newer controller has already atomically claimed and started collecting for`() = runBlocking {
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, markTripInterruptedIfStillOwnedHandoff = handoff)
+        val controllerA = buildController(interceptingRepository, coordinator, locationClient)
+
+        val startGenA = controllerA.beginCommand()
+        controllerA.handleStart(startGenA, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+
+        // A shuts down: the gate closes and A's own collector is synchronously stopped, but the trip
+        // reconciliation itself is paused right before its atomic mutation - exactly the gap the old
+        // separate trip-resolve+markTripInterruptedIfStillOwned pairing left open.
+        controllerA.shutdown()
+        handoff.awaitEntered()
+        awaitSubscriptionCount(0) // A's own collector already stopped
+
+        // B - a distinct controller instance, e.g. a freshly (re)started service - receives a new
+        // Start while A's reconciliation is still paused. It idempotently reuses the same still-ACTIVE
+        // trip and fully, successfully claims and starts collecting for it before A's reconciliation
+        // is released - proving the atomic claim, not mere timing, is what makes this safe.
+        val controllerB = buildController(repository, coordinator, locationClient)
+        val startGenB = controllerB.beginCommand()
+        controllerB.handleStart(startGenB, startId = 2)
+        awaitSubscriptionCount(1)
+        assertEquals(tripId, repository.getActiveTripId())
+
+        handoff.release()
+        handoff.awaitCompleted()
+
+        // A complete no-op: the trip is still ACTIVE, exactly one live subscription (B's) exists, and
+        // A never requested teardown of B's service instance.
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+        assertTrue(stoppedStartIds.isEmpty())
+
+        // A valid point from B's collector is genuinely persisted, proving B's collector is the live one.
+        val postRaceTime = fixedNow.epochSecond + 10
+        locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, postRaceTime)))
+        withTimeout(5_000) { repository.observeTripPoints(tripId).first { it.isNotEmpty() } }
+        assertEquals(1, repository.getTripPoints(tripId).size)
+    }
+
+    // Required regression test: the reverse ordering - shutdown's reconciliation completes in full
+    // *before* a new Start's atomic claim even begins. No ghost ACTIVE trip or collector survives that
+    // reconciliation on its own, and the follow-on Start then cleanly creates and owns its own fresh
+    // trip, never colliding with the now-INTERRUPTED one.
+    @Test
+    fun `if shutdown's reconciliation completes before a new Start's claim begins, no ghost trip survives and the new Start cleanly creates its own`() = runBlocking {
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, markTripInterruptedIfStillOwnedHandoff = handoff)
+        val controllerA = buildController(interceptingRepository, coordinator, locationClient)
+
+        val startGenA = controllerA.beginCommand()
+        controllerA.handleStart(startGenA, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripX = repository.getActiveTripId()!!
+
+        controllerA.shutdown()
+        handoff.awaitEntered()
+        handoff.release()
+        handoff.awaitCompleted() // A's reconciliation fully commits before B ever starts
+
+        awaitTripState(tripX, TripState.INTERRUPTED)
+        awaitSubscriptionCount(0)
+
+        val controllerB = buildController(repository, coordinator, locationClient)
+        val startGenB = controllerB.beginCommand()
+        controllerB.handleStart(startGenB, startId = 2)
+        awaitSubscriptionCount(1)
+        val tripY = repository.getActiveTripId()!!
+
+        assertNotEquals(tripX, tripY)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripY)!!.state)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+
+        val point = RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)
+        locationClient.emit(listOf(point))
+        withTimeout(5_000) { repository.observeTripPoints(tripY).first { it.isNotEmpty() } }
+        assertEquals(1, repository.getTripPoints(tripY).size)
+    }
+
+    // Required regression test - the Resume sibling of the Start race above: the same
+    // stale-reconciliation-vs-newer-claim overlap, but for TripRecordingRepository.claimTripForResume,
+    // proving the resumed trip's existing route/distance survive untouched.
+    @Test
+    fun `the same stale-reconciliation-vs-newer-claim race for Resume leaves the resumed trip ACTIVE and preserves its route and distance`() = runBlocking {
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, markTripInterruptedIfStillOwnedHandoff = handoff)
+        val controllerA = buildController(interceptingRepository, coordinator, locationClient)
+
+        val startGen = controllerA.beginCommand()
+        controllerA.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+        locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
+        withTimeout(5_000) { repository.observeTripPoints(tripId).first { it.isNotEmpty() } }
+        val distanceBefore = repository.getTrip(tripId)!!.distanceMeters
+        val pointsBefore = repository.getTripPoints(tripId).size
+
+        // The app relaunches while A's service is presumed dead - the trip is reconciled to
+        // INTERRUPTED independently of A's own (not-yet-called) shutdown, exactly like a real process
+        // death would.
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+
+        // A's own shutdown (e.g. the OS finally tearing down the old process's service instance) now
+        // runs, its reconciliation paused right before its atomic mutation.
+        controllerA.shutdown()
+        handoff.awaitEntered()
+
+        // B - a distinct, freshly (re)started controller - Resumes the same trip while that stale
+        // reconciliation is still paused, and fully, successfully claims and starts collecting for it
+        // before A's reconciliation is released.
+        val controllerB = buildController(repository, coordinator, locationClient)
+        val resumeGen = controllerB.beginCommand()
+        controllerB.handleResume(tripId, resumeGen, startId = 2)
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+
+        handoff.release()
+        handoff.awaitCompleted()
+
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertEquals(distanceBefore, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
+        assertEquals(pointsBefore, repository.getTripPoints(tripId).size)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+        assertTrue(stoppedStartIds.isEmpty())
+    }
+
+    // Required regression test (bug report): generation currency was not atomic with the claim
+    // mutation. A Resume generation paused right before its repository claim - after already passing
+    // the controller's upfront isCurrent(generation) check - must not be able to complete that claim
+    // once a newer generation has since been reserved on the very same gate, even though that newer
+    // generation's own handler has not run yet and has therefore registered no ownership at all.
+    // Deliberately never cancels genOld's handler job - it is allowed to run to completion on its own,
+    // so cancellation is provably not what makes this safe.
+    @Test
+    fun `a Resume paused right before its claim is rejected once a newer generation is merely reserved, without relying on cancellation`() = runBlocking {
+        val startGen = controller.beginCommand()
+        controller.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+        // The original service's own collector is gone, mirroring the real process death this
+        // reconciliation models - without this, the still-running original collector would trivially
+        // satisfy the final subscription-count assertion below regardless of how the race resolves.
+        coordinator.stop()
+        awaitSubscriptionCount(0)
+
+        val handoff = Handoff()
+        val interceptingRepository = InterceptingRepository(delegate = repository, claimTripForResumeHandoff = handoff)
+        val racyController = buildController(interceptingRepository, coordinator, locationClient)
+
+        val resumeGenOld = racyController.beginCommand()
+        val handlerJob = launch { racyController.handleResume(tripId, resumeGenOld, startId = 2) }
+        handoff.awaitEntered() // genOld passed its upfront isCurrent check and is paused right before its claim
+
+        // A newer generation is synchronously reserved on the very same gate - exactly as a real
+        // onStartCommand would - but its own handler has not run at all yet, so no ownership has been
+        // registered for it anywhere.
+        val resumeGenNew = racyController.beginCommand()
+
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() } // genOld's own handler runs to completion, uncancelled
+
+        // The genuinely current generation now runs its own Resume for the same trip.
+        racyController.handleResume(tripId, resumeGenNew, startId = 3)
+
+        // The trip must end up ACTIVE with exactly one live collector - never ACTIVE with zero
+        // subscriptions, which is what genOld's claim succeeding despite being stale would produce.
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+    }
+
+    // Required regression test (bug report): the previous test above pauses *before* the repository
+    // call, which only proves the newer generation is reserved before the repository's own currency
+    // check ever runs - it does not exercise the later, more dangerous interleaving in which the
+    // currency check has already read `true` and the pause happens immediately afterward, before any
+    // Room read/write. Since `tripMutex` and `CommandGenerationGate`'s own lock are independent, that
+    // snapshot is not atomic with a concurrent `beginCommand()` - see `TripRepository`'s own "Why
+    // isCurrent cannot be the safety mechanism" doc comment section. Uses
+    // `TripRepository`'s `afterCurrencyCheck` test seam (scoped to genOld's own token, so genNew's own
+    // claim on the very same repository instance is completely unaffected) to pause at exactly that
+    // point - genuinely after the currency snapshot, genuinely before the first Room operation. Never
+    // cancels genOld's handler job - it runs to completion entirely on its own.
+    @Test
+    fun `an old Resume paused after its currency snapshot reads true, but before any Room work, is still safely superseded by a newer generation`() = runBlocking {
+        var pausedToken = -1L
+        val handoff = Handoff()
+        val racyRepository = TripRepository(database, clock, afterCurrencyCheck = { token -> if (token == pausedToken) handoff.pauseHere() })
+        val racyCoordinator = TripRecordingCoordinator(racyRepository, locationClient, coordinatorScope)
+        val racyController = buildController(racyRepository, racyCoordinator, locationClient)
+
+        val startGen = racyController.beginCommand()
+        racyController.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = racyRepository.getActiveTripId()!!
+        racyRepository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripId)!!.state)
+        // The original service's own collector is gone, mirroring the real process death this
+        // reconciliation models - without this, the still-running original collector would trivially
+        // satisfy the final subscription-count assertion below regardless of how the race resolves.
+        racyCoordinator.stop()
+        awaitSubscriptionCount(0)
+
+        val resumeGenOld = racyController.beginCommand()
+        pausedToken = resumeGenOld // arm the hook for exactly this generation's own claim, and no other
+        val handlerJob = launch { racyController.handleResume(tripId, resumeGenOld, startId = 2) }
+        handoff.awaitEntered() // genOld's own isCurrent() already read true; paused before any Room op
+
+        // A newer generation is synchronously reserved on the very same gate while genOld is paused -
+        // exactly the moment its own currency snapshot silently becomes stale.
+        val resumeGenNew = racyController.beginCommand()
+
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() } // genOld's own handler runs to completion, uncancelled
+
+        // The genuinely current generation now runs its own Resume for the same trip - regardless of
+        // whether genOld's own (now-stale) claim already committed the trip to ACTIVE in the meantime.
+        racyController.handleResume(tripId, resumeGenNew, startId = 3)
+
+        // The trip must end up ACTIVE with exactly one live collector - never ACTIVE with zero
+        // subscriptions.
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, racyRepository.getTrip(tripId)!!.state)
+    }
+
+    // Audit companion to the Resume regression above: claimTripForStart was already convergent by
+    // construction (it always operates on "whichever trip is ACTIVE, or create one," never asserting an
+    // exclusive precondition a racing older claim could invalidate - see TripRepository's own class doc
+    // comment). This empirically proves that reasoning under the identical race, rather than leaving it
+    // as an unverified claim: an old Start paused genuinely after its own currency snapshot reads true,
+    // but before any Room work, must still converge safely once a newer generation takes over.
+    @Test
+    fun `an old Start paused after its currency snapshot reads true, but before any Room work, is still safely superseded by a newer generation`() = runBlocking {
+        var pausedToken = -1L
+        val handoff = Handoff()
+        val racyRepository = TripRepository(database, clock, afterCurrencyCheck = { token -> if (token == pausedToken) handoff.pauseHere() })
+        val racyCoordinator = TripRecordingCoordinator(racyRepository, locationClient, coordinatorScope)
+        val racyController = buildController(racyRepository, racyCoordinator, locationClient)
+
+        val startGenOld = racyController.beginCommand()
+        pausedToken = startGenOld
+        val handlerJob = launch { racyController.handleStart(startGenOld, startId = 1) }
+        handoff.awaitEntered() // genOld's own isCurrent() already read true; paused before any Room op
+
+        val startGenNew = racyController.beginCommand()
+
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() }
+
+        racyController.handleStart(startGenNew, startId = 2)
+
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, racyRepository.getTrip(racyRepository.getActiveTripId()!!)!!.state)
+        assertEquals(1, database.tripDao().observeAll().first().size) // exactly one trip, never a duplicate
+    }
+
+    // Required regression test (bug report): the convergent-takeover branch above only handles a newer
+    // command re-targeting the *same* trip an older, racing claim already committed ACTIVE. It does
+    // nothing for a newer command targeting a *different* trip: an old Resume for trip A, delayed past
+    // its own currency snapshot, can still commit A to ACTIVE; a newer Resume for a completely different
+    // trip B then finds A occupying the single ACTIVE slot and - without the fix below - is rejected
+    // outright, stopping the service with A left falsely ACTIVE and nothing actually recording it.
+    // Never cancels genOld's handler job - it runs to completion entirely on its own.
+    @Test
+    fun `an old Resume for trip A paused after its currency snapshot is safely superseded by a newer Resume for a different trip B`() = runBlocking {
+        var pausedToken = -1L
+        val handoff = Handoff()
+        val racyRepository = TripRepository(database, clock, afterCurrencyCheck = { token -> if (token == pausedToken) handoff.pauseHere() })
+        val racyCoordinator = TripRecordingCoordinator(racyRepository, locationClient, coordinatorScope)
+        val racyController = buildController(racyRepository, racyCoordinator, locationClient)
+
+        // Two distinct, already-INTERRUPTED trips, from two earlier sessions.
+        val tripA = racyRepository.startTrip()
+        racyRepository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        val tripB = racyRepository.startTrip() // A is INTERRUPTED, so this creates a second, distinct trip
+        racyRepository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertNotEquals(tripA, tripB)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripA)!!.state)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripB)!!.state)
+
+        val resumeGenOld = racyController.beginCommand()
+        pausedToken = resumeGenOld
+        val handlerJob = launch { racyController.handleResume(tripA, resumeGenOld, startId = 1) }
+        handoff.awaitEntered() // genOld's own isCurrent() already read true; paused before any Room op
+
+        // A newer Resume for the *other* trip is reserved on the same gate while genOld is paused.
+        val resumeGenNew = racyController.beginCommand()
+
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() } // genOld's own handler runs to completion, uncancelled
+
+        racyController.handleResume(tripB, resumeGenNew, startId = 2)
+
+        // B must end up ACTIVE with exactly one live collector; A must have been correctly reverted to
+        // INTERRUPTED (never left falsely ACTIVE with nothing recording it); the database must never
+        // show two ACTIVE rows; and the genuinely current handler must never have stopped the service.
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, racyRepository.getTrip(tripB)!!.state)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripA)!!.state)
+        val allTrips = database.tripDao().observeAll().first()
+        assertEquals(1, allTrips.count { it.state == TripState.ACTIVE.name })
+        assertTrue(stoppedStartIds.isEmpty())
+    }
+
+    // Required mirror of the regression above: the same cross-target race, but the older, racing command
+    // is a Start (creating/reusing a trip) instead of a Resume.
+    @Test
+    fun `an old Start creating or reusing trip A is safely superseded by a newer Resume for a different, already-interrupted trip B`() = runBlocking {
+        var pausedToken = -1L
+        val handoff = Handoff()
+        val racyRepository = TripRepository(database, clock, afterCurrencyCheck = { token -> if (token == pausedToken) handoff.pauseHere() })
+        val racyCoordinator = TripRecordingCoordinator(racyRepository, locationClient, coordinatorScope)
+        val racyController = buildController(racyRepository, racyCoordinator, locationClient)
+
+        // Trip B already exists, INTERRUPTED, from an earlier session - no trip is ACTIVE yet.
+        val tripB = racyRepository.startTrip()
+        racyRepository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripB)!!.state)
+
+        val startGenOld = racyController.beginCommand()
+        pausedToken = startGenOld
+        val handlerJob = launch { racyController.handleStart(startGenOld, startId = 1) }
+        handoff.awaitEntered()
+
+        val resumeGenNew = racyController.beginCommand()
+
+        handoff.release()
+        withTimeout(5_000) { handlerJob.join() }
+
+        // genOld's own claim already committed by now - it created a fresh trip A (none was ACTIVE) and
+        // registered itself as its owner, even though it was already stale by the time it ran.
+        val tripA = racyRepository.getActiveTripId()!!
+        assertNotEquals(tripB, tripA)
+
+        racyController.handleResume(tripB, resumeGenNew, startId = 2)
+
+        awaitSubscriptionCount(1)
+        assertEquals(TripState.ACTIVE.name, racyRepository.getTrip(tripB)!!.state)
+        assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripA)!!.state)
+        val allTrips = database.tripDao().observeAll().first()
+        assertEquals(2, allTrips.size)
+        assertEquals(1, allTrips.count { it.state == TripState.ACTIVE.name })
+        assertTrue(stoppedStartIds.isEmpty())
     }
 }

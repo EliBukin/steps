@@ -30,17 +30,21 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Every `handleXxx` function checks [isCurrent] as its very first action, *before* touching
  * [repository] at all - a stale command exits immediately rather than doing pointless work. This is
- * an optimization only, though, not the safety mechanism: any repository mutation whose correctness
- * actually depends on this command still being "the" current one - as opposed to a mutation that is
- * safe unconditionally, like the idempotent [TripRecordingRepository.startTrip] - goes through an
- * atomic, token-checked repository operation instead ([TripRecordingRepository.beginRecording],
- * [TripRecordingRepository.markTripInterruptedIfStillOwned], [TripRecordingRepository
- * .finishTripIfOwner]), so ownership is validated at the exact moment of the mutation, never merely
+ * an optimization only, though, not the safety mechanism: every repository mutation whose correctness
+ * actually depends on this command still being "the" current one goes through an atomic, token-checked
+ * repository operation instead - [TripRecordingRepository.claimTripForStart] (and its
+ * [TripRecordingRepository.claimTripForResume]/[TripRecordingRepository.claimActiveTripForRestart]
+ * siblings), [TripRecordingRepository.markTripInterruptedIfStillOwned], [TripRecordingRepository
+ * .finishTripIfOwner] - so ownership is validated at the exact moment of the mutation, never merely
  * before the suspending call that leads to it. A caller-side [isCurrent] check followed by an
  * unguarded suspending mutation has a real gap: arbitrary time - a dispatcher hop, Room's own
  * background executor, a bounded wait - can pass between the check and the mutation actually
  * committing, during which a newer command can be accepted and even complete its own conflicting
- * mutation first.
+ * mutation first. This is also why Start/Resume/restart-recovery each resolve/create/transition their
+ * target trip *and* register themselves as its recording owner in one atomic `claim*` call rather than
+ * two separate steps - see [TripRecordingRepository.claimTripForStart]'s own doc comment (on the
+ * interface) and [com.example.stepsplit.data.trip.TripRepository]'s class doc comment ("Atomic trip
+ * claiming") for the concrete race a split shape used to leave open.
  *
  * A currency check alone is also not sufficient for the actual collector/service side effects:
  * [gate] (a [CommandGenerationGate]) makes the *final* currency check and the synchronous act
@@ -64,25 +68,23 @@ class TripRecordingCommandController(
 
     private fun isCurrent(generation: Long): Boolean = gate.isCurrent(generation)
 
-    /** An explicit, user-initiated Start (or its idempotent redelivery) - may create a brand-new trip via [TripRecordingRepository.startTrip]. */
+    /**
+     * An explicit, user-initiated Start (or its idempotent redelivery) - may create a brand-new trip,
+     * or idempotently reuse an already-ACTIVE one, via the single atomic
+     * [TripRecordingRepository.claimTripForStart] call, which also registers this [generation] as the
+     * claimed trip's recording owner in the same step (see that method's own doc comment for why
+     * trip resolution and ownership registration are never split across a suspend boundary here). The
+     * `{ isCurrent(generation) }` lambda passed in is re-evaluated *inside* that call's own lock,
+     * immediately before any mutation - not merely once here, before the suspending call - so a `null`
+     * result can mean either a genuinely newer claim from a *different* controller/service instance
+     * (the token compare-and-set) or a newer generation merely *reserved* on this same instance's own
+     * [gate] whose own handler has not yet run (the [isCurrent] check); either way this command simply
+     * stops rather than starting a collector on a trip it does not actually own.
+     */
     suspend fun handleStart(generation: Long, startId: Int) {
         if (!isCurrent(generation)) return
-        val tripId = repository.startTrip()
-        startCollecting(tripId, generation, startId)
-    }
-
-    /**
-     * An explicit, user-initiated Resume of a specific [tripId] - the UI has already re-validated
-     * precise-location permission and system location being enabled before sending this (see
-     * `TripsScreen.kt`), so by the time this runs the only remaining failure modes are a stale/
-     * duplicate command or a genuine registration failure, both handled below. Never calls
-     * [TripRecordingRepository.startTrip] - only [TripRecordingRepository.resumeInterruptedTrip],
-     * which atomically verifies [tripId] is still INTERRUPTED before transitioning it, so this can
-     * never resume a trip twice or resurrect one that has since finished elsewhere.
-     */
-    suspend fun handleResume(tripId: Long, generation: Long, startId: Int) {
-        if (!isCurrent(generation)) return
-        if (tripId < 0 || !repository.resumeInterruptedTrip(tripId)) {
+        val tripId = repository.claimTripForStart(generation) { isCurrent(generation) }
+        if (tripId == null) {
             stopIfCurrent(generation, startId)
             return
         }
@@ -90,16 +92,41 @@ class TripRecordingCommandController(
     }
 
     /**
+     * An explicit, user-initiated Resume of a specific [tripId] - the UI has already re-validated
+     * precise-location permission and system location being enabled before sending this (see
+     * `TripsScreen.kt`), so by the time this runs the only remaining failure modes are a stale/
+     * duplicate command or a genuine registration failure, both handled below. Never creates a new
+     * trip - [TripRecordingRepository.claimTripForResume] atomically verifies [tripId] is still
+     * INTERRUPTED, verifies no *different* trip is already ACTIVE (preserving the single-ACTIVE-trip
+     * invariant), transitions it to ACTIVE, and registers this [generation] as its recording owner, all
+     * in one step - so this can never resume a trip twice, resurrect one that has since finished
+     * elsewhere, leave it ACTIVE-but-unowned in the gap a separate registration call used to leave, or
+     * create a second simultaneously-ACTIVE trip. The `{ isCurrent(generation) }` lambda is re-evaluated
+     * inside that same atomic step too - see [handleStart]'s own doc comment for why that, not merely
+     * the upfront check above, is what actually closes the stale-claim race.
+     */
+    suspend fun handleResume(tripId: Long, generation: Long, startId: Int) {
+        if (!isCurrent(generation)) return
+        val claimedTripId = if (tripId < 0) null else repository.claimTripForResume(tripId, generation) { isCurrent(generation) }
+        if (claimedTripId == null) {
+            stopIfCurrent(generation, startId)
+            return
+        }
+        startCollecting(claimedTripId, generation, startId)
+    }
+
+    /**
      * Android redelivering a **null** Intent to restart this `START_STICKY` service after process
-     * death. May only *recover* an already-ACTIVE trip ([TripRecordingRepository.getActiveTripId]) -
-     * never calls [TripRecordingRepository.startTrip] or [TripRecordingRepository
-     * .resumeInterruptedTrip]. If no trip is ACTIVE (e.g. the app's own launch-time reconciliation
-     * already marked it INTERRUPTED before this delayed restart arrived), this stops the service
-     * without creating or changing anything.
+     * death. May only *recover* an already-ACTIVE trip - [TripRecordingRepository
+     * .claimActiveTripForRestart] atomically resolves it and registers this [generation] as its
+     * recording owner in one step; it never creates a trip and never resumes an INTERRUPTED one. If no
+     * trip is ACTIVE (e.g. the app's own launch-time reconciliation already marked it INTERRUPTED
+     * before this delayed restart arrived), or a newer claim has already taken over, this stops the
+     * service without creating or changing anything.
      */
     suspend fun handleRestart(generation: Long, startId: Int) {
         if (!isCurrent(generation)) return
-        val tripId = repository.getActiveTripId()
+        val tripId = repository.claimActiveTripForRestart(generation) { isCurrent(generation) }
         if (tripId == null) {
             stopIfCurrent(generation, startId)
             return
@@ -168,15 +195,14 @@ class TripRecordingCommandController(
     /**
      * Foreground promotion (see `TripRecordingService.promoteToForeground`) happens before any
      * command-specific work, so a promotion failure means [generation]'s own command never actually
-     * ran - no collector was ever started on its behalf, so it has no ownership token of its own
-     * registered via [TripRecordingRepository.beginRecording]. But an already-ACTIVE trip left over
-     * from an earlier command has, as of this failure, lost its live recording: this service is
-     * about to stop, and nothing is collecting for it anymore. Rather than leave Room (and an
-     * already-open UI) claiming that trip is still ACTIVE with nothing behind it, it is honestly
-     * reconciled to INTERRUPTED here immediately via [TripRecordingRepository
-     * .markTripInterruptedIfStillOwned] - passing [generation] purely as a "no collector newer than
-     * this has taken over since" threshold (see that method's own doc comment for why it accepts
-     * both an exact owner and this no-newer-owner case) - the same terminal state
+     * ran - no collector was ever started on its behalf, so it never claimed ownership of anything via
+     * a `claim*` call. But an already-ACTIVE trip left over from an earlier command has, as of this
+     * failure, lost its live recording: this service is about to stop, and nothing is collecting for it
+     * anymore. Rather than leave Room (and an already-open UI) claiming that trip is still ACTIVE with
+     * nothing behind it, it is honestly reconciled to INTERRUPTED here immediately via
+     * [TripRecordingRepository.markTripInterruptedIfStillOwned] - passing [generation] purely as a "no
+     * collector newer than this has taken over since" threshold (see that method's own doc comment for
+     * why it accepts both an exact owner and this no-newer-owner case) - the same terminal state
      * [com.example.stepsplit.data.trip.TripRepository.reconcileActiveTripOnLaunch] would eventually
      * reach on the next app launch, just applied right away instead of waiting for that. Never
      * creates or resumes a trip, and never fabricates a successful Finish - only ever this same
@@ -184,35 +210,30 @@ class TripRecordingCommandController(
      */
     suspend fun handleForegroundPromotionFailure(generation: Long, startId: Int) {
         if (!isCurrent(generation)) return
-        val tripId = repository.getActiveTripId()
-        if (tripId != null) {
-            repository.markTripInterruptedIfStillOwned(tripId, generation) { isCurrent(generation) }
-        }
+        repository.markTripInterruptedIfStillOwned(generation) { isCurrent(generation) }
         stopIfCurrent(generation, startId)
     }
 
-    private suspend fun startCollecting(tripId: Long, generation: Long, startId: Int) {
-        if (!isCurrent(generation)) return
-        // Registers this generation as the owner of tripId's live recording, and atomically
-        // supersedes an older, abandoned Finish cutoff still outstanding for it - see
-        // beginRecording's own doc comment. A monotonic compare-and-set, so a stale call reaching
-        // this point after a genuinely newer registration already ran is a safe no-op, never a
-        // clobber - no isCurrent check is relied on here for that safety.
-        repository.beginRecording(tripId, generation)
+    private fun startCollecting(tripId: Long, generation: Long, startId: Int) {
+        // Ownership of tripId was already atomically registered by the claim call that produced this
+        // tripId (see handleStart/handleResume/handleRestart) - no separate repository call happens
+        // here. gate.runIfCurrent is still what actually gates the synchronous coordinator side effect:
+        // even a claim that genuinely succeeded moments ago must not start a collector if this
+        // generation's own terminal gate has since closed (see CommandGenerationGate.shutdown).
         gate.runIfCurrent(generation) {
             // Guarantee a clean subscription for `tripId` regardless of what an about-to-be-superseded
             // older command may still have running - coordinator.stop() is idempotent either way.
             coordinator.stop()
-            coordinator.start(tripId) { throwable -> handleRecordingFailure(tripId, generation, startId, throwable) }
+            coordinator.start(tripId) { throwable -> handleRecordingFailure(generation, startId, throwable) }
         }
     }
 
     /**
      * A stale collector's failure must never mutate a trip a newer generation has since taken back
-     * over (idempotently, via `startTrip()`'s trip reuse) - see the class doc comment. Deliberately
-     * *not* guarded by an upfront `if (!isCurrent(generation)) return`: that pattern - check, then
-     * make a separate suspending call - leaves a real gap between the check and the mutation actually
-     * committing. Currency is instead threaded into [TripRecordingRepository
+     * over (idempotently, via [TripRecordingRepository.claimTripForStart]'s trip reuse) - see the class
+     * doc comment. Deliberately *not* guarded by an upfront `if (!isCurrent(generation)) return`: that
+     * pattern - check, then make a separate suspending call - leaves a real gap between the check and
+     * the mutation actually committing. Currency is instead threaded into [TripRecordingRepository
      * .markTripInterruptedIfStillOwned] itself as a lambda, evaluated atomically at the exact mutation
      * point (inside that call's own lock, immediately before it touches Room) rather than before the
      * call - see that method's own doc comment for why both that currency check and its token-based
@@ -221,8 +242,8 @@ class TripRecordingCommandController(
      * whole function stays correct even if this callback was paused for an arbitrary length of time
      * between the failure occurring and this function actually running.
      */
-    private suspend fun handleRecordingFailure(tripId: Long, generation: Long, startId: Int, @Suppress("UNUSED_PARAMETER") throwable: Throwable) {
-        repository.markTripInterruptedIfStillOwned(tripId, generation) { isCurrent(generation) }
+    private suspend fun handleRecordingFailure(generation: Long, startId: Int, @Suppress("UNUSED_PARAMETER") throwable: Throwable) {
+        repository.markTripInterruptedIfStillOwned(generation) { isCurrent(generation) }
         stopIfCurrent(generation, startId)
     }
 
@@ -256,12 +277,16 @@ class TripRecordingCommandController(
     fun shutdown() {
         val closedAtGeneration = gate.shutdown { coordinator.stop() }
         reconciliationScope.launch {
-            val tripId = repository.getActiveTripId() ?: return@launch
             // Gate currency is meaningless here - it is already permanently closed by definition at
             // this point - so this relies purely on the token comparison (b) inside
-            // markTripInterruptedIfStillOwned to protect a genuinely newer controller/service
-            // instance that has since taken over the same trip.
-            repository.markTripInterruptedIfStillOwned(tripId, closedAtGeneration) { true }
+            // markTripInterruptedIfStillOwned to protect a genuinely newer controller/service instance
+            // that has since taken over (idempotently reused, resumed, or freshly claimed) the same
+            // trip. markTripInterruptedIfStillOwned resolves the ACTIVE trip itself, atomically
+            // alongside that comparison, rather than this call resolving one via a separate
+            // getActiveTripId() read first - the same atomicity a `claim*` call's own trip
+            // resolution+ownership registration gets, so there is no gap in which a trip a newer
+            // controller has just claimed could be read here before that claim's ownership is visible.
+            repository.markTripInterruptedIfStillOwned(closedAtGeneration) { true }
         }
     }
 
