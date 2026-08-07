@@ -4,6 +4,7 @@
 
     <string name="nav_today">Today</string>
     <string name="nav_history">History</string>
+    <string name="nav_stats">Stats</string>
     <string name="nav_sessions">Sessions</string>
     <string name="nav_trips">Trips</string>
     <string name="nav_settings">Settings</string>
@@ -165,4 +166,24 @@
     <string name="cd_trip_recording_active">Trip recording is active</string>
     <string name="cd_trip_route_trace">Map of the recorded route</string>
     <string name="cd_navigate_back">Back</string>
+
+    <string name="stats_title">Lifetime Stats</string>
+    <string name="stats_lifetime_steps_label">Total steps ever</string>
+    <string name="stats_distance_label">Estimated walking distance</string>
+    <string name="stats_distance_km_format">%1$,.1f km</string>
+    <string name="stats_distance_assumption">Estimated using an average of 0.75 meters per step, not measured by GPS</string>
+    <string name="stats_earth_progress_label">Progress around Earth</string>
+    <string name="stats_earth_percent_format">%1$.2f%%</string>
+    <string name="stats_earth_percent_zero">0%</string>
+    <string name="stats_earth_percent_below_min">Less than 0.01%</string>
+    <string name="stats_marathon_label">Marathon equivalents</string>
+    <string name="stats_marathon_format">%1$,.1f</string>
+    <string name="stats_active_days_label">Active days</string>
+    <string name="stats_average_label">Average steps per active day</string>
+    <string name="stats_best_day_label">Best day</string>
+    <string name="stats_best_day_none">No active days yet</string>
+    <string name="stats_zero_state_title">Your journey starts here</string>
+    <string name="stats_zero_state_message">No step data yet. Start walking to see your lifetime stats here.</string>
+    <string name="stats_encouragement_label">Great job, keep it up!</string>
+    <string name="stats_next_marathon_format">%1$,.1f more km to complete another marathon</string>
 </resources>

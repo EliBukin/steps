@@ -27,6 +27,7 @@ import com.example.stepsplit.domain.model.SessionMerger
 import com.example.stepsplit.domain.model.SyncFailure
 import com.example.stepsplit.domain.model.SyncFailureCategory
 import com.example.stepsplit.domain.model.WalkSession
+import com.example.stepsplit.domain.stats.LifetimeStepTotals
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -571,6 +572,29 @@ class StepRepository(
             val breakdowns = StepAggregator.aggregateByDate(dated, workoutIntervals)
             dates.associateWith { date -> breakdowns[date] ?: DateStepBreakdown(date, 0L, 0L, 0L) }
         }
+    }
+
+    /**
+     * Lifetime totals across the real production step source's ENTIRE stored history - never
+     * date-bounded, never limited by the Local Recording API's retention window
+     * ([RETENTION_WINDOW]) or by any UI-visible date range (e.g. History's rolling 7 days). See
+     * [com.example.stepsplit.data.local.bucket.StepBucketDao.observeLifetimeAggregate] for why
+     * this is safe as a plain unfiltered aggregate query rather than a separately maintained
+     * counter. Filtered to [stepSource]'s own id so debug/sample-data sources (imported under
+     * their own distinct source id - see [debugImportRawIntervals]) never pollute real lifetime
+     * statistics. Observed as a [Flow] (not a one-shot read) so Stats updates live as new buckets
+     * are imported by a sync, exactly like [observeSessions]/[observeDailyBreakdowns] above.
+     */
+    fun observeLifetimeStats(): Flow<LifetimeStepTotals> = combine(
+        database.stepBucketDao().observeLifetimeAggregate(stepSource.id),
+        database.stepBucketDao().observeBestDay(stepSource.id),
+    ) { aggregate, bestDay ->
+        LifetimeStepTotals(
+            lifetimeSteps = aggregate.totalSteps,
+            activeDays = aggregate.activeDays,
+            bestDayDate = bestDay?.localDate?.let(LocalDate::parse),
+            bestDaySteps = bestDay?.totalSteps ?: 0L,
+        )
     }
 
     companion object {

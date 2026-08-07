@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.sessions.SessionsViewModel
 import com.example.stepsplit.ui.settings.SettingsViewModel
+import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayViewModel
 import com.example.stepsplit.ui.trips.TripDetailViewModel
 import com.example.stepsplit.ui.trips.TripsViewModel
@@ -25,6 +26,8 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
             container.settingsRepository,
             container.clock,
         )
+
+        StatsViewModel::class.java -> StatsViewModel(container.stepRepository)
 
         SessionsViewModel::class.java -> SessionsViewModel(container.stepRepository)
 

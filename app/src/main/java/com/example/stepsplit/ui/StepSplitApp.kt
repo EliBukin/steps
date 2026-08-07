@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -42,6 +43,8 @@ import com.example.stepsplit.ui.sessions.SessionsScreen
 import com.example.stepsplit.ui.sessions.SessionsViewModel
 import com.example.stepsplit.ui.settings.SettingsScreen
 import com.example.stepsplit.ui.settings.SettingsViewModel
+import com.example.stepsplit.ui.stats.StatsScreen
+import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayScreen
 import com.example.stepsplit.ui.today.TodayViewModel
 import com.example.stepsplit.ui.trips.TripDetailScreen
@@ -103,6 +106,11 @@ fun StepSplitApp(
                 val viewModel: HistoryViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
                 HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh)
+            }
+            composable(Screen.Stats.route) {
+                val viewModel: StatsViewModel = viewModel(factory = factory)
+                val uiState by viewModel.uiState.collectAsState()
+                StatsScreen(uiState = uiState, onRefresh = viewModel::refresh)
             }
             composable(Screen.Sessions.route) {
                 val viewModel: SessionsViewModel = viewModel(factory = factory)
@@ -177,6 +185,7 @@ private fun StepSplitBottomBar(navController: NavHostController) {
 private fun Screen.icon(): ImageVector = when (this) {
     Screen.Today -> Icons.Filled.Home
     Screen.History -> Icons.Filled.DateRange
+    Screen.Stats -> Icons.Filled.Star
     Screen.Sessions -> Icons.AutoMirrored.Filled.List
     Screen.Trips -> Icons.Filled.Place
     Screen.Settings -> Icons.Filled.Settings
@@ -186,6 +195,7 @@ private fun Screen.icon(): ImageVector = when (this) {
 private fun Screen.labelRes(): Int = when (this) {
     Screen.Today -> R.string.nav_today
     Screen.History -> R.string.nav_history
+    Screen.Stats -> R.string.nav_stats
     Screen.Sessions -> R.string.nav_sessions
     Screen.Trips -> R.string.nav_trips
     Screen.Settings -> R.string.nav_settings

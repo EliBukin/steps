@@ -14,9 +14,11 @@ import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.SyncFailureCategory
 import com.example.stepsplit.domain.model.WalkSession
+import com.example.stepsplit.domain.stats.LifetimeStatsCalculator
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.concurrent.CountDownLatch
@@ -1764,5 +1766,173 @@ class StepRepositoryTest {
 
         val newBucket = database.stepBucketDao().getAllActive().single { it.startEpochSecond == newMinuteStart }
         assertEquals("Asia/Tokyo", newBucket.zoneId)
+    }
+
+    // ---- Lifetime stats (observeLifetimeStats) - see LifetimeStatsCalculatorTest for the pure
+    // formula-level tests; the tests below prove the Room-backed aggregate query itself behaves
+    // correctly: unbounded by any retention window or date range, upsert-safe, and source-filtered. ----
+
+    /** A one-minute [StepBucketEntity] for direct DAO seeding, independent of any sync read window. */
+    private fun testBucket(startEpochSecond: Long, steps: Long, source: String = fakeSource.id): StepBucketEntity {
+        val localDate = Instant.ofEpochSecond(startEpochSecond).atZone(ZoneOffset.UTC).toLocalDate().toString()
+        return StepBucketEntity(
+            source = source,
+            startEpochSecond = startEpochSecond,
+            endEpochSecond = startEpochSecond + 60,
+            steps = steps,
+            zoneId = "UTC",
+            localDate = localDate,
+            importedAtEpochSecond = startEpochSecond,
+        )
+    }
+
+    @Test
+    fun `lifetime stats include buckets older than 7 days, 10 days, and much older than that`() = runTest {
+        val dao = database.stepBucketDao()
+        val sevenDaysAgo = fixedNow.epochSecond - Duration.ofDays(7).seconds
+        val tenDaysAgo = fixedNow.epochSecond - Duration.ofDays(10).seconds
+        val muchOlder = fixedNow.epochSecond - Duration.ofDays(400).seconds
+        dao.upsertAll(
+            listOf(
+                testBucket(sevenDaysAgo, 100),
+                testBucket(tenDaysAgo, 200),
+                testBucket(muchOlder, 300),
+            ),
+        )
+
+        val stats = repository.observeLifetimeStats().first()
+
+        assertEquals(
+            "buckets older than the source's own retention window must still count toward lifetime totals",
+            600L,
+            stats.lifetimeSteps,
+        )
+        assertEquals(3, stats.activeDays)
+    }
+
+    @Test
+    fun `a later sync does not remove old lifetime statistics`() = runTest {
+        val dao = database.stepBucketDao()
+        val thirtyDaysAgo = fixedNow.epochSecond - Duration.ofDays(30).seconds
+        dao.upsertAll(listOf(testBucket(thirtyDaysAgo, 500)))
+        assertEquals(500L, repository.observeLifetimeStats().first().lifetimeSteps)
+
+        // An ordinary sync with new (or even zero) fresh data must never reduce what is already
+        // recorded - the raw-bucket upsert path never deletes (see StepRepository.syncNowLocked's
+        // own doc comment).
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 20)
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals(520L, repository.observeLifetimeStats().first().lifetimeSteps)
+    }
+
+    @Test
+    fun `reimporting the same minute does not double-count lifetime steps`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+
+        repository.syncNow()
+        repository.syncNow()
+
+        assertEquals(50L, repository.observeLifetimeStats().first().lifetimeSteps)
+    }
+
+    @Test
+    fun `correcting a minute to a higher value updates lifetime statistics accordingly`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        repository.syncNow()
+        assertEquals(50L, repository.observeLifetimeStats().first().lifetimeSteps)
+
+        // A later read reconciles the same minute with a corrected, higher positive value - not an
+        // additional value to sum on top (see StepBucketEntity's own doc comment on REPLACE upserts).
+        fakeSource.clearIntervals()
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 120)
+        repository.syncNow()
+
+        assertEquals(120L, repository.observeLifetimeStats().first().lifetimeSteps)
+    }
+
+    @Test
+    fun `lifetime stats exclude buckets stored under a different (e g debug sample data) source`() = runTest {
+        val dao = database.stepBucketDao()
+        dao.upsertAll(listOf(testBucket(baseEpoch - 3600, 999, source = "debug_sample_data")))
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+
+        repository.syncNow()
+
+        val stats = repository.observeLifetimeStats().first()
+        assertEquals(
+            "only the real production step source's own rows may count toward lifetime statistics",
+            50L,
+            stats.lifetimeSteps,
+        )
+    }
+
+    @Test
+    fun `lifetime steps, distance, earth percentage and marathon equivalents are computed correctly`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 10_000)
+        repository.syncNow()
+
+        val stats = LifetimeStatsCalculator.calculate(repository.observeLifetimeStats().first())
+
+        assertEquals(10_000L, stats.lifetimeSteps)
+        assertEquals(7.5, stats.estimatedKilometers, 1e-9)
+        assertEquals(7.5 / 40_075.0 * 100.0, stats.earthProgressPercent, 1e-9)
+        assertEquals(7.5 / 42.195, stats.marathonEquivalents, 1e-9)
+    }
+
+    @Test
+    fun `active-day count, average, and best-day selection are correct across multiple dates`() = runTest {
+        val dao = database.stepBucketDao()
+        val day1 = baseEpoch // 2026-03-10
+        val day2 = day1 - Duration.ofDays(2).seconds // 2026-03-08 - the highest single day
+        val day3 = day1 - Duration.ofDays(5).seconds // 2026-03-05
+        dao.upsertAll(
+            listOf(
+                testBucket(day1, 1_000),
+                testBucket(day2, 3_000),
+                testBucket(day3, 500),
+            ),
+        )
+
+        val totals = repository.observeLifetimeStats().first()
+
+        assertEquals(4_500L, totals.lifetimeSteps)
+        assertEquals(3, totals.activeDays)
+        assertEquals(3_000L, totals.bestDaySteps)
+        assertEquals(Instant.ofEpochSecond(day2).atZone(ZoneOffset.UTC).toLocalDate(), totals.bestDayDate)
+
+        val calculated = LifetimeStatsCalculator.calculate(totals)
+        assertEquals(1_500L, calculated.averageStepsPerActiveDay)
+    }
+
+    @Test
+    fun `lifetime stats are a valid, non-crashing zero state with no stored buckets`() = runTest {
+        val stats = LifetimeStatsCalculator.calculate(repository.observeLifetimeStats().first())
+
+        assertEquals(0L, stats.lifetimeSteps)
+        assertEquals(0, stats.activeDays)
+        assertEquals(null, stats.bestDayDate)
+        assertFalse(stats.hasData)
+    }
+
+    @Test
+    fun `lifetime stats remain correct for a very large stored step total`() = runTest {
+        val dao = database.stepBucketDao()
+        dao.upsertAll(listOf(testBucket(baseEpoch, 2_000_000_000L)))
+
+        val stats = repository.observeLifetimeStats().first()
+
+        assertEquals(2_000_000_000L, stats.lifetimeSteps)
+    }
+
+    @Test
+    fun `observeLifetimeStats reflects newly imported buckets without a fresh repository instance`() = runTest {
+        assertEquals(0L, repository.observeLifetimeStats().first().lifetimeSteps)
+
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 75)
+        repository.syncNow()
+
+        assertEquals(75L, repository.observeLifetimeStats().first().lifetimeSteps)
     }
 }

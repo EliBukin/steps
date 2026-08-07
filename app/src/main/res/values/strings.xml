@@ -4,6 +4,7 @@
 
     <string name="nav_today">היום</string>
     <string name="nav_history">היסטוריה</string>
+    <string name="nav_stats">סטטיסטיקה</string>
     <string name="nav_sessions">הליכות</string>
     <string name="nav_trips">טיולים</string>
     <string name="nav_settings">הגדרות</string>
@@ -165,4 +166,24 @@
     <string name="cd_trip_recording_active">הקלטת טיול פעילה</string>
     <string name="cd_trip_route_trace">מפת המסלול שנרשם</string>
     <string name="cd_navigate_back">חזרה</string>
+
+    <string name="stats_title">סטטיסטיקה לכל הזמנים</string>
+    <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
+    <string name="stats_distance_label">מרחק הליכה משוער</string>
+    <string name="stats_distance_km_format">%1$,.1f ק״מ</string>
+    <string name="stats_distance_assumption">האומדן מבוסס על ממוצע של 0.75 מטר לצעד, ואינו נמדד באמצעות GPS</string>
+    <string name="stats_earth_progress_label">התקדמות מסביב לכדור הארץ</string>
+    <string name="stats_earth_percent_format">%1$.2f%%</string>
+    <string name="stats_earth_percent_zero">0%</string>
+    <string name="stats_earth_percent_below_min">פחות מ-0.01%</string>
+    <string name="stats_marathon_label">מרתונים מקבילים</string>
+    <string name="stats_marathon_format">%1$,.1f</string>
+    <string name="stats_active_days_label">ימים פעילים</string>
+    <string name="stats_average_label">ממוצע צעדים ביום פעיל</string>
+    <string name="stats_best_day_label">היום הכי פעיל</string>
+    <string name="stats_best_day_none">אין עדיין ימים פעילים</string>
+    <string name="stats_zero_state_title">המסע שלך מתחיל כאן</string>
+    <string name="stats_zero_state_message">עדיין אין נתוני צעדים. התחילו ללכת כדי לראות כאן את הסטטיסטיקה לכל הזמנים שלכם.</string>
+    <string name="stats_encouragement_label">כל הכבוד, המשיכו כך!</string>
+    <string name="stats_next_marathon_format">עוד %1$,.1f ק״מ ותשלימו מרתון נוסף</string>
 </resources>
