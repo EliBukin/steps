@@ -53,7 +53,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun StepSplitApp(
     container: AppContainer,
-    onRequestPermission: () -> Unit,
+    onRequestPermission: (onResult: (Boolean) -> Unit) -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
     navigationEvent: TripNotificationNavigationEvent? = null,
 ) {
@@ -92,7 +92,11 @@ fun StepSplitApp(
                 TodayScreen(
                     uiState = uiState,
                     onRefresh = viewModel::refresh,
-                    onGrantPermission = onRequestPermission,
+                    // Immediately re-checks availability and performs a subscription/sync attempt
+                    // the moment the permission is actually granted, rather than relying on the
+                    // next incidental LifecycleResumeEffect-driven resume to notice - see
+                    // MainActivity.requestActivityRecognitionPermission's own doc comment.
+                    onGrantPermission = { onRequestPermission { granted -> if (granted) viewModel.refresh() } },
                 )
             }
             composable(Screen.History.route) {
@@ -140,6 +144,7 @@ fun StepSplitApp(
                     onGenerateSampleData = {
                         coroutineScope.launch { DebugDataSeeder.seed(container) }
                     },
+                    onRunStepSourceCheck = viewModel::runStepSourceCheck,
                 )
             }
         }

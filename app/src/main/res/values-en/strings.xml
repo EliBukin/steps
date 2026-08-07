@@ -23,6 +23,8 @@
     <string name="status_api_unavailable">Step tracking is not available on this device</string>
     <string name="status_error">A problem occurred while collecting step data: %1$s</string>
     <string name="status_available">Step collection is active</string>
+    <string name="status_waiting_for_first_sample">Waiting for first step data</string>
+    <string name="status_sample_observed">Step data has been observed</string>
     <string name="status_unknown">Checking data collection status…</string>
 
     <string name="sync_failure_subscription_message">Steps aren\'t syncing: subscribing to step data failed. We\'ll keep retrying automatically.</string>
@@ -73,6 +75,26 @@
     <string name="settings_data_collection_status_title">Data collection status</string>
     <string name="settings_debug_section_title">Debug tools (debug builds only)</string>
     <string name="settings_debug_seed_action">Generate sample data</string>
+    <string name="settings_debug_diagnostics_title">Step source diagnostics</string>
+    <string name="settings_debug_run_check_action">Run step source check</string>
+    <string name="settings_debug_label_package">Package / variant</string>
+    <string name="settings_debug_label_permission">Permission status</string>
+    <string name="settings_debug_label_subscription">Last subscription attempt</string>
+    <string name="settings_debug_label_read_attempt">Last read attempt</string>
+    <string name="settings_debug_label_read_success">Last successful read</string>
+    <string name="settings_debug_label_read_failure">Last read failure</string>
+    <string name="settings_debug_label_ever_observed">Ever observed a sample</string>
+    <string name="settings_debug_label_latest_sample">Latest sample time</string>
+    <string name="settings_debug_label_interval_count">Last read interval count</string>
+    <string name="settings_debug_label_consecutive_empty">Consecutive empty reads</string>
+    <string name="settings_debug_label_stored_buckets">Stored raw buckets</string>
+    <string name="settings_debug_label_check_result">Last check result</string>
+    <string name="settings_debug_label_requested_window">Last requested read window</string>
+    <string name="settings_debug_environment_title">Device environment</string>
+    <string name="settings_debug_label_device">Device</string>
+    <string name="settings_debug_label_android_version">Android version</string>
+    <string name="settings_debug_label_play_services_version">Play services (installed / required)</string>
+    <string name="settings_debug_label_step_sensors">Step sensors (counter / detector)</string>
 
     <string name="unit_steps">steps</string>
     <string name="cadence_unit_format">%1$.0f steps/min</string>

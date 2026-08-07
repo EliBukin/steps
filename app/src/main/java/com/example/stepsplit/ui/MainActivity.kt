@@ -29,11 +29,17 @@ data class TripNotificationNavigationEvent(val route: String, val id: Long)
 
 class MainActivity : ComponentActivity() {
 
-    // No explicit result handling needed: the permission dialog closing triggers onResume, and
-    // every screen already re-checks collection availability via LifecycleResumeEffect.
+    // Forwards the actual grant/deny result to whichever caller is currently waiting (set by
+    // requestActivityRecognitionPermission below) - previously discarded entirely, which meant
+    // subscription/sync only ever refreshed indirectly via the next LifecycleResumeEffect-driven
+    // resume rather than immediately after the user actually granted the permission.
+    private var pendingActivityRecognitionResult: ((Boolean) -> Unit)? = null
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { granted ->
+        pendingActivityRecognitionResult?.invoke(granted)
+        pendingActivityRecognitionResult = null
+    }
 
     // A single registered launcher, forwarded to whichever Compose-side caller is currently
     // waiting - registerForActivityResult must be called at a fixed point in the Activity's
@@ -61,7 +67,7 @@ class MainActivity : ComponentActivity() {
             StepSplitTheme {
                 StepSplitApp(
                     container = container,
-                    onRequestPermission = { requestActivityRecognitionPermission() },
+                    onRequestPermission = ::requestActivityRecognitionPermission,
                     onRequestTripPermissions = ::requestTripPermissions,
                     navigationEvent = navigationEvent,
                 )
@@ -87,9 +93,22 @@ class MainActivity : ComponentActivity() {
             null
         }
 
-    private fun requestActivityRecognitionPermission() {
+    /**
+     * [onResult] receives the actual grant/deny outcome so the caller (see [StepSplitApp]'s own
+     * wiring) can immediately refresh source readiness and trigger a subscription/sync attempt
+     * rather than waiting on a coincidental resume - see the class-level doc comment above
+     * [pendingActivityRecognitionResult]. On API 26-28, where this isn't a real runtime permission
+     * at all (see [ActivityRecognitionPermission.isRequiredOn]), nothing is actually requested but
+     * [onResult] still fires with `true` - [ActivityRecognitionPermission.isSatisfied] already
+     * treats an ungranted permission as satisfied on those versions, so the caller's own refresh
+     * still needs to run rather than silently no-op.
+     */
+    private fun requestActivityRecognitionPermission(onResult: (Boolean) -> Unit) {
         if (ActivityRecognitionPermission.isRequiredOn(Build.VERSION.SDK_INT)) {
+            pendingActivityRecognitionResult = onResult
             requestPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+        } else {
+            onResult(true)
         }
     }
 

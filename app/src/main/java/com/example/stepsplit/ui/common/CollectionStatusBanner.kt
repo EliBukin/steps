@@ -16,6 +16,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
+import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.domain.model.SyncFailure
 
 /**
@@ -52,6 +53,30 @@ fun CollectionStatusBanner(
                 }
             }
         }
+    }
+}
+
+/**
+ * Shown only for [StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE]: the source is available and
+ * syncing without error, but no positive sample has ever actually been read from it yet - the
+ * exact gap that used to let the UI claim "Step collection is active" while the app had never
+ * observed a single step (a successful empty read looks identical to a healthy one to both
+ * [StepSourceAvailability] and [SyncFailure] alone). Deliberately styled as informational
+ * (`secondaryContainer`), not an error - this is an expected, normal state before the user's first
+ * recorded step of the day, not a problem to alarm about.
+ */
+@Composable
+fun WaitingForFirstSampleBanner(modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Text(
+            text = stringResource(R.string.status_waiting_for_first_sample),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(16.dp),
+        )
     }
 }
 

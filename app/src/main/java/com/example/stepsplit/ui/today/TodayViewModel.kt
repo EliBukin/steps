@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
+import com.example.stepsplit.data.stepsource.StepSourceHealthStore
 import com.example.stepsplit.domain.aggregation.DateStepBreakdown
+import com.example.stepsplit.domain.model.deriveStepCollectionHealth
 import com.example.stepsplit.domain.time.WeekWindow
 import com.example.stepsplit.domain.time.currentDateFlow
 import java.time.Clock
@@ -25,6 +27,7 @@ import kotlinx.coroutines.launch
 class TodayViewModel(
     private val repository: StepRepository,
     private val settingsRepository: SettingsRepository,
+    private val stepSourceHealthStore: StepSourceHealthStore,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -49,7 +52,8 @@ class TodayViewModel(
         breakdownsForToday,
         settingsRepository.settings,
         availability,
-    ) { (today, breakdowns), settings, currentAvailability ->
+        stepSourceHealthStore.snapshot,
+    ) { (today, breakdowns), settings, currentAvailability, health ->
         val weekDates = weekDatesToDate(today)
         TodayUiState(
             isLoading = false,
@@ -66,6 +70,7 @@ class TodayViewModel(
             // failure recorded by a background WorkManager sync is visible the moment this screen
             // is next observed, not only right after a refresh() triggered from here.
             syncFailure = settings.lastSyncFailure,
+            collectionHealth = deriveStepCollectionHealth(currentAvailability, settings.lastSyncFailure, health.everObservedSample),
         )
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())

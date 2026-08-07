@@ -257,8 +257,8 @@ class StepRepositoryTest {
 
     @Test
     fun `a failed read after data already exists leaves the existing buckets untouched`() = runTest {
-        // A successful sync first - this is the data a failed read must never wipe out via
-        // reconciliation deletion (see LocalRecordingStepSource.toRawIntervalsOrThrow).
+        // A successful sync first - this is the data a failed read must never wipe out or
+        // otherwise touch (see LocalRecordingStepSource.toRawIntervalsOrThrow).
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
         assertTrue(repository.syncNow() is SyncResult.Success)
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
@@ -275,8 +275,8 @@ class StepRepositoryTest {
         val result = laterRepository.syncNow()
 
         assertTrue(result is SyncResult.Failed)
-        // The reconciliation delete-then-upsert transaction must never have run for this failed
-        // read - the previously stored bucket is exactly as it was, not deleted and not replaced.
+        // The sync's upsert-and-classify transaction must never have run for this failed read -
+        // the previously stored bucket is exactly as it was, not touched or replaced.
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
         assertEquals(1, database.stepBucketDao().count())
         assertEquals(syncTimeAfterSuccess, settingsRepository.settings.first().lastSuccessfulSync)
@@ -284,8 +284,8 @@ class StepRepositoryTest {
 
     @Test
     fun `losing availability between the initial check and the actual read produces Unavailable, not a false empty success`() = runTest {
-        // A successful sync first - this is the data a mid-read availability loss must never wipe
-        // out via reconciliation deletion, and the timestamp it must never look like it refreshed.
+        // A successful sync first - this is the data a mid-read availability loss must never touch,
+        // and the timestamp it must never look like it refreshed.
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
         assertTrue(repository.syncNow() is SyncResult.Success)
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
@@ -309,8 +309,8 @@ class StepRepositoryTest {
 
         assertTrue("a mid-read availability loss must never look like a successful empty read", result !is SyncResult.Success)
         assertTrue(result is SyncResult.Unavailable)
-        // The reconciliation delete-then-upsert transaction (and the classifier replace nested in
-        // it) must never have run for this lost-mid-read case - the previously stored bucket is
+        // The sync's upsert-and-classify transaction (and the classifier replace nested in it)
+        // must never have run for this lost-mid-read case - the previously stored bucket is
         // exactly as it was.
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
         assertEquals(1, database.stepBucketDao().count())
@@ -448,28 +448,42 @@ class StepRepositoryTest {
     // ---- Manual override anchor reconciliation (reconcileOverrideAnchors) ----
 
     @Test
-    fun `an override survives when the first minute of its bout is later removed`() = runTest {
+    fun `an override survives unchanged when a later read appears to omit the first minute of its bout - the bucket is preserved, not deleted`() = runTest {
         for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         repository.syncNow()
         val original = repository.observeSessions().first().single()
         repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
         assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
 
-        // The source corrects itself: the very first minute of the bout no longer has any steps,
-        // shifting the recomputed bout's start one minute later - the same walking session, just
-        // missing its first minute.
+        // A later read simply doesn't return the very first minute of the bout again (e.g. it
+        // fell outside a renewed subscription's trailing window) - unlike the old envelope-based
+        // reconciliation, this must NOT be treated as proof that minute is now zero: see
+        // StepRepository.syncNowLocked's own doc comment on why a minute a read doesn't return a
+        // positive value for is never distinguishable from "genuinely zero" versus "simply outside
+        // what this read happened to cover". The originally stored first minute must survive
+        // untouched, so the bout's start never actually shifts and the override needs no
+        // reattachment at all - it is still exactly self-consistent at its original anchor. A
+        // well-separated, isolated minute further back (gap > the default maxGapMinutes=2) is also
+        // included in this same read to prove it forms its own session rather than merging in.
         fakeSource.clearIntervals()
+        fakeSource.addInterval(baseEpoch - 5 * 60L, baseEpoch - 5 * 60L + 60L, 10)
         for (i in 1 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         repository.syncNow()
 
         val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
+        assertEquals("the isolated minute forms its own separate session", 2, sessions.size)
+        val mainSession = sessions.single { it.startEpochSecond == baseEpoch }
         assertEquals(
-            "the override must follow the same session even though its start shifted",
+            "the override must still apply - the bout's start never actually moved",
             BoutClassification.INCIDENTAL,
-            sessions.single().classification,
+            mainSession.classification,
         )
-        assertEquals(baseEpoch + 60L, sessions.single().anchorEpochSecond)
+        assertEquals(baseEpoch, mainSession.anchorEpochSecond)
+        assertEquals(
+            "the first minute's originally imported value must survive untouched, not be deleted",
+            80L,
+            database.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }.steps,
+        )
     }
 
     @Test
@@ -491,23 +505,28 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `an override does not reattach to either half when its session ambiguously splits`() = runTest {
-        // One long 40-minute bout, clearly a workout.
-        for (i in 0 until 40) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+    fun `an override does not reattach to either half when a threshold change ambiguously splits its session`() = runTest {
+        // Two 10-minute active stretches separated by an internal 2-minute idle gap (minutes 10
+        // and 11 have no steps at all) - under the DEFAULT maxGapMinutes=2, idleMinutes(=2) <=2
+        // merges them into one 22-minute bout, clearly a workout.
+        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        for (i in 12 until 22) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         repository.syncNow()
         val original = repository.observeSessions().first().single()
+        assertEquals(baseEpoch, original.anchorEpochSecond)
         repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
 
-        // A correction removes the first two minutes AND a wide middle chunk, splitting it into
-        // two much shorter bouts - deliberately so NEITHER fragment starts where the original
-        // override's anchor did (that would be a coincidental exact-key match, not a test of
-        // reattachment logic at all). Neither fragment overlaps the original 40-minute interval by
-        // a strong majority, so neither is clearly "the same session" as the override's original
-        // bout.
-        fakeSource.clearIntervals()
-        for (i in 2 until 12) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        for (i in 30 until 40) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
+        // Unlike a source re-sync (which can no longer delete or shrink stored raw data - see
+        // StepRepository.syncNowLocked's own doc comment), a THRESHOLD change reclassifies the
+        // exact same, still fully-intact raw history. Lowering maxGapMinutes to 1 makes the same
+        // 2-minute internal gap exceed tolerance (idleMinutes(=2) <=1 is false), splitting the one
+        // 22-minute bout into two 10-minute fragments. Neither fragment overlaps the original
+        // 22-minute interval by the required strong majority (each covers only 10 of its 22
+        // minutes - under the 50% bar by a full, non-flaky 60-second margin), so neither is
+        // clearly "the same session" as the override's original bout - genuinely ambiguous, not a
+        // coincidental exact-key match.
+        val accepted = repository.applyThresholds(ClassificationThresholds.DEFAULT.copy(maxGapMinutes = 1))
+        assertTrue(accepted)
 
         val sessions = repository.observeSessions().first()
         assertEquals(2, sessions.size)
@@ -550,22 +569,24 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `an override is removed, not silently kept, when a split leaves the first fragment at the original start`() = runTest {
-        // One long 40-minute bout, clearly a workout.
-        for (i in 0 until 40) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+    fun `an override is removed, not silently kept, when a threshold-change split leaves the first fragment at the original start`() = runTest {
+        // Same 22-minute merged bout (two 10-minute active stretches around a 2-minute internal
+        // idle gap) as the ambiguous-split test above.
+        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+        for (i in 12 until 22) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         repository.syncNow()
         val original = repository.observeSessions().first().single()
         repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
 
-        // A correction removes ONLY a middle chunk - unlike the split test above, the first
-        // fragment here coincidentally keeps the EXACT original start. The old (pre-fix) code
-        // treated an unchanged exact anchor as automatically still valid and kept applying the
-        // override to this fragment, even though it now covers only a quarter of the original
-        // bout - the overlap check below proves this is NOT the same session anymore.
-        fakeSource.clearIntervals()
-        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        for (i in 30 until 40) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
+        // Lowering maxGapMinutes to 1 splits the bout into two 10-minute fragments - the FIRST
+        // fragment coincidentally keeps the EXACT original start (baseEpoch), even though (as
+        // proven in the test above) it now covers only 10 of the original 22 minutes. The old
+        // (pre-fix) code treated an unchanged exact anchor as automatically still valid and kept
+        // applying the override to this fragment; the overlap check must instead recognize this is
+        // NOT the same session and delete the now-stale override row entirely, rather than leaving
+        // it silently attached to an unrelated fragment.
+        val accepted = repository.applyThresholds(ClassificationThresholds.DEFAULT.copy(maxGapMinutes = 1))
+        assertTrue(accepted)
 
         val sessions = repository.observeSessions().first()
         assertEquals(2, sessions.size)
@@ -1484,17 +1505,92 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `a minute that disappears from a later read is removed rather than left stale`() = runTest {
+    fun `a minute absent from a later read that otherwise brackets it is preserved, not deleted - positive endpoints do not prove the interior is zero`() = runTest {
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
         repository.syncNow()
         assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
 
-        // The source corrects itself on the next read: that minute no longer has any steps at
-        // all (equivalent to it reporting zero, which the normalizer also treats as absent).
+        // The next read returns minutes bracketing baseEpoch on both sides, but not baseEpoch
+        // itself. The Local Recording API gives no coverage guarantee that would let two
+        // positively-returned minutes prove everything between them was actually checked and
+        // found zero - see StepRepository.syncNowLocked's own doc comment. The previously stored
+        // minute at baseEpoch must therefore survive completely untouched.
         fakeSource.clearIntervals()
+        fakeSource.addInterval(baseEpoch - 60, baseEpoch, 40)
+        fakeSource.addInterval(baseEpoch + 60, baseEpoch + 120, 40)
         repository.syncNow()
 
-        assertEquals(0, database.stepBucketDao().count())
+        val stored = database.stepBucketDao().getAllActive()
+        assertEquals(
+            "all three minutes must remain - the middle one is preserved, not deleted",
+            setOf(baseEpoch - 60, baseEpoch, baseEpoch + 60),
+            stored.map { it.startEpochSecond }.toSet(),
+        )
+        assertEquals(
+            "the middle minute keeps its originally imported value untouched",
+            50L,
+            stored.single { it.startEpochSecond == baseEpoch }.steps,
+        )
+        assertEquals(130L, stored.sumOf { it.steps })
+    }
+
+    @Test
+    fun `an entirely empty successful response does not delete existing buckets`() = runTest {
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
+        repository.syncNow()
+        assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+
+        // The next read genuinely returns nothing at all - e.g. a resubscription whose fresh
+        // window simply hasn't observed any steps yet. An entirely empty successful response is
+        // not evidence the whole requested window is genuinely zero, and must never be treated
+        // as license to delete previously stored history - see StepRepository.syncNowLocked's own
+        // doc comment on why this sync path never deletes at all.
+        fakeSource.clearIntervals()
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals(50L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+        assertEquals(1, database.stepBucketDao().count())
+    }
+
+    @Test
+    fun `a renewed subscription returning only trailing data does not delete earlier local history`() = runTest {
+        // Local history from days ago - e.g. from before a permission revoke/regrant or a
+        // subscription renewal - seeded directly into Room so the test isolates reconciliation
+        // behavior from how that history originally got there.
+        val oldEpoch = fixedNow.epochSecond - Duration.ofDays(5).seconds
+        database.stepBucketDao().upsertAll(
+            listOf(
+                StepBucketEntity(
+                    source = fakeSource.id,
+                    startEpochSecond = oldEpoch,
+                    endEpochSecond = oldEpoch + 60,
+                    steps = 30,
+                    zoneId = "UTC",
+                    localDate = Instant.ofEpochSecond(oldEpoch).atZone(ZoneOffset.UTC).toLocalDate().toString(),
+                    importedAtEpochSecond = oldEpoch,
+                ),
+            ),
+        )
+
+        // computeWindowStart derives the requested read window from that old bucket's own
+        // latestBucketEnd (still days in the past), so the repository nominally requests a
+        // multi-day window - but the source (like Local Recording immediately after a fresh
+        // subscription) can only really answer for a small trailing slice of it: one very
+        // recent minute.
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 20)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        val stored = database.stepBucketDao().getAllActive().associateBy { it.startEpochSecond }
+        assertEquals(
+            "the days-old bucket - outside what this read positively covered - must survive",
+            30L,
+            stored[oldEpoch]?.steps,
+        )
+        assertEquals(20L, stored[baseEpoch]?.steps)
+        assertEquals(2, stored.size)
     }
 
     @Test

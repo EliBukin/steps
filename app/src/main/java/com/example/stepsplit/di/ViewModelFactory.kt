@@ -16,6 +16,7 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         TodayViewModel::class.java -> TodayViewModel(
             container.stepRepository,
             container.settingsRepository,
+            container.stepSourceHealthStore,
             container.clock,
         )
 
@@ -30,6 +31,8 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         SettingsViewModel::class.java -> SettingsViewModel(
             container.settingsRepository,
             container.stepRepository,
+            container.stepSourceHealthStore,
+            container.deviceDiagnostics,
         )
 
         TripsViewModel::class.java -> TripsViewModel(container.tripRepository, container.clock)

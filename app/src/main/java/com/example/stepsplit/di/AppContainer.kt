@@ -1,15 +1,22 @@
 package com.example.stepsplit.di
 
 import android.content.Context
+import android.util.Log
+import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
+import com.example.stepsplit.data.stepsource.AsyncStepSourceHealthRecorder
 import com.example.stepsplit.data.stepsource.LocalRecordingStepSource
 import com.example.stepsplit.data.stepsource.StepSource
+import com.example.stepsplit.data.stepsource.StepSourceHealthSink
+import com.example.stepsplit.data.stepsource.StepSourceHealthStore
 import com.example.stepsplit.data.trip.FusedTripLocationClient
 import com.example.stepsplit.data.trip.TripLocationClient
 import com.example.stepsplit.data.trip.TripRecordingCoordinator
 import com.example.stepsplit.data.trip.TripRepository
+import com.example.stepsplit.debug.DeviceDiagnostics
+import com.example.stepsplit.debug.DeviceDiagnosticsSnapshot
 import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.sync.StepSyncWorkerFactory
 import java.time.Clock
@@ -32,7 +39,47 @@ class AppContainer(context: Context) {
 
     val settingsRepository: SettingsRepository = SettingsRepository(context)
 
-    val stepSource: StepSource = LocalRecordingStepSource(context)
+    // Diagnostics for production acquisition health (subscribe/read outcomes, whether any sample
+    // has ever been observed) - a concern separate from both StepSourceAvailability and
+    // SyncFailure, see StepSourceHealthStore's own doc comment. Held here (not just inside
+    // LocalRecordingStepSource) so the UI layer can observe it directly for the "waiting for first
+    // step data" state and the debug diagnostics panel.
+    val stepSourceHealthStore: StepSourceHealthStore = StepSourceHealthStore(context)
+
+    // Owns AsyncStepSourceHealthRecorder's single background consumer coroutine - process-lifetime,
+    // the same pattern as repositoryScope/tripRecordingScope below. Kept separate from those two:
+    // this scope's only job is draining diagnostic events, so a problem in either of the other
+    // subsystems can never starve or interfere with it, and vice versa.
+    private val healthEventScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // LocalRecordingStepSource must never await real diagnostic persistence directly on its own
+    // acquisition coroutine (a wedged DataStore write would then block gateway.subscribe()/readData()
+    // themselves) - see AsyncStepSourceHealthRecorder's own doc comment. stepSourceHealthStore
+    // above is still exposed directly (not through this wrapper) for the UI layer's own
+    // snapshot/clear() access, which has no such latency constraint.
+    private val asyncHealthRecorder: StepSourceHealthSink = AsyncStepSourceHealthRecorder(stepSourceHealthStore, healthEventScope)
+
+    val stepSource: StepSource = LocalRecordingStepSource(context, healthStore = asyncHealthRecorder, clock = clock)
+
+    /**
+     * Debug-only device/Play-services snapshot for the Settings debug panel - null in release
+     * builds (never collected there at all) and null if collection itself fails for any reason
+     * (PackageManager/SensorManager misbehaving is not this app's problem to crash over). Lazily
+     * computed on first access rather than eagerly here in the constructor: [AppContainer] is built
+     * synchronously on the main thread from [com.example.stepsplit.StepSplitApplication.onCreate],
+     * so anything computed unconditionally at this point sits directly on the app's cold-start path.
+     * Nothing touches this property until a debug build's Settings screen is actually opened
+     * (see `SettingsViewModel`), so app startup itself never pays for it at all.
+     */
+    val deviceDiagnostics: DeviceDiagnosticsSnapshot? by lazy {
+        if (!BuildConfig.DEBUG) return@lazy null
+        try {
+            DeviceDiagnostics.collect(context)
+        } catch (e: Exception) {
+            Log.d("AppContainer", "device diagnostics collection failed (ignored): ${e.message}")
+            null
+        }
+    }
 
     // Owns StepRepository's one-shot trailing-bout finalization timer (see
     // StepRepository.rescheduleFinalizationJob) - a plain SupervisorJob-backed scope, not a

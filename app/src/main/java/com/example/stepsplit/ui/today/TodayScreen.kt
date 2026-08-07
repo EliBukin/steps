@@ -15,10 +15,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.GoalProgress
+import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.ui.common.CollectionStatusBanner
 import com.example.stepsplit.ui.common.GoalProgressSection
 import com.example.stepsplit.ui.common.StatCard
 import com.example.stepsplit.ui.common.SyncFailureBanner
+import com.example.stepsplit.ui.common.WaitingForFirstSampleBanner
 import com.example.stepsplit.ui.common.formatSyncTime
 
 @Composable
@@ -36,6 +38,7 @@ fun TodayScreen(
     val items = buildList {
         add(TodayItem.Availability)
         if (uiState.syncFailure != null) add(TodayItem.SyncFailure)
+        if (uiState.collectionHealth == StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE) add(TodayItem.WaitingForFirstSample)
         add(TodayItem.Totals)
         add(TodayItem.DailyGoal)
         add(TodayItem.WeeklyGoal)
@@ -54,6 +57,8 @@ fun TodayScreen(
                 }
 
                 TodayItem.SyncFailure -> uiState.syncFailure?.let { failure -> SyncFailureBanner(failure) }
+
+                TodayItem.WaitingForFirstSample -> WaitingForFirstSampleBanner()
 
                 TodayItem.Totals -> TotalsSection(uiState)
                 TodayItem.DailyGoal -> GoalProgressSection(
@@ -75,7 +80,7 @@ fun TodayScreen(
     }
 }
 
-private enum class TodayItem { Availability, SyncFailure, Totals, DailyGoal, WeeklyGoal, LastSync }
+private enum class TodayItem { Availability, SyncFailure, WaitingForFirstSample, Totals, DailyGoal, WeeklyGoal, LastSync }
 
 @Composable
 private fun TotalsSection(uiState: TodayUiState) {

@@ -1,5 +1,6 @@
 package com.example.stepsplit.ui.settings
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,9 +28,12 @@ import androidx.compose.ui.unit.dp
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
+import com.example.stepsplit.data.stepsource.StepSourceHealthSnapshot
 import com.example.stepsplit.domain.classification.ClassificationThresholds
+import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.ui.common.statusText
 import com.example.stepsplit.ui.common.text
+import java.time.Instant
 
 @Composable
 fun SettingsScreen(
@@ -38,6 +42,7 @@ fun SettingsScreen(
     onSetThresholds: (ClassificationThresholds) -> Unit,
     onResetThresholds: () -> Unit,
     onGenerateSampleData: () -> Unit,
+    onRunStepSourceCheck: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Status, SettingsSection.Debug) }
@@ -53,7 +58,7 @@ fun SettingsScreen(
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)
                 SettingsSection.Advanced -> AdvancedThresholdsSection(uiState.thresholds, onSetThresholds, onResetThresholds)
                 SettingsSection.Status -> StatusSection(uiState)
-                SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(onGenerateSampleData)
+                SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
             }
         }
     }
@@ -190,30 +195,142 @@ private fun StatusSection(uiState: SettingsUiState) {
 
 /**
  * A recorded sync failure always wins - it means collection is *not* actually working right now,
- * regardless of what availability says. Only once there is no such failure does this fall back to
- * describing availability: "active" when available, or the same reason text the permission-status
- * line above shows when not (there is nothing more specific to say about collection health in
- * that case - the source itself isn't usable yet).
+ * regardless of what availability says. Only once there is no such failure does this describe
+ * [StepCollectionHealth] instead: never a claim that collection is active *right now* - see that
+ * enum's own doc comment for why the app genuinely cannot know that, only whether a sample has ever
+ * been observed at all.
  */
 @Composable
 private fun collectionStatusText(uiState: SettingsUiState): String {
     val failure = uiState.syncFailure
     if (failure != null) return failure.category.text()
     return when (uiState.availability) {
-        StepSourceAvailability.Available -> stringResource(R.string.status_available)
+        StepSourceAvailability.Available -> when (uiState.collectionHealth) {
+            // A successful sync/read is not by itself proof of working collection - see
+            // StepCollectionHealth's own doc comment. Must never claim "active"; only ever
+            // "waiting" (nothing observed yet) or "has been observed" (historical evidence, not a
+            // claim about this exact moment).
+            StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE -> stringResource(R.string.status_waiting_for_first_sample)
+            else -> stringResource(R.string.status_sample_observed)
+        }
+
         null -> stringResource(R.string.status_unknown)
         else -> uiState.availability.statusText()
     }
 }
 
 @Composable
-private fun DebugSection(onGenerateSampleData: () -> Unit) {
+private fun DebugSection(
+    uiState: SettingsUiState,
+    onGenerateSampleData: () -> Unit,
+    onRunStepSourceCheck: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.settings_debug_section_title), style = MaterialTheme.typography.titleSmall)
             OutlinedButton(onClick = onGenerateSampleData) {
                 Text(stringResource(R.string.settings_debug_seed_action))
             }
+
+            DebugDiagnosticsSection(uiState, onRunStepSourceCheck)
         }
     }
+}
+
+/**
+ * Debug-only production acquisition diagnostics - never shown outside debug builds (guarded by the
+ * caller, [DebugSection]). Reads directly from [SettingsUiState.healthSnapshot]
+ * ([com.example.stepsplit.data.stepsource.StepSourceHealthStore]'s persisted state), which is
+ * populated exclusively by the real subscribe/read code path in
+ * [com.example.stepsplit.data.stepsource.LocalRecordingStepSource] - "Run step source check" below
+ * re-runs that exact same path (via [com.example.stepsplit.data.repository.StepRepository.syncNow])
+ * rather than a separate diagnostic-only acquisition attempt, so this can never show a healthier
+ * picture than what production sync itself actually does.
+ */
+@Composable
+private fun DebugDiagnosticsSection(uiState: SettingsUiState, onRunStepSourceCheck: () -> Unit) {
+    val health = uiState.healthSnapshot
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            stringResource(R.string.settings_debug_diagnostics_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        DebugDiagnosticRow(R.string.settings_debug_label_package, "${BuildConfig.APPLICATION_ID} (${BuildConfig.BUILD_TYPE})")
+        DebugDiagnosticRow(R.string.settings_debug_label_permission, uiState.availability?.statusText() ?: stringResource(R.string.status_unknown))
+        DebugDiagnosticRow(R.string.settings_debug_label_subscription, debugSubscriptionText(health))
+        DebugDiagnosticRow(R.string.settings_debug_label_read_attempt, debugTimestampText(health.latestReadAttemptEpochSecond))
+        DebugDiagnosticRow(R.string.settings_debug_label_requested_window, debugWindowText(health))
+        DebugDiagnosticRow(R.string.settings_debug_label_read_success, debugTimestampText(health.latestSuccessfulReadEpochSecond))
+        DebugDiagnosticRow(R.string.settings_debug_label_read_failure, debugReadFailureText(health))
+        DebugDiagnosticRow(R.string.settings_debug_label_ever_observed, health.everObservedSample.toString())
+        DebugDiagnosticRow(R.string.settings_debug_label_latest_sample, debugTimestampText(health.latestSampleEpochSecond))
+        DebugDiagnosticRow(R.string.settings_debug_label_interval_count, health.latestReadIntervalCount?.toString() ?: "-")
+        DebugDiagnosticRow(R.string.settings_debug_label_consecutive_empty, health.consecutiveEmptyReads.toString())
+        DebugDiagnosticRow(R.string.settings_debug_label_stored_buckets, uiState.storedBucketCount?.toString() ?: "-")
+        uiState.debugStepSourceCheckResult?.let { DebugDiagnosticRow(R.string.settings_debug_label_check_result, it) }
+        OutlinedButton(onClick = onRunStepSourceCheck, modifier = Modifier.padding(top = 4.dp)) {
+            Text(stringResource(R.string.settings_debug_run_check_action))
+        }
+
+        uiState.deviceDiagnostics?.let { device ->
+            Text(
+                stringResource(R.string.settings_debug_environment_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            DebugDiagnosticRow(R.string.settings_debug_label_device, "${device.manufacturer} ${device.model}")
+            DebugDiagnosticRow(R.string.settings_debug_label_android_version, "${device.androidRelease} (API ${device.androidSdkInt})")
+            DebugDiagnosticRow(
+                R.string.settings_debug_label_play_services_version,
+                "${device.playServicesInstalledVersionName ?: "?"} (${device.playServicesInstalledVersionCode ?: "?"}) / ${device.playServicesRequiredMinVersionCode}",
+            )
+            DebugDiagnosticRow(
+                R.string.settings_debug_label_step_sensors,
+                "${device.hasStepCounterSensor} / ${device.hasStepDetectorSensor}",
+            )
+        }
+    }
+}
+
+/** "-" when no read has ever been attempted; otherwise the `[start, end)` window the most recent attempt actually requested - debug-only, see [StepSourceHealthSnapshot.latestRequestedWindowStartEpochSecond]. */
+@Composable
+private fun debugWindowText(health: StepSourceHealthSnapshot): String {
+    val start = health.latestRequestedWindowStartEpochSecond
+    val end = health.latestRequestedWindowEndEpochSecond
+    if (start == null || end == null) return "-"
+    return "[${debugTimestampText(start)}, ${debugTimestampText(end)})"
+}
+
+@Composable
+private fun debugSubscriptionText(health: StepSourceHealthSnapshot): String {
+    val at = debugTimestampText(health.latestSubscriptionAtEpochSecond)
+    return when (health.latestSubscriptionSucceeded) {
+        true -> "OK @ $at"
+        false -> "FAILED (${health.latestSubscriptionFailureCategory}, code=${health.latestSubscriptionFailureStatusCode}) @ $at"
+        null -> "-"
+    }
+}
+
+private fun debugTimestampText(epochSecond: Long?): String = epochSecond?.let { Instant.ofEpochSecond(it).toString() } ?: "-"
+
+/**
+ * "-" when no read has ever failed; otherwise the *last read failure ever recorded*, regardless of
+ * whether a later read has since succeeded (see [StepSourceHealthStore.recordReadFailure]'s own
+ * "last failure ever" doc comment) - a real-device investigation needs to see this even after
+ * things start working again.
+ */
+@Composable
+private fun debugReadFailureText(health: StepSourceHealthSnapshot): String {
+    val category = health.latestReadFailureCategory ?: return "-"
+    val at = debugTimestampText(health.latestReadFailureAtEpochSecond)
+    return "$category (code=${health.latestReadFailureStatusCode}) @ $at"
+}
+
+@Composable
+private fun DebugDiagnosticRow(@StringRes labelRes: Int, value: String) {
+    Text(
+        text = "${stringResource(labelRes)}: $value",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }

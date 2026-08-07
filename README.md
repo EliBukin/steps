@@ -69,9 +69,9 @@ account-based Google Fit API (`Fitness.getRecordingClient`, Google Sign-In, Hist
   normalizing into one-minute buckets. The response's own `Status` is checked before any bucket is
   processed (`toRawIntervalsOrThrow()` in the same file): a completed `Task` does not by itself
   mean the read succeeded, and treating a non-success status as "zero buckets" would let
-  `StepRepository` delete previously stored data in its reconciliation window based on that false
-  emptiness. A non-success status throws `StepSourceReadException` instead, which surfaces as an
-  ordinary failed sync - see "Synchronization health" below.
+  `StepRepository` wrongly record this as a genuinely successful, empty sync instead of the read
+  failure it actually was. A non-success status throws `StepSourceReadException` instead, which
+  surfaces as an ordinary failed sync - see "Synchronization health" below.
 - `StepSource` is a small interface (`data/stepsource/StepSource.kt`) so a future Health Connect
   or sensor-based provider could be added without touching classification, aggregation, or UI.
   `FakeStepSource` is the interface's other implementation, used by unit tests and the debug-only
@@ -89,9 +89,40 @@ re-requesting the full history every time. Data older than what the API still re
 launch can never be recovered - this is an inherent, documented limitation of the platform API,
 not a bug.
 
+### Sync never deletes raw buckets - only upserts
+
+`StepRepository.syncNowLocked()` reconciles raw buckets by upserting exactly what a read actually
+returned (`OnConflictStrategy.REPLACE` on the unique `(source, startEpochSecond)` index) - it never
+deletes a previously stored bucket on this path. An earlier version tried to bound a
+delete-by-envelope reconciliation to the exact minute-range a read's own positive results spanned,
+on the theory that two positively-returned minutes prove everything between them is confirmed zero.
+That assumption doesn't hold: the Local Recording API documents no per-minute coverage guarantee,
+and a zero-step `DataPoint` is filtered out identically to a minute the read simply never mentions
+(see `toRawIntervalsOrThrow`) - there is no signal available to tell "checked and genuinely zero"
+apart from "outside what this particular read happened to cover".
+
+This matters because Local Recording data is only available from the *latest* subscription -
+permission loss removes registration, and a revoke/regrant or a renewed subscription can make a
+read nominally span days while the source can only really answer for a small trailing slice of it.
+Deleting anything - across the full requested window, or even just the read's own positive
+envelope - risks treating an un-answerable gap as "confirmed empty" and wiping out valid older
+local history the source simply never spoke to. Preserving existing history is strictly safer than
+a speculative correction-to-zero; a stored minute can only ever be corrected by a later *positive*
+value for that exact minute, never removed outright. Should a future `StepSource` ever provide an
+explicit, trustworthy per-minute coverage signal, a narrowly scoped deletion path could reconsider
+this - none does today.
+
 ## Required permissions
 
-- `android.permission.ACTIVITY_RECOGNITION` - automatic step tracking. Requested at first launch.
+- `android.permission.ACTIVITY_RECOGNITION` - automatic step tracking. **Not** requested
+  automatically at first launch: the Today screen shows a "grant permission" banner
+  ([CollectionStatusBanner](app/src/main/java/com/example/stepsplit/ui/common/CollectionStatusBanner.kt))
+  the moment it notices the permission is missing (which does happen right away on first launch,
+  since the screen refreshes on every resume), but the system permission dialog itself only appears
+  when the user taps that banner's button
+  ([MainActivity.requestActivityRecognitionPermission](app/src/main/java/com/example/stepsplit/ui/MainActivity.kt)).
+  Once granted, the app immediately re-checks availability and attempts a subscription/sync rather
+  than waiting for the next incidental resume.
 - `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION`, `FOREGROUND_SERVICE`,
   `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS` - Trip Route Recording only. Requested only
   when you tap "Start trip", never at app launch and never just from opening the Trips tab. See
@@ -257,6 +288,69 @@ still fail for other reasons, and the UI never conflates the two:
   none) instead of just echoing the same availability text under both headings.
 - `StepSyncWorker`'s retry behavior is unchanged: any `SyncResult.Failed` (whatever its category)
   still requests `Result.retry()`, so WorkManager keeps retrying transient failures with backoff.
+
+### Acquisition health: telling "never observed a step" apart from "has been observed, historically"
+
+`StepSourceAvailability` (permission/API presence) and `SyncFailure` (the last sync attempt's
+outcome) are not, even together, enough to know whether step collection is *actually working* - a
+successful sync that reads zero raw intervals looks identical, under both, to a genuinely healthy
+one that just hasn't seen a step yet. Before this was fixed, that gap let the Today/Settings screens
+say "Step collection is active" the moment the source was available and no sync had failed, even if
+the app had never observed a single real step - which is indistinguishable, from the outside, from
+the acquisition path being silently broken.
+
+Two additions close this gap without touching the sync/reconciliation pipeline itself:
+
+- **`StepSourceHealthStore`** (`data/stepsource/StepSourceHealthStore.kt`) - a small, separate
+  Preferences DataStore persisting what `LocalRecordingStepSource` itself actually observed on every
+  subscribe/read attempt: the latest subscription outcome (success, or a sanitized
+  `ApiFailureCategory` + real Google status code - see `ApiFailure.kt`), the latest read attempt
+  (including the exact `[windowStart, windowEnd)` it requested) and latest *successful* read
+  timestamps, the latest read's raw interval count, whether *any* positive sample has ever been
+  observed (monotonic - never reset back to false), the latest sample's timestamp, and the number of
+  consecutive successful-but-empty reads. Every subscribe/read call goes through
+  `LocalRecordingGateway` (a narrow seam around the two actual GMS calls), so this can be exercised
+  in unit tests with a fake gateway - no live Play Services connection needed. Recording a health
+  outcome is always best-effort (`LocalRecordingStepSource.recordSafely`): every write is wrapped so
+  a `CancellationException` still propagates but any other failure is logged and ignored, never
+  allowed to turn a real subscribe/read success into a reported failure, discard already-parsed step
+  data, or block the underlying GMS call from being attempted in the first place.
+- **`StepCollectionHealth`** (`domain/model/StepCollectionHealth.kt`) - a pure function combining
+  availability, the current `SyncFailure`, and `everObservedSample` into five explicit states:
+  `UNAVAILABLE`, `SUBSCRIPTION_FAILED`, `WAITING_FOR_FIRST_SAMPLE`, `SAMPLE_OBSERVED`, `READ_FAILED`.
+  The Today screen shows an explicit "Waiting for first step data" banner
+  (`WaitingForFirstSampleBanner`) for the `WAITING_FOR_FIRST_SAMPLE` state instead of showing
+  nothing (which reads as "must be fine"); Settings' "Data collection status" does the same, and once
+  a sample has been observed shows "Step data has been observed" rather than "active" -
+  `SAMPLE_OBSERVED` is historical evidence only and is never presented as a claim that collection is
+  working *at this exact moment*: the API is a passive background subscription with no way to ask it
+  "are you working right now", so an arbitrarily long run of subsequent empty reads deliberately
+  never downgrades this back to `WAITING_FOR_FIRST_SAMPLE` or invents a separate "stale" state - the
+  app genuinely cannot tell "the user hasn't walked yet" apart from "acquisition silently broke after
+  working once".
+
+`ApiFailureCategory` mapping (`ApiFailure.kt`) is cross-checked against `LocalRecordingClient`'s own
+documented `@Throws` table for `subscribe`/`readData`, not just each status constant's generic
+description - two corrections that caught: `FitnessStatusCodes.API_EXCEPTION` only means "no valid
+subscription found" when it comes from a *read* (`readData`'s own documented Throws entry);
+`subscribe`'s Throws table never documents it, so a subscribe-side `API_EXCEPTION` maps to a generic
+failure instead. `FitnessStatusCodes.EQUIVALENT_SESSION_ENDED` is about the unrelated, older
+session-based Recording API and never appears in `LocalRecordingClient`'s own docs, so it is no
+longer treated as a Local Recording subscription failure. `ConnectionResult.API_UNAVAILABLE` (16) -
+documented as "the calling package is not allowed to use the Recording API on mobile" - is now
+mapped explicitly, and `FitnessStatusCodes.DATA_SOURCE_NOT_FOUND` ("no local datasource available to
+subscribe") is its own category, distinct from "this data type isn't allowed for this API call".
+
+A debug-only "Step source diagnostics" panel and "Run step source check" button are available in
+Settings (`BuildConfig.DEBUG` only) - the button re-invokes `StepRepository.syncNow()` (the exact
+production sync path, not a second acquisition mechanism). The panel shows the health snapshot above
+(including the last requested read window), the app's package ID/build variant, the production
+source's stored bucket count specifically (`StepBucketDao.countBySource` - never counting rows the
+debug sample-data seeder wrote under its own, different source id), and a device/environment
+snapshot (`debug/DeviceDiagnostics.kt`: Android version, manufacturer/model, installed vs. required
+Google Play services version, and whether the device exposes `TYPE_STEP_COUNTER`/`TYPE_STEP_DETECTOR`
+sensors at all). `LocalRecordingStepSource` also emits structured `Log.d` diagnostics on every
+subscribe/read attempt, gated the same way.
 
 ## Trip Route Recording (manual GPS trips)
 

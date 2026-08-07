@@ -23,6 +23,8 @@
     <string name="status_api_unavailable">מעקב הצעדים אינו זמין במכשיר זה</string>
     <string name="status_error">אירעה שגיאה באיסוף נתוני הצעדים: %1$s</string>
     <string name="status_available">איסוף הצעדים פעיל</string>
+    <string name="status_waiting_for_first_sample">ממתין לנתוני הצעדים הראשונים</string>
+    <string name="status_sample_observed">נצפו נתוני צעדים</string>
     <string name="status_unknown">בודק את מצב איסוף הנתונים…</string>
 
     <string name="sync_failure_subscription_message">הצעדים אינם מסתנכרנים: המנוי לנתוני הצעדים נכשל. ננסה שוב באופן אוטומטי.</string>
@@ -73,6 +75,26 @@
     <string name="settings_data_collection_status_title">סטטוס איסוף נתונים</string>
     <string name="settings_debug_section_title">כלי פיתוח (Debug בלבד)</string>
     <string name="settings_debug_seed_action">יצירת נתוני דוגמה</string>
+    <string name="settings_debug_diagnostics_title">אבחון מקור הצעדים</string>
+    <string name="settings_debug_run_check_action">הרצת בדיקת מקור צעדים</string>
+    <string name="settings_debug_label_package">חבילה / גרסה</string>
+    <string name="settings_debug_label_permission">סטטוס הרשאה</string>
+    <string name="settings_debug_label_subscription">ניסיון המנוי האחרון</string>
+    <string name="settings_debug_label_read_attempt">ניסיון הקריאה האחרון</string>
+    <string name="settings_debug_label_read_success">קריאה מוצלחת אחרונה</string>
+    <string name="settings_debug_label_read_failure">כשל הקריאה האחרון</string>
+    <string name="settings_debug_label_ever_observed">האם אי פעם נצפה צעד</string>
+    <string name="settings_debug_label_latest_sample">זמן הדגימה האחרונה</string>
+    <string name="settings_debug_label_interval_count">מספר קטעים בקריאה האחרונה</string>
+    <string name="settings_debug_label_consecutive_empty">קריאות ריקות רצופות</string>
+    <string name="settings_debug_label_stored_buckets">קטעי צעדים גולמיים מאוחסנים</string>
+    <string name="settings_debug_label_check_result">תוצאת הבדיקה האחרונה</string>
+    <string name="settings_debug_label_requested_window">חלון הקריאה המבוקש האחרון</string>
+    <string name="settings_debug_environment_title">סביבת המכשיר</string>
+    <string name="settings_debug_label_device">מכשיר</string>
+    <string name="settings_debug_label_android_version">גרסת אנדרואיד</string>
+    <string name="settings_debug_label_play_services_version">Play Services (מותקנת / נדרשת)</string>
+    <string name="settings_debug_label_step_sensors">חיישני צעדים (מונה / מזהה)</string>
 
     <string name="unit_steps">צעדים</string>
     <string name="cadence_unit_format">%1$.0f צעדים לדקה</string>

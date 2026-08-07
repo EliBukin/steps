@@ -29,16 +29,12 @@ interface StepBucketDao {
     @Query("SELECT * FROM step_buckets WHERE source = :source AND startEpochSecond >= :fromInclusive")
     suspend fun getFrom(source: String, fromInclusive: Long): List<StepBucketEntity>
 
-    /**
-     * Deletes rows for minutes the read window fully covers, so a minute the source no longer
-     * reports (corrected to zero, or simply omitted) doesn't leave a stale row behind. The caller
-     * is responsible for excluding the current, possibly still-in-progress minute from this range.
-     */
-    @Query("DELETE FROM step_buckets WHERE source = :source AND startEpochSecond >= :fromInclusive AND startEpochSecond < :toExclusive")
-    suspend fun deleteInRange(source: String, fromInclusive: Long, toExclusive: Long)
-
     @Query("SELECT COUNT(*) FROM step_buckets")
     suspend fun count(): Int
+
+    /** Row count for one specific source - see StepRepository.debugStoredBucketCount's own doc comment for why this must not be conflated with [count]'s all-sources total. */
+    @Query("SELECT COUNT(*) FROM step_buckets WHERE source = :source")
+    suspend fun countBySource(source: String): Int
 
     @Query("DELETE FROM step_buckets")
     suspend fun clearAll()

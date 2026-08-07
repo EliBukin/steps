@@ -42,9 +42,9 @@ interface StepSource {
      * etc.) or mid-read. Implementations MUST throw [StepSourceUnavailableException] instead of
      * silently returning an empty list when they detect this - never let a "we can no longer trust
      * this window contains no steps" outcome look identical to "this window genuinely has no
-     * steps", or a caller like [com.example.stepsplit.data.repository.StepRepository] could treat
-     * a lost source as a successful empty read and delete previously stored data during its own
-     * reconciliation.
+     * steps", or a caller like [com.example.stepsplit.data.repository.StepRepository] could
+     * wrongly record a lost source as a successful, genuinely-empty sync - masking the real
+     * unavailability behind what looks like ordinary "nothing happened" collection health.
      */
     suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval>
 }

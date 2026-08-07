@@ -2,6 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      Android 11+ package visibility: without this, PackageManager.getPackageInfo("com.google.android.gms", ...)
+      in the debug-only DeviceDiagnostics panel (see debug/DeviceDiagnostics.kt) would throw
+      NameNotFoundException even when Play services is actually installed, since the target API 36
+      manifest opts this app into the filtered-visibility behavior by default. Narrowly scoped to
+      the one package this app actually queries - never QUERY_ALL_PACKAGES, which requires a
+      separate Play Store policy declaration/review this app has no need for.
+    -->
+    <queries>
+        <package android:name="com.google.android.gms" />
+    </queries>
+
     <!-- Required to subscribe to and read on-device step data via the Recording API. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 

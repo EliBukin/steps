@@ -110,21 +110,34 @@ class StepRepository(
 
             val rawIntervals = stepSource.readSteps(windowStart, now)
 
-            val reconcileStart = alignToMinute(windowStart.epochSecond)
-            // The minute containing "now" may still be in progress, so it is upserted like any
-            // other minute below but never reconciled-by-deletion purely for being absent - a
-            // partial read of it isn't proof it's actually zero yet.
-            val reconcileEndExclusive = alignToMinute(now.epochSecond)
-
+            // Wide on purpose - only used to look up each touched minute's PRIOR zoneId/localDate
+            // (see normalizeToEntities) so a re-import never lets a later timezone change
+            // retroactively move a past minute to a different calendar day. Reading a superset is
+            // harmless.
             val existingByMinute = database.stepBucketDao()
-                .getFrom(stepSource.id, reconcileStart)
+                .getFrom(stepSource.id, alignToMinute(windowStart.epochSecond))
                 .associateBy { it.startEpochSecond }
 
             val bucketEntities = normalizeToEntities(rawIntervals, stepSource.id, zone, now, existingByMinute)
 
-            // The raw-bucket reconciliation and the classifier's derived walk_bouts replacement
+            // Deliberately upsert-only - this sync path never deletes a previously stored bucket.
+            // An earlier version bounded a delete-by-envelope reconciliation to exactly the
+            // minute-range this read's own positive results spanned, on the assumption that two
+            // positively-returned minutes prove everything between them is confirmed zero. The
+            // Local Recording API documentation makes no such coverage guarantee: a minute this
+            // read doesn't return a positive value for cannot be told apart from "genuinely zero"
+            // versus "simply outside what this particular read happened to cover" (see
+            // toRawIntervalsOrThrow - a zero-step DataPoint is filtered out identically to one that
+            // was never returned at all, so there is no signal here to distinguish the two). Absent
+            // an explicit, trustworthy per-minute coverage signal from the source (which no current
+            // StepSource implementation provides), preserving existing history is strictly safer
+            // than a speculative correction-to-zero. A previously stored bucket can therefore only
+            // ever be corrected by a later positive value for that exact minute (via
+            // OnConflictStrategy.REPLACE in upsertAll), never removed outright by this sync path.
+            //
+            // The raw-bucket upsert and the classifier's derived walk_bouts replacement
             // (recomputeClassificationWithinTransaction, called from inside this same block) must
-            // commit as one atomic unit. Room's withTransaction is reentrant within the same
+            // still commit as one atomic unit. Room's withTransaction is reentrant within the same
             // coroutine - a nested call reuses the already-open transaction instead of starting a
             // second one - so nesting them here means either both commit together, or (if
             // recomputeClassificationWithinTransaction throws, or this coroutine is cancelled
@@ -147,7 +160,6 @@ class StepRepository(
             // below only runs once this whole block has returned, i.e. only after Room has
             // actually committed.
             val recomputeResult = database.withTransaction {
-                database.stepBucketDao().deleteInRange(stepSource.id, reconcileStart, reconcileEndExclusive)
                 database.stepBucketDao().upsertAll(bucketEntities)
                 recomputeClassificationWithinTransaction()
             }
@@ -524,6 +536,15 @@ class StepRepository(
             recomputeClassification()
         }
     }
+
+    /**
+     * Debug-only: raw bucket row count for the real, production [stepSource] specifically - never
+     * including rows written by the debug sample-data seeder
+     * ([com.example.stepsplit.debug.DebugDataSeeder], which imports under its own, different
+     * source id) - see the Settings debug diagnostics panel. Mixing the two in would let seeded
+     * sample data masquerade as evidence of real production acquisition.
+     */
+    suspend fun debugStoredBucketCount(): Int = database.stepBucketDao().countBySource(stepSource.id)
 
     // ---- UI-facing reads ----
 
