@@ -11,6 +11,12 @@ import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketDao
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
 import com.example.stepsplit.data.local.manualwalk.ManualWalkEntity
+import com.example.stepsplit.data.local.motion.ActivityIntervalDao
+import com.example.stepsplit.data.local.motion.ActivityIntervalEntity
+import com.example.stepsplit.data.local.motion.MotionEvidenceDao
+import com.example.stepsplit.data.local.motion.MotionEvidenceEntity
+import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
+import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
 import com.example.stepsplit.data.local.override.SessionOverrideDao
 import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.local.trip.TripDao
@@ -40,8 +46,11 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         ManualWalkEntity::class,
         TripEntity::class,
         TripPointEntity::class,
+        ActivityIntervalEntity::class,
+        TemporalContinuityStateEntity::class,
+        MotionEvidenceEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -50,6 +59,9 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun sessionOverrideDao(): SessionOverrideDao
     abstract fun tripDao(): TripDao
     abstract fun tripPointDao(): TripPointDao
+    abstract fun activityIntervalDao(): ActivityIntervalDao
+    abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
+    abstract fun motionEvidenceDao(): MotionEvidenceDao
 
     companion object {
         private const val DATABASE_NAME = "stepsplit.db"
@@ -107,8 +119,89 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 -> v4: strict vehicle-aware step validation. Purely additive - every existing
+         * `step_buckets` row survives untouched apart from the new columns, which SQLite's
+         * `ALTER TABLE ... ADD COLUMN ... DEFAULT` applies to every existing row at ALTER time
+         * (the same mechanic [MIGRATION_1_2] already relies on for `autoCompleted`). Every
+         * pre-existing row becomes `validationState = 'LEGACY_UNVERIFIED'` - it predates motion
+         * evidence collection and cannot honestly be called vehicle-verified, but its raw [steps]
+         * value is preserved exactly, permanently, never deleted or reset (see
+         * [com.example.stepsplit.data.local.bucket.StepBucketDao.observeLegacyAggregate]). No
+         * existing table (`walk_bouts`, `session_overrides`, `trips`, `trip_points`, `manual_walks`)
+         * is touched at all.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN validationState TEXT NOT NULL DEFAULT 'LEGACY_UNVERIFIED'")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN acceptedSteps INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN rejectionReason TEXT")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN policyVersion INTEGER")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN validatedAtEpochSecond INTEGER")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN observationStartEpochSecond INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE step_buckets ADD COLUMN observationEndEpochSecond INTEGER NOT NULL DEFAULT 0")
+                // ALTER...DEFAULT cannot express "copy from another column" - backfill the
+                // observation span from each row's own existing minute bounds explicitly.
+                db.execSQL(
+                    "UPDATE step_buckets SET observationStartEpochSecond = startEpochSecond, " +
+                        "observationEndEpochSecond = endEpochSecond",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_step_buckets_source_validationState` " +
+                        "ON `step_buckets` (`source`, `validationState`)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `activity_intervals` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`activityType` TEXT NOT NULL, " +
+                        "`startWallClockEpochMilli` INTEGER NOT NULL, " +
+                        "`endWallClockEpochMilli` INTEGER, " +
+                        "`temporalContinuityEpoch` INTEGER NOT NULL, " +
+                        "`closedReason` TEXT NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_activity_intervals_activityType_endWallClockEpochMilli` " +
+                        "ON `activity_intervals` (`activityType`, `endWallClockEpochMilli`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_activity_intervals_activityType_startWallClockEpochMilli` " +
+                        "ON `activity_intervals` (`activityType`, `startWallClockEpochMilli`)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `temporal_continuity_state` (" +
+                        "`id` INTEGER PRIMARY KEY NOT NULL, " +
+                        "`bootSessionId` INTEGER NOT NULL, " +
+                        "`bootEpochOffsetMillis` INTEGER NOT NULL, " +
+                        "`temporalContinuityEpoch` INTEGER NOT NULL)",
+                )
+
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `motion_evidence` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`activityType` TEXT NOT NULL, " +
+                        "`confidence` INTEGER, " +
+                        "`eventElapsedRealtimeMillis` INTEGER NOT NULL, " +
+                        "`bootSessionId` INTEGER NOT NULL, " +
+                        "`derivedWallClockEpochMilli` INTEGER NOT NULL, " +
+                        "`temporalContinuityEpoch` INTEGER NOT NULL, " +
+                        "`receivedAtEpochMilli` INTEGER NOT NULL, " +
+                        "`dedupeKey` TEXT NOT NULL, " +
+                        "`batchId` TEXT)",
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_motion_evidence_dedupeKey` ON `motion_evidence` (`dedupeKey`)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_motion_evidence_derivedWallClockEpochMilli` " +
+                        "ON `motion_evidence` (`derivedWallClockEpochMilli`)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_motion_evidence_bootSessionId` ON `motion_evidence` (`bootSessionId`)")
+            }
+        }
+
         /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3)
+        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

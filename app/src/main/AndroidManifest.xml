@@ -14,8 +14,14 @@
         <package android:name="com.google.android.gms" />
     </queries>
 
-    <!-- Required to subscribe to and read on-device step data via the Recording API. -->
+    <!-- Required to subscribe to and read on-device step data via the Recording API, and to
+         register the Activity Recognition Transition/Sampling APIs for strict step validation. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <!-- Lets BootAndUpdateReceiver restore motion-evidence registration after a device reboot -
+         see that receiver's own doc comment. No location/background-location permission is added
+         anywhere in this feature. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!--
       Trip Route Recording (see TripRecordingService): requested only when the user taps "Start
@@ -64,6 +70,30 @@
             android:name=".trip.service.TripRecordingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!--
+          Strict step validation: motion evidence acquisition (see data/motion package). Never
+          tied to any Activity's lifecycle - registered once via MotionEvidenceRegistrar and kept
+          receiving broadcasts while the UI is fully closed.
+        -->
+        <receiver
+            android:name=".data.motion.MotionEvidenceReceiver"
+            android:exported="false" />
+
+        <!--
+          Restores motion-evidence registration after a reboot or app update - exported="true" is
+          required for these OS-originated broadcasts to ever reach it. There is no other boot
+          receiver anywhere in this manifest (the GPS trip feature deliberately has none - see
+          TripRecordingService's own doc comment).
+        -->
+        <receiver
+            android:name=".data.motion.BootAndUpdateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!--
           WorkManager's default on-demand initialization is replaced with an explicit

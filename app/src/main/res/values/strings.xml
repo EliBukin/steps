@@ -28,6 +28,10 @@
     <string name="status_sample_observed">נצפו נתוני צעדים</string>
     <string name="status_unknown">בודק את מצב איסוף הנתונים…</string>
 
+    <string name="validation_checking_recent_steps">בודקים צעדים אחרונים…</string>
+    <string name="validation_accuracy_unavailable_title">אימות דיוק הצעדים אינו זמין כרגע</string>
+    <string name="validation_accuracy_unavailable_message">לא ניתן לאמת שהצעדים האחרונים בוצעו בהליכה ולא ברכב. הצעדים לא ייספרו עד שהאימות יחזור לפעול.</string>
+
     <string name="sync_failure_subscription_message">הצעדים אינם מסתנכרנים: המנוי לנתוני הצעדים נכשל. ננסה שוב באופן אוטומטי.</string>
     <string name="sync_failure_read_message">הצעדים אינם מסתנכרנים: הניסיון האחרון לקרוא את נתוני הצעדים נכשל. ננסה שוב באופן אוטומטי.</string>
     <string name="sync_failure_unknown_message">הצעדים אינם מסתנכרנים עקב שגיאה בלתי צפויה. ננסה שוב באופן אוטומטי.</string>
@@ -96,6 +100,13 @@
     <string name="settings_debug_label_android_version">גרסת אנדרואיד</string>
     <string name="settings_debug_label_play_services_version">Play Services (מותקנת / נדרשת)</string>
     <string name="settings_debug_label_step_sensors">חיישני צעדים (מונה / מזהה)</string>
+    <string name="settings_debug_validation_title">אבחון אימות צעדים מול רכב</string>
+    <string name="settings_debug_label_policy_version">גרסת מדיניות אימות</string>
+    <string name="settings_debug_label_transition_registration">רישום Transition API</string>
+    <string name="settings_debug_label_sampling_registration">רישום Sampling API</string>
+    <string name="settings_debug_label_last_validation">אימות מוצלח אחרון</string>
+    <string name="settings_debug_label_validation_counts">מספר קטעים לפי סטטוס אימות</string>
+    <string name="settings_debug_recent_events_title">אירועי תנועה אחרונים</string>
 
     <string name="unit_steps">צעדים</string>
     <string name="cadence_unit_format">%1$.0f צעדים לדקה</string>
@@ -186,4 +197,7 @@
     <string name="stats_zero_state_message">עדיין אין נתוני צעדים. התחילו ללכת כדי לראות כאן את הסטטיסטיקה לכל הזמנים שלכם.</string>
     <string name="stats_encouragement_label">כל הכבוד, המשיכו כך!</string>
     <string name="stats_next_marathon_format">עוד %1$,.1f ק״מ ותשלימו מרתון נוסף</string>
+    <string name="stats_legacy_title">צעדים שנרשמו קודם לכן (לא אומתו מול נסיעה ברכב)</string>
+    <string name="stats_legacy_distance_format">מרחק משוער: %1$,.1f ק״מ</string>
+    <string name="stats_legacy_note">נתונים אלו נאספו לפני שהאפליקציה החלה לאמת צעדים מול זיהוי רכב, ולכן אינם נכללים בסך הצעדים המאומת, במרחק, בהתקדמות סביב כדור הארץ או בהישגים.</string>
 </resources>

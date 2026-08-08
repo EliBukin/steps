@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.today
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.stepsplit.data.motion.MotionDiagnosticsStore
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
@@ -28,6 +29,7 @@ class TodayViewModel(
     private val repository: StepRepository,
     private val settingsRepository: SettingsRepository,
     private val stepSourceHealthStore: StepSourceHealthStore,
+    private val motionDiagnosticsStore: MotionDiagnosticsStore,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -48,7 +50,7 @@ class TodayViewModel(
             repository.observeDailyBreakdowns(weekDatesToDate(today)).map { today to it }
         }
 
-    val uiState: StateFlow<TodayUiState> = combine(
+    private val baseUiState: Flow<TodayUiState> = combine(
         breakdownsForToday,
         settingsRepository.settings,
         availability,
@@ -72,6 +74,14 @@ class TodayViewModel(
             syncFailure = settings.lastSyncFailure,
             collectionHealth = deriveStepCollectionHealth(currentAvailability, settings.lastSyncFailure, health.everObservedSample),
         )
+    }
+
+    val uiState: StateFlow<TodayUiState> = combine(
+        baseUiState,
+        repository.observePendingCount(),
+        motionDiagnosticsStore.snapshot,
+    ) { state, pendingCount, motionDiagnostics ->
+        state.copy(pendingValidationCount = pendingCount, motionDiagnostics = motionDiagnostics)
     }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())
 

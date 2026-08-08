@@ -290,6 +290,64 @@ private fun DebugDiagnosticsSection(uiState: SettingsUiState, onRunStepSourceChe
                 "${device.hasStepCounterSensor} / ${device.hasStepDetectorSensor}",
             )
         }
+
+        ValidationDiagnosticsSection(uiState)
+    }
+}
+
+/**
+ * Strict vehicle-aware validation acquisition diagnostics - debug-only, same reasoning as
+ * [DebugDiagnosticsSection] above. Reads [SettingsUiState.motionDiagnostics]
+ * ([com.example.stepsplit.data.motion.MotionDiagnosticsStore]'s persisted state, populated
+ * exclusively by real registration/validation outcomes - see that class's own doc comment) plus
+ * live [SettingsUiState.validationStateCounts] and [SettingsUiState.recentMotionEvidence]. Purely
+ * a read surface: nothing here can suspend, block, or otherwise affect step acquisition/validation
+ * itself.
+ */
+@Composable
+private fun ValidationDiagnosticsSection(uiState: SettingsUiState) {
+    val motion = uiState.motionDiagnostics
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            stringResource(R.string.settings_debug_validation_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        DebugDiagnosticRow(R.string.settings_debug_label_policy_version, "${uiState.currentValidationPolicyVersion}")
+        DebugDiagnosticRow(R.string.settings_debug_label_transition_registration, debugRegistrationText(motion.latestTransitionRegistrationSucceeded, motion.latestTransitionFailureCategory, motion.latestTransitionFailureStatusCode, motion.latestTransitionRegistrationAtEpochSecond))
+        DebugDiagnosticRow(R.string.settings_debug_label_sampling_registration, debugRegistrationText(motion.latestSamplingRegistrationSucceeded, motion.latestSamplingFailureCategory, motion.latestSamplingFailureStatusCode, motion.latestSamplingRegistrationAtEpochSecond))
+        DebugDiagnosticRow(R.string.settings_debug_label_last_validation, debugTimestampText(motion.latestSuccessfulValidationAtEpochSecond))
+        DebugDiagnosticRow(
+            R.string.settings_debug_label_validation_counts,
+            listOf("PENDING", "ACCEPTED_WALKING", "ACCEPTED_RUNNING", "REJECTED_VEHICLE", "REJECTED_BICYCLE", "REJECTED_UNVERIFIED", "LEGACY_UNVERIFIED")
+                .joinToString(", ") { "$it=${uiState.validationStateCounts[it] ?: 0}" },
+        )
+        if (uiState.recentMotionEvidence.isNotEmpty()) {
+            Text(
+                stringResource(R.string.settings_debug_recent_events_title),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            uiState.recentMotionEvidence.forEach { evidence ->
+                Text(
+                    text = "${evidence.kind} ${evidence.activityType}" +
+                        (evidence.confidence?.let { " ($it%)" } ?: "") +
+                        " @ ${debugTimestampText(evidence.derivedWallClockEpochMilli / 1000)}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+/** "-" when never attempted; otherwise the latest transition/sampling registration outcome - see [com.example.stepsplit.data.motion.MotionDiagnosticsSnapshot]'s own doc comment for why the two are tracked separately. */
+@Composable
+private fun debugRegistrationText(succeeded: Boolean?, failureCategory: String?, failureStatusCode: Int?, atEpochSecond: Long?): String {
+    val at = debugTimestampText(atEpochSecond)
+    return when (succeeded) {
+        true -> "OK @ $at"
+        false -> "FAILED ($failureCategory, code=$failureStatusCode) @ $at"
+        null -> "-"
     }
 }
 

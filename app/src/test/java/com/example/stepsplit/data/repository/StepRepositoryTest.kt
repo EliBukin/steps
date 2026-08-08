@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
+import com.example.stepsplit.data.local.motion.ActivityIntervalEntity
+import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
 import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.FakeStepSource
@@ -31,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
@@ -161,6 +164,30 @@ private class ArmableThrowOnceClock(
     }
 }
 
+/**
+ * This entire file predates strict vehicle-aware step validation and exercises sync,
+ * classification, and override-reconciliation logic that is orthogonal to it - none of these
+ * tests are about motion evidence at all. Seeding one permanently-open `WALKING` interval (far in
+ * the past, so stability is already satisfied for anything these tests import) restores every
+ * test's original "steps count immediately" assumption via a real (if synthetic) accepted
+ * decision, without needing per-test motion-evidence setup. Called for every [StepSplitDatabase]
+ * instance this file constructs - the shared one in `setUp()` and each `TimerTestHarness`'s own
+ * separate one. Tests that ARE specifically about strict validation live in
+ * `StepValidationIntegrationTest` instead and do not rely on this.
+ */
+private fun seedAlwaysWalkingEvidence(database: StepSplitDatabase) = runBlocking {
+    database.temporalContinuityStateDao().upsert(TemporalContinuityStateEntity(id = 0, bootSessionId = 1, bootEpochOffsetMillis = 0, temporalContinuityEpoch = 1))
+    database.activityIntervalDao().insert(
+        ActivityIntervalEntity(
+            activityType = "WALKING",
+            startWallClockEpochMilli = 0,
+            endWallClockEpochMilli = null,
+            temporalContinuityEpoch = 1,
+            closedReason = "OPEN",
+        ),
+    )
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class StepRepositoryTest {
@@ -195,6 +222,7 @@ class StepRepositoryTest {
         fakeSource = FakeStepSource()
         settingsRepository = SettingsRepository(context)
         repository = StepRepository(database, fakeSource, settingsRepository, clock, noOpTimerScope)
+        seedAlwaysWalkingEvidence(database)
     }
 
     @After
@@ -348,6 +376,12 @@ class StepRepositoryTest {
                         zoneId = "UTC",
                         localDate = "2026-03-10",
                         importedAtEpochSecond = baseEpoch,
+                        // Seeded directly (bypassing syncNow()/real validation) for classification-
+                        // recovery tests that are about CLASSIFIER_VERSION staleness, not strict
+                        // vehicle validation - pre-marked accepted so the classifier (which now only
+                        // reads accepted buckets) actually sees them.
+                        validationState = "ACCEPTED_WALKING",
+                        acceptedSteps = 80,
                     ),
                 ),
             )
@@ -666,6 +700,10 @@ class StepRepositoryTest {
                         zoneId = "UTC",
                         localDate = "2026-03-10",
                         importedAtEpochSecond = baseEpoch,
+                        // Seeded directly (adversarial override-reconciliation state, not a real
+                        // sync) - pre-marked accepted so the classifier actually sees these minutes.
+                        validationState = "ACCEPTED_WALKING",
+                        acceptedSteps = 80,
                     ),
                 ),
             )
@@ -824,6 +862,7 @@ class StepRepositoryTest {
             .setQueryExecutor(roomExecutor)
             .setTransactionExecutor(roomExecutor)
             .build()
+            .also { seedAlwaysWalkingEvidence(it) }
         val scheduler: TestCoroutineScheduler = TestCoroutineScheduler()
 
         private val scopes = mutableListOf<CoroutineScope>()
@@ -1197,8 +1236,12 @@ class StepRepositoryTest {
             val secondRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, harness.newScope())
             secondRepository.syncNow()
 
-            // Before the restored deadline, one more minute of activity arrives.
-            harness.scheduler.advanceTimeBy(30_000)
+            // Before the restored deadline, one more minute of activity arrives. Advanced far
+            // enough first that the new minute's own end has already elapsed by the time of the
+            // sync - a real step source only ever reports fully-elapsed data, never an interval
+            // extending past "now", so validation's positive-coverage window (which only ever
+            // extends to "now") can fully cover it in this same sync.
+            harness.scheduler.advanceTimeBy(60_000)
             settle(harness)
             fakeSource.addInterval(lastActiveMinuteEnd + 60, lastActiveMinuteEnd + 120, 80)
             secondRepository.syncNow()
@@ -1207,7 +1250,7 @@ class StepRepositoryTest {
             // withheld, since the new activity must have rescheduled it rather than leaving a
             // duplicate original timer; nothing is scheduled to run at this superseded time any
             // more.
-            harness.scheduler.advanceTimeBy(90_000)
+            harness.scheduler.advanceTimeBy(60_000)
             settle(harness)
             assertTrue(
                 "finalization must wait for the rescheduled deadline, not the recovered-but-now-stale one",
@@ -1249,6 +1292,11 @@ class StepRepositoryTest {
                             zoneId = "UTC",
                             localDate = "2026-03-10",
                             importedAtEpochSecond = baseEpoch,
+                            // Direct DAO seeding bypasses real validation entirely (only a sync or
+                            // scoped revalidation triggers that) - pre-marked accepted so the
+                            // classifier sees these minutes despite the source staying unavailable.
+                            validationState = "ACCEPTED_WALKING",
+                            acceptedSteps = 80,
                         ),
                     ),
                 )
@@ -1772,7 +1820,12 @@ class StepRepositoryTest {
     // formula-level tests; the tests below prove the Room-backed aggregate query itself behaves
     // correctly: unbounded by any retention window or date range, upsert-safe, and source-filtered. ----
 
-    /** A one-minute [StepBucketEntity] for direct DAO seeding, independent of any sync read window. */
+    /**
+     * A one-minute [StepBucketEntity] for direct DAO seeding, independent of any sync read window.
+     * These lifetime-stats tests are about the aggregate QUERY (unbounded by date/retention,
+     * upsert-safe, source-filtered) - not about strict vehicle validation - so seeded buckets are
+     * pre-marked accepted, matching how a real bucket would eventually look once validated.
+     */
     private fun testBucket(startEpochSecond: Long, steps: Long, source: String = fakeSource.id): StepBucketEntity {
         val localDate = Instant.ofEpochSecond(startEpochSecond).atZone(ZoneOffset.UTC).toLocalDate().toString()
         return StepBucketEntity(
@@ -1783,6 +1836,8 @@ class StepRepositoryTest {
             zoneId = "UTC",
             localDate = localDate,
             importedAtEpochSecond = startEpochSecond,
+            validationState = "ACCEPTED_WALKING",
+            acceptedSteps = steps,
         )
     }
 

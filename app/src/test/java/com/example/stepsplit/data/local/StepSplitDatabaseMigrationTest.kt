@@ -316,6 +316,188 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v3 -> v4 migration (adding strict vehicle-aware step validation - see
+     * [StepSplitDatabase.MIGRATION_3_4]'s own doc comment) is both schema-correct and preserves
+     * every existing row untouched apart from the new columns, using the same strategy as the two
+     * tests above: a complete v3 database is built from the exact `createSql`/`setupQueries` in the
+     * exported `3.json`, one representative row is seeded into `step_buckets` (plus one each into
+     * `walk_bouts`, `session_overrides`, `trips`, `trip_points`, `manual_walks` to prove the
+     * migration touches none of them), and a real [StepSplitDatabase] then migrates and validates
+     * it. This is required regression test #16 ("existing history survives migration as legacy
+     * data").
+     */
+    @Test
+    fun `v3 to v4 full schema migration`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v3_v4.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildCompleteV3Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                val bucketCursor = migrated.query(
+                    "SELECT source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                        "validationState, acceptedSteps, rejectionReason, policyVersion, validatedAtEpochSecond, " +
+                        "observationStartEpochSecond, observationEndEpochSecond FROM step_buckets WHERE id = 1",
+                )
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals("local_recording_api", bucketCursor.getString(0))
+                assertEquals(1_000L, bucketCursor.getLong(1))
+                assertEquals(1_060L, bucketCursor.getLong(2))
+                assertEquals(42L, bucketCursor.getLong(3))
+                assertEquals(
+                    "a pre-existing row must be marked LEGACY_UNVERIFIED - it predates motion evidence collection",
+                    "LEGACY_UNVERIFIED",
+                    bucketCursor.getString(6),
+                )
+                assertEquals(0L, bucketCursor.getLong(7))
+                assertTrue("no rejection reason for a legacy row", bucketCursor.isNull(8))
+                assertTrue("no policy version for a legacy row - never evaluated by the real policy", bucketCursor.isNull(9))
+                assertTrue(bucketCursor.isNull(10))
+                assertEquals("observation span backfilled from the existing minute bounds", 1_000L, bucketCursor.getLong(11))
+                assertEquals(1_060L, bucketCursor.getLong(12))
+                bucketCursor.close()
+
+                // Every other existing table is untouched by this migration.
+                val boutCursor = migrated.query("SELECT autoClassification FROM walk_bouts WHERE id = 1")
+                assertTrue(boutCursor.moveToFirst())
+                assertEquals("WORKOUT", boutCursor.getString(0))
+                boutCursor.close()
+
+                val overrideCursor = migrated.query("SELECT classification FROM session_overrides WHERE boutStartEpochSecond = 1000")
+                assertTrue(overrideCursor.moveToFirst())
+                assertEquals("INCIDENTAL", overrideCursor.getString(0))
+                overrideCursor.close()
+
+                val tripCursor = migrated.query("SELECT state FROM trips WHERE id = 1")
+                assertTrue(tripCursor.moveToFirst())
+                assertEquals("ACTIVE", tripCursor.getString(0))
+                tripCursor.close()
+
+                val tripPointCursor = migrated.query("SELECT COUNT(*) FROM trip_points WHERE tripId = 1")
+                assertTrue(tripPointCursor.moveToFirst())
+                assertEquals(1, tripPointCursor.getInt(0))
+                tripPointCursor.close()
+
+                // New tables exist and are actually usable, not merely present.
+                val emptyIntervalsCursor = migrated.query("SELECT COUNT(*) FROM activity_intervals")
+                assertTrue(emptyIntervalsCursor.moveToFirst())
+                assertEquals(0, emptyIntervalsCursor.getInt(0))
+                emptyIntervalsCursor.close()
+
+                migrated.execSQL(
+                    "INSERT INTO activity_intervals (activityType, startWallClockEpochMilli, endWallClockEpochMilli, " +
+                        "temporalContinuityEpoch, closedReason) VALUES ('WALKING', 1000000, NULL, 1, 'OPEN')",
+                )
+                val intervalCursor = migrated.query("SELECT COUNT(*) FROM activity_intervals")
+                assertTrue(intervalCursor.moveToFirst())
+                assertEquals(1, intervalCursor.getInt(0))
+                intervalCursor.close()
+
+                migrated.execSQL(
+                    "INSERT INTO temporal_continuity_state (id, bootSessionId, bootEpochOffsetMillis, temporalContinuityEpoch) " +
+                        "VALUES (0, 5, 123456, 1)",
+                )
+                val continuityCursor = migrated.query("SELECT bootSessionId FROM temporal_continuity_state WHERE id = 0")
+                assertTrue(continuityCursor.moveToFirst())
+                assertEquals(5L, continuityCursor.getLong(0))
+                continuityCursor.close()
+
+                migrated.execSQL(
+                    "INSERT INTO motion_evidence (kind, activityType, confidence, eventElapsedRealtimeMillis, bootSessionId, " +
+                        "derivedWallClockEpochMilli, temporalContinuityEpoch, receivedAtEpochMilli, dedupeKey, batchId) " +
+                        "VALUES ('SAMPLED', 'WALKING', 80, 2000, 5, 1000000, 1, 1000010, 'dedupe-1', 'batch-1')",
+                )
+                val evidenceCursor = migrated.query("SELECT COUNT(*) FROM motion_evidence")
+                assertTrue(evidenceCursor.moveToFirst())
+                assertEquals(1, evidenceCursor.getInt(0))
+                evidenceCursor.close()
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /** Same approach as [buildCompleteV1Database]/[buildCompleteV2Database], parsing `3.json` and seeding one row per v3 table. */
+    private fun buildCompleteV3Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/3.json")
+        check(schemaFile.exists()) {
+            "Expected the exported v3 schema at ${schemaFile.absolutePath} - " +
+                "this test must run with the app/ module directory as the working directory " +
+                "(true for `gradlew testDebugUnitTest`, which this project's tests are run under)."
+        }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                val indexSql = indices.getJSONObject(j).getString("createSql")
+                                db.execSQL(indexSql.replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, importedAtEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060)",
+            )
+            db.execSQL(
+                "INSERT INTO walk_bouts (id, startEpochSecond, endEpochSecond, steps, activeMinutes, elapsedMinutes, " +
+                    "cadence, autoClassification, autoConfidence, autoReasonCode, classifierVersion, computedAtEpochSecond) " +
+                    "VALUES (1, 1000, 2000, 500, 15, 16, 90.0, 'WORKOUT', 0.9, 'MEETS_ALL_THRESHOLDS', 1, 2000)",
+            )
+            db.execSQL(
+                "INSERT INTO session_overrides (boutStartEpochSecond, classification, overriddenAtEpochSecond) " +
+                    "VALUES (1000, 'INCIDENTAL', 2500)",
+            )
+            db.execSQL(
+                "INSERT INTO manual_walks (id, startEpochSecond, endEpochSecond, steps, createdAtEpochSecond, autoCompleted, autoCompletionMessageShown) " +
+                    "VALUES (1, 1000, 1600, 42, 1000, 0, 0)",
+            )
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) " +
+                    "VALUES (1, 2000, NULL, 'UTC', 'ACTIVE', 0.0, NULL, 2000)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_points (tripId, capturedAtEpochSecond, latitude, longitude, accuracyMeters, " +
+                    "altitudeMeters, speedMetersPerSecond) VALUES (1, 2001, 32.0, 34.0, 10.0, NULL, NULL)",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

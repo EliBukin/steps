@@ -4,6 +4,13 @@ import android.content.Context
 import android.util.Log
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.motion.ActivityRecognitionGateway
+import com.example.stepsplit.data.motion.AsyncMotionDiagnosticsHealthRecorder
+import com.example.stepsplit.data.motion.MotionDiagnosticsHealthSink
+import com.example.stepsplit.data.motion.MotionDiagnosticsStore
+import com.example.stepsplit.data.motion.MotionEvidenceConverter
+import com.example.stepsplit.data.motion.MotionEvidenceRegistrar
+import com.example.stepsplit.data.motion.PlayServicesActivityRecognitionGateway
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.AsyncStepSourceHealthRecorder
@@ -18,7 +25,10 @@ import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.debug.DeviceDiagnostics
 import com.example.stepsplit.debug.DeviceDiagnosticsSnapshot
 import com.example.stepsplit.domain.time.DeviceZoneClock
+import com.example.stepsplit.domain.validation.ValidationConstants
+import com.example.stepsplit.sync.PendingBucketFinalizationScheduler
 import com.example.stepsplit.sync.StepSyncWorkerFactory
+import com.example.stepsplit.sync.WorkManagerPendingBucketFinalizationScheduler
 import java.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,10 +91,45 @@ class AppContainer(context: Context) {
         }
     }
 
+    val validationConstants: ValidationConstants = ValidationConstants.DEFAULT
+
+    // ---- Strict vehicle-aware step validation - motion evidence acquisition ----
+
+    /** Owns [MotionEvidenceReceiver]/[BootAndUpdateReceiver]'s ingestion work - process-lifetime, the same pattern as repositoryScope/tripRecordingScope below, kept separate so a problem in ingestion can never starve or be starved by the others. */
+    val motionEvidenceScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val motionEvidenceConverter: MotionEvidenceConverter = MotionEvidenceConverter(context, clock)
+
+    /** Read-side diagnostics (UI/Settings panel) - see [MotionDiagnosticsStore]'s own doc comment. */
+    val motionDiagnosticsStore: MotionDiagnosticsStore = MotionDiagnosticsStore(context)
+
+    private val motionDiagnosticsEventScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Write-side, non-suspending sink - see AsyncMotionDiagnosticsHealthRecorder's own doc comment
+    // for why acquisition/ingestion must never depend on the suspending MotionDiagnosticsStore directly.
+    private val asyncMotionDiagnosticsRecorder: MotionDiagnosticsHealthSink =
+        AsyncMotionDiagnosticsHealthRecorder(motionDiagnosticsStore, motionDiagnosticsEventScope)
+
+    val activityRecognitionGateway: ActivityRecognitionGateway = PlayServicesActivityRecognitionGateway(context)
+
+    val motionEvidenceRegistrar: MotionEvidenceRegistrar = MotionEvidenceRegistrar(
+        context = context,
+        gateway = activityRecognitionGateway,
+        healthStore = asyncMotionDiagnosticsRecorder,
+        clock = clock,
+    )
+
     // Owns StepRepository's one-shot trailing-bout finalization timer (see
     // StepRepository.rescheduleFinalizationJob) - a plain SupervisorJob-backed scope, not a
     // Service, that simply lives for the process lifetime like every other dependency here.
     private val repositoryScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val pendingBucketFinalizationScheduler: PendingBucketFinalizationScheduler = WorkManagerPendingBucketFinalizationScheduler(
+        context = context,
+        database = database,
+        sourceId = stepSource.id,
+        pendingFinalizationDelaySeconds = validationConstants.pendingFinalizationDelaySeconds,
+    )
 
     val stepRepository: StepRepository = StepRepository(
         database = database,
@@ -92,12 +137,17 @@ class AppContainer(context: Context) {
         settingsRepository = settingsRepository,
         clock = clock,
         repositoryScope = repositoryScope,
+        motionDiagnosticsHealthSink = asyncMotionDiagnosticsRecorder,
+        pendingBucketFinalizationScheduler = pendingBucketFinalizationScheduler,
+        validationConstants = validationConstants,
     )
 
-    val workerFactory: StepSyncWorkerFactory = StepSyncWorkerFactory(stepRepository)
+    val workerFactory: StepSyncWorkerFactory = StepSyncWorkerFactory(stepRepository, motionEvidenceRegistrar)
 
     // ---- Trip Route Recording (see data.trip.TripRepository) - entirely separate from the step
-    // sync pipeline above; nothing here is read or written by StepRepository, and vice versa. ----
+    // sync/validation pipeline above; nothing here is read or written by StepRepository, and vice
+    // versa. GPS trip data is never mixed into step distance/validation, per the product requirement
+    // that these two datasets stay logically separate. ----
 
     val tripRepository: TripRepository = TripRepository(
         database = database,

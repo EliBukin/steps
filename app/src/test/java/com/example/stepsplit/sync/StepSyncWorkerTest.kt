@@ -6,6 +6,9 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.motion.FakeActivityRecognitionGateway
+import com.example.stepsplit.data.motion.MotionEvidenceRegistrar
+import com.example.stepsplit.data.motion.NoOpMotionDiagnosticsHealthSink
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.FakeStepSource
@@ -29,8 +32,9 @@ class StepSyncWorkerTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val database = Room.inMemoryDatabaseBuilder(context, StepSplitDatabase::class.java).build()
         val repository = StepRepository(database, stepSource, SettingsRepository(context), Clock.systemUTC(), repositoryScope)
+        val registrar = MotionEvidenceRegistrar(context, FakeActivityRecognitionGateway(), NoOpMotionDiagnosticsHealthSink, Clock.systemUTC())
         return TestListenableWorkerBuilder<StepSyncWorker>(context)
-            .setWorkerFactory(StepSyncWorkerFactory(repository))
+            .setWorkerFactory(StepSyncWorkerFactory(repository, registrar))
             .build()
     }
 

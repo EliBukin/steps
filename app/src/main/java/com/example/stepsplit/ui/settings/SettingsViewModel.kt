@@ -3,6 +3,9 @@ package com.example.stepsplit.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.BuildConfig
+import com.example.stepsplit.data.local.motion.MotionEvidenceEntity
+import com.example.stepsplit.data.motion.MotionDiagnosticsSnapshot
+import com.example.stepsplit.data.motion.MotionDiagnosticsStore
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.repository.SyncResult
 import com.example.stepsplit.data.settings.SettingsRepository
@@ -15,6 +18,7 @@ import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.domain.model.StepGoals
 import com.example.stepsplit.domain.model.SyncFailure
 import com.example.stepsplit.domain.model.deriveStepCollectionHealth
+import com.example.stepsplit.domain.validation.StrictStepValidationPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +45,13 @@ data class SettingsUiState(
     val storedBucketCount: Int? = null,
     /** Device/Play-services environment snapshot - see [DeviceDiagnosticsSnapshot]. Debug-only. */
     val deviceDiagnostics: DeviceDiagnosticsSnapshot? = null,
+    /** Strict vehicle-aware validation acquisition health - transition/sampling registration status+last error, last successful validation time. See [MotionDiagnosticsSnapshot]. Debug-only. */
+    val motionDiagnostics: MotionDiagnosticsSnapshot = MotionDiagnosticsSnapshot(),
+    /** Per-[com.example.stepsplit.domain.validation.ValidationState] row counts for the real production source. Debug-only. */
+    val validationStateCounts: Map<String, Int> = emptyMap(),
+    val currentValidationPolicyVersion: Int = StrictStepValidationPolicy.POLICY_VERSION,
+    /** The most recently received raw motion-evidence rows, newest first - see [StepRepository.debugRecentMotionEvidence]. Debug-only. */
+    val recentMotionEvidence: List<MotionEvidenceEntity> = emptyList(),
 )
 
 class SettingsViewModel(
@@ -48,12 +59,14 @@ class SettingsViewModel(
     private val stepRepository: StepRepository,
     private val stepSourceHealthStore: StepSourceHealthStore,
     private val deviceDiagnostics: DeviceDiagnosticsSnapshot?,
+    private val motionDiagnosticsStore: MotionDiagnosticsStore,
 ) : ViewModel() {
 
     private val availability = MutableStateFlow<StepSourceAvailability?>(null)
     private val goalInputError = MutableStateFlow(false)
     private val debugStepSourceCheckResult = MutableStateFlow<String?>(null)
     private val storedBucketCount = MutableStateFlow<Int?>(null)
+    private val recentMotionEvidence = MutableStateFlow<List<MotionEvidenceEntity>>(emptyList())
 
     private val baseUiState: Flow<SettingsUiState> = combine(
         settingsRepository.settings,
@@ -76,13 +89,29 @@ class SettingsViewModel(
         )
     }
 
-    val uiState: StateFlow<SettingsUiState> = combine(baseUiState, storedBucketCount) { state, count ->
-        state.copy(storedBucketCount = count)
+    private val motionState: Flow<Pair<MotionDiagnosticsSnapshot, Map<String, Int>>> = combine(
+        motionDiagnosticsStore.snapshot,
+        stepRepository.observeValidationStateCounts(),
+    ) { snapshot, counts -> snapshot to counts.associate { it.validationState to it.count } }
+
+    val uiState: StateFlow<SettingsUiState> = combine(
+        baseUiState,
+        storedBucketCount,
+        motionState,
+        recentMotionEvidence,
+    ) { state, count, (motionSnapshot, validationCounts), recentEvidence ->
+        state.copy(
+            storedBucketCount = count,
+            motionDiagnostics = motionSnapshot,
+            validationStateCounts = validationCounts,
+            recentMotionEvidence = recentEvidence,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     init {
         refreshAvailability()
         refreshStoredBucketCount()
+        refreshRecentMotionEvidence()
     }
 
     fun refreshAvailability() {
@@ -93,6 +122,12 @@ class SettingsViewModel(
     private fun refreshStoredBucketCount() {
         if (!BuildConfig.DEBUG) return
         viewModelScope.launch { storedBucketCount.value = stepRepository.debugStoredBucketCount() }
+    }
+
+    /** Debug-only diagnostic - see [SettingsUiState.recentMotionEvidence]. */
+    private fun refreshRecentMotionEvidence() {
+        if (!BuildConfig.DEBUG) return
+        viewModelScope.launch { recentMotionEvidence.value = stepRepository.debugRecentMotionEvidence() }
     }
 
     fun setDailyGoal(steps: Long) {
@@ -126,6 +161,7 @@ class SettingsViewModel(
             val result = stepRepository.syncNow()
             availability.value = stepRepository.checkAvailability()
             storedBucketCount.value = stepRepository.debugStoredBucketCount()
+            recentMotionEvidence.value = stepRepository.debugRecentMotionEvidence()
             debugStepSourceCheckResult.value = when (result) {
                 is SyncResult.Success -> "Success: ${result.bucketsWritten} bucket(s) written"
                 is SyncResult.Unavailable -> "Unavailable: ${result.availability}"

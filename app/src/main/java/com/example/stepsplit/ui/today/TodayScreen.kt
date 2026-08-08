@@ -20,6 +20,7 @@ import com.example.stepsplit.ui.common.CollectionStatusBanner
 import com.example.stepsplit.ui.common.GoalProgressSection
 import com.example.stepsplit.ui.common.StatCard
 import com.example.stepsplit.ui.common.SyncFailureBanner
+import com.example.stepsplit.ui.common.ValidationStatusBanner
 import com.example.stepsplit.ui.common.WaitingForFirstSampleBanner
 import com.example.stepsplit.ui.common.formatSyncTime
 
@@ -38,6 +39,7 @@ fun TodayScreen(
     val items = buildList {
         add(TodayItem.Availability)
         if (uiState.syncFailure != null) add(TodayItem.SyncFailure)
+        if (uiState.validationAccuracyUnavailable || uiState.pendingValidationCount > 0) add(TodayItem.ValidationStatus)
         if (uiState.collectionHealth == StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE) add(TodayItem.WaitingForFirstSample)
         add(TodayItem.Totals)
         add(TodayItem.DailyGoal)
@@ -57,6 +59,11 @@ fun TodayScreen(
                 }
 
                 TodayItem.SyncFailure -> uiState.syncFailure?.let { failure -> SyncFailureBanner(failure) }
+
+                TodayItem.ValidationStatus -> ValidationStatusBanner(
+                    pendingCount = uiState.pendingValidationCount,
+                    accuracyUnavailable = uiState.validationAccuracyUnavailable,
+                )
 
                 TodayItem.WaitingForFirstSample -> WaitingForFirstSampleBanner()
 
@@ -80,7 +87,7 @@ fun TodayScreen(
     }
 }
 
-private enum class TodayItem { Availability, SyncFailure, WaitingForFirstSample, Totals, DailyGoal, WeeklyGoal, LastSync }
+private enum class TodayItem { Availability, SyncFailure, ValidationStatus, WaitingForFirstSample, Totals, DailyGoal, WeeklyGoal, LastSync }
 
 @Composable
 private fun TotalsSection(uiState: TodayUiState) {
