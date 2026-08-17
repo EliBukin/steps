@@ -114,6 +114,37 @@ class TripRecordingCoordinatorTest {
         awaitSubscriptionCount(0)
     }
 
+    /**
+     * [TripRecordingCommandController.startCollecting] always calls [TripRecordingCoordinator.stop]
+     * immediately followed by [TripRecordingCoordinator.start], with no wait in between for the old
+     * subscription's own asynchronous teardown (see that function's own doc comment: "coordinator.stop()
+     * is idempotent either way"). [TripRecordingCoordinator.stop] only requests cancellation - it does
+     * not, and is not required to, wait for [FakeTripLocationClient]'s `awaitClose` to actually run
+     * before returning (see its own doc comment) - so this reproduces that exact shape directly against
+     * the coordinator, without a wait between stop and the following start, and proves the outcome
+     * still settles to exactly one live subscription: never a lingering duplicate from the old
+     * subscription's delayed teardown, and never zero because the new start raced ahead of it.
+     */
+    @Test
+    fun `a rapid stop immediately followed by start settles to exactly one subscription, never a duplicate`() = runBlocking {
+        val tripId = repository.startTrip()
+        val coordinator = TripRecordingCoordinator(repository, locationClient, coordinatorScope)
+
+        coordinator.start(tripId)
+        awaitSubscriptionCount(1)
+
+        coordinator.stop()
+        coordinator.start(tripId)
+
+        awaitSubscriptionCount(1)
+        // Give the old subscription's own asynchronous teardown a further moment to also settle, then
+        // confirm the count is still exactly one - not two (a lingering duplicate) and not zero (both
+        // torn down).
+        delay(200)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+        coordinator.stop()
+    }
+
     @Test
     fun `stop is idempotent when the coordinator was never started`() = runBlocking {
         val coordinator = TripRecordingCoordinator(repository, locationClient, coordinatorScope)

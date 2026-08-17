@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -235,7 +236,7 @@ class TripRecordingCommandControllerTest {
 
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
         assertEquals(1, database.tripDao().observeAll().first().size)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        awaitSubscriptionCount(0)
         assertEquals(listOf(1), stoppedStartIds)
     }
 
@@ -297,7 +298,11 @@ class TripRecordingCommandControllerTest {
         controller.handleResume(tripId, resumeGen, startId = 2)
 
         assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        // coordinator.stop() only requests cancellation of the collecting job; the fake client's own
+        // unsubscription happens asynchronously as that cancellation is actually processed on its
+        // real (non-test-scheduler) dispatcher - see TripRecordingCoordinator.stop's own doc comment
+        // and awaitSubscriptionCount's. An immediate assertEquals here raced that teardown.
+        awaitSubscriptionCount(0)
         assertEquals(listOf(2), stoppedStartIds)
     }
 
@@ -371,7 +376,7 @@ class TripRecordingCommandControllerTest {
         awaitTripState(tripId, TripState.INTERRUPTED)
 
         assertEquals(listOf(1), stoppedStartIds)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        awaitSubscriptionCount(0)
     }
 
     // 9b. A failure callback whose generation was already superseded before it fires must not
@@ -449,7 +454,7 @@ class TripRecordingCommandControllerTest {
 
         assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
         assertEquals(listOf(1), stoppedStartIds)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        awaitSubscriptionCount(0)
     }
 
     // Rapid Finish followed by a new Start - the physical-device-adjacent unit-testable half of that scenario.
@@ -471,6 +476,43 @@ class TripRecordingCommandControllerTest {
 
         assertNotEquals(trip1, trip2)
         assertEquals(1, locationClient.activeSubscriptionCount)
+    }
+
+    /**
+     * Combines two things `startCollecting` and `stopIfCurrent` do back to back with no wait between
+     * them - `coordinator.stop()` immediately followed by a fresh `coordinator.start()` on the very
+     * next command - and proves neither the asynchronous nature of the old subscription's own teardown
+     * (see [TripRecordingCoordinator.stop]'s doc comment) nor `startCollecting`'s own defensive extra
+     * `coordinator.stop()` call before every start ever produces a lingering duplicate subscription or
+     * an extra/missing `onStopRequested` invocation: exactly one live subscription survives (never
+     * two, from the old one's delayed teardown; never zero, from the new start racing ahead of it),
+     * and the stop callback fires exactly once, for the failed Resume alone - never again for the
+     * unrelated, fully successful Start that immediately follows it.
+     */
+    @Test
+    fun `a rapid stop immediately followed by a new Start settles to exactly one subscription and issues the stop callback exactly once`() = runBlocking {
+        val startGen1 = controller.beginCommand()
+        controller.handleStart(startGen1, startId = 1)
+        awaitSubscriptionCount(1)
+        val tripId = repository.getActiveTripId()!!
+        repository.finishTrip(tripId, clock.instant.epochSecond)
+
+        // A failed Resume (the trip is FINISHED, not INTERRUPTED) stops the old collector via
+        // stopIfCurrent, immediately followed - with no wait for that stop's own async teardown - by a
+        // brand-new Start, exactly the shape startCollecting's own "coordinator.stop() then
+        // coordinator.start(), idempotent either way" pattern is meant to handle.
+        val resumeGen = controller.beginCommand()
+        controller.handleResume(tripId, resumeGen, startId = 2)
+
+        val startGen2 = controller.beginCommand()
+        controller.handleStart(startGen2, startId = 3)
+        awaitSubscriptionCount(1)
+
+        // Give the old (failed-Resume) subscription's own asynchronous teardown a further moment to
+        // also settle, then confirm the count is still exactly one.
+        delay(200)
+        assertEquals(1, locationClient.activeSubscriptionCount)
+        assertEquals(listOf(2), stoppedStartIds)
     }
 
     // Finding 1, required test 1: cancelling a Finish that a newer Start supersedes must release only
@@ -670,7 +712,7 @@ class TripRecordingCommandControllerTest {
         handoff.release()
         withTimeout(5_000) { handlerJob.join() }
 
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        awaitSubscriptionCount(0)
         assertTrue(stoppedStartIds.isEmpty())
         // No ghost ACTIVE trip survives: shutdown's own reconciliation honestly interrupts the trip
         // this paused claim left ACTIVE with no collector ever actually started for it.
@@ -705,7 +747,7 @@ class TripRecordingCommandControllerTest {
         // instance can never start a collector again.
         val genAfterShutdown = controller.beginCommand()
         controller.handleStart(genAfterShutdown, startId = 2)
-        assertEquals(0, locationClient.activeSubscriptionCount)
+        awaitSubscriptionCount(0)
     }
 
     // Required regression test: an in-flight command that created/resumed an ACTIVE trip immediately
