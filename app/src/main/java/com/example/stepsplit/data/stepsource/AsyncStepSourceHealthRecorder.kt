@@ -26,10 +26,10 @@ private sealed interface HealthEvent {
 }
 
 /**
- * The non-blocking, order-preserving telemetry boundary between [LocalRecordingStepSource] and real
+ * The non-blocking, order-preserving telemetry boundary between [HealthConnectStepSource] and real
  * diagnostic persistence (typically [StepSourceHealthStore], which suspends on a Preferences
  * DataStore write). The only production implementation of [StepSourceHealthSink] - see that
- * interface's own doc comment for why [LocalRecordingStepSource] depends on that non-suspending
+ * interface's own doc comment for why [HealthConnectStepSource] depends on that non-suspending
  * contract specifically, rather than on [StepSourceHealthRecorder] (this class's own `delegate`)
  * directly.
  *

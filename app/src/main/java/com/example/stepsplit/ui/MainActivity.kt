@@ -11,10 +11,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.health.connect.client.PermissionController
 import com.example.stepsplit.StepSplitApplication
+import com.example.stepsplit.data.stepsource.READ_STEPS_PERMISSION
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.theme.StepSplitTheme
-import com.example.stepsplit.util.ActivityRecognitionPermission
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -30,15 +31,15 @@ data class TripNotificationNavigationEvent(val route: String, val id: Long)
 class MainActivity : ComponentActivity() {
 
     // Forwards the actual grant/deny result to whichever caller is currently waiting (set by
-    // requestActivityRecognitionPermission below) - previously discarded entirely, which meant
-    // subscription/sync only ever refreshed indirectly via the next LifecycleResumeEffect-driven
-    // resume rather than immediately after the user actually granted the permission.
-    private var pendingActivityRecognitionResult: ((Boolean) -> Unit)? = null
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        pendingActivityRecognitionResult?.invoke(granted)
-        pendingActivityRecognitionResult = null
+    // requestHealthConnectPermission below) - so the caller (TodayViewModel.refresh) can
+    // immediately re-check availability and attempt an import rather than waiting on a
+    // coincidental resume.
+    private var pendingHealthConnectPermissionResult: ((Boolean) -> Unit)? = null
+    private val requestHealthConnectPermissionLauncher = registerForActivityResult(
+        PermissionController.createRequestPermissionResultContract(),
+    ) { grantedPermissions ->
+        pendingHealthConnectPermissionResult?.invoke(grantedPermissions.contains(READ_STEPS_PERMISSION))
+        pendingHealthConnectPermissionResult = null
     }
 
     // A single registered launcher, forwarded to whichever Compose-side caller is currently
@@ -67,7 +68,7 @@ class MainActivity : ComponentActivity() {
             StepSplitTheme {
                 StepSplitApp(
                     container = container,
-                    onRequestPermission = ::requestActivityRecognitionPermission,
+                    onRequestPermission = ::requestHealthConnectPermission,
                     onRequestTripPermissions = ::requestTripPermissions,
                     navigationEvent = navigationEvent,
                 )
@@ -95,21 +96,15 @@ class MainActivity : ComponentActivity() {
 
     /**
      * [onResult] receives the actual grant/deny outcome so the caller (see [StepSplitApp]'s own
-     * wiring) can immediately refresh source readiness and trigger a subscription/sync attempt
-     * rather than waiting on a coincidental resume - see the class-level doc comment above
-     * [pendingActivityRecognitionResult]. On API 26-28, where this isn't a real runtime permission
-     * at all (see [ActivityRecognitionPermission.isRequiredOn]), nothing is actually requested but
-     * [onResult] still fires with `true` - [ActivityRecognitionPermission.isSatisfied] already
-     * treats an ungranted permission as satisfied on those versions, so the caller's own refresh
-     * still needs to run rather than silently no-op.
+     * wiring, and [com.example.stepsplit.ui.today.TodayViewModel.refresh]) can immediately
+     * re-check availability and attempt an import rather than waiting on a coincidental resume -
+     * see the class-level doc comment above [pendingHealthConnectPermissionResult]. This is a
+     * completely separate permission flow from [requestTripPermissions] below: opening Today never
+     * requests location, and starting a trip never touches Health Connect permission.
      */
-    private fun requestActivityRecognitionPermission(onResult: (Boolean) -> Unit) {
-        if (ActivityRecognitionPermission.isRequiredOn(Build.VERSION.SDK_INT)) {
-            pendingActivityRecognitionResult = onResult
-            requestPermissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-        } else {
-            onResult(true)
-        }
+    private fun requestHealthConnectPermission(onResult: (Boolean) -> Unit) {
+        pendingHealthConnectPermissionResult = onResult
+        requestHealthConnectPermissionLauncher.launch(setOf(READ_STEPS_PERMISSION))
     }
 
     private fun requestTripPermissions(onResult: (Map<String, Boolean>) -> Unit) {

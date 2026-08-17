@@ -165,7 +165,7 @@ private fun ThresholdField(label: String, value: Int, onValueChange: (Int) -> Un
 }
 
 /**
- * "Permission status" reflects source availability only (permission granted, Play services
+ * "Permission status" reflects source availability only (permission granted, Health Connect
  * present) - see [StepSourceAvailability]. "Data collection status" reflects whether syncs are
  * actually succeeding - see [com.example.stepsplit.domain.model.SyncFailure] - which is not the
  * same thing: availability being fine does not mean the last sync actually succeeded, so this
@@ -208,9 +208,11 @@ private fun collectionStatusText(uiState: SettingsUiState): String {
         StepSourceAvailability.Available -> when (uiState.collectionHealth) {
             // A successful sync/read is not by itself proof of working collection - see
             // StepCollectionHealth's own doc comment. Must never claim "active"; only ever
-            // "waiting" (nothing observed yet) or "has been observed" (historical evidence, not a
-            // claim about this exact moment).
+            // "waiting" (nothing observed yet), "stale" (the newest sample is too old to call
+            // healthy - see StepCollectionHealth.STALE's own doc comment), or "has been observed"
+            // (historical evidence, not a claim about this exact moment).
             StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE -> stringResource(R.string.status_waiting_for_first_sample)
+            StepCollectionHealth.STALE -> stringResource(R.string.status_stale_data)
             else -> stringResource(R.string.status_sample_observed)
         }
 
@@ -242,7 +244,7 @@ private fun DebugSection(
  * caller, [DebugSection]). Reads directly from [SettingsUiState.healthSnapshot]
  * ([com.example.stepsplit.data.stepsource.StepSourceHealthStore]'s persisted state), which is
  * populated exclusively by the real subscribe/read code path in
- * [com.example.stepsplit.data.stepsource.LocalRecordingStepSource] - "Run step source check" below
+ * [com.example.stepsplit.data.stepsource.HealthConnectStepSource] - "Run step source check" below
  * re-runs that exact same path (via [com.example.stepsplit.data.repository.StepRepository.syncNow])
  * rather than a separate diagnostic-only acquisition attempt, so this can never show a healthier
  * picture than what production sync itself actually does.
@@ -281,72 +283,19 @@ private fun DebugDiagnosticsSection(uiState: SettingsUiState, onRunStepSourceChe
             )
             DebugDiagnosticRow(R.string.settings_debug_label_device, "${device.manufacturer} ${device.model}")
             DebugDiagnosticRow(R.string.settings_debug_label_android_version, "${device.androidRelease} (API ${device.androidSdkInt})")
-            DebugDiagnosticRow(
-                R.string.settings_debug_label_play_services_version,
-                "${device.playServicesInstalledVersionName ?: "?"} (${device.playServicesInstalledVersionCode ?: "?"}) / ${device.playServicesRequiredMinVersionCode}",
-            )
-            DebugDiagnosticRow(
-                R.string.settings_debug_label_step_sensors,
-                "${device.hasStepCounterSensor} / ${device.hasStepDetectorSensor}",
-            )
-        }
-
-        ValidationDiagnosticsSection(uiState)
-    }
-}
-
-/**
- * Strict vehicle-aware validation acquisition diagnostics - debug-only, same reasoning as
- * [DebugDiagnosticsSection] above. Reads [SettingsUiState.motionDiagnostics]
- * ([com.example.stepsplit.data.motion.MotionDiagnosticsStore]'s persisted state, populated
- * exclusively by real registration/validation outcomes - see that class's own doc comment) plus
- * live [SettingsUiState.validationStateCounts] and [SettingsUiState.recentMotionEvidence]. Purely
- * a read surface: nothing here can suspend, block, or otherwise affect step acquisition/validation
- * itself.
- */
-@Composable
-private fun ValidationDiagnosticsSection(uiState: SettingsUiState) {
-    val motion = uiState.motionDiagnostics
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            stringResource(R.string.settings_debug_validation_title),
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-        DebugDiagnosticRow(R.string.settings_debug_label_policy_version, "${uiState.currentValidationPolicyVersion}")
-        DebugDiagnosticRow(R.string.settings_debug_label_transition_registration, debugRegistrationText(motion.latestTransitionRegistrationSucceeded, motion.latestTransitionFailureCategory, motion.latestTransitionFailureStatusCode, motion.latestTransitionRegistrationAtEpochSecond))
-        DebugDiagnosticRow(R.string.settings_debug_label_sampling_registration, debugRegistrationText(motion.latestSamplingRegistrationSucceeded, motion.latestSamplingFailureCategory, motion.latestSamplingFailureStatusCode, motion.latestSamplingRegistrationAtEpochSecond))
-        DebugDiagnosticRow(R.string.settings_debug_label_last_validation, debugTimestampText(motion.latestSuccessfulValidationAtEpochSecond))
-        DebugDiagnosticRow(
-            R.string.settings_debug_label_validation_counts,
-            listOf("PENDING", "ACCEPTED_WALKING", "ACCEPTED_RUNNING", "REJECTED_VEHICLE", "REJECTED_BICYCLE", "REJECTED_UNVERIFIED", "LEGACY_UNVERIFIED")
-                .joinToString(", ") { "$it=${uiState.validationStateCounts[it] ?: 0}" },
-        )
-        if (uiState.recentMotionEvidence.isNotEmpty()) {
-            Text(
-                stringResource(R.string.settings_debug_recent_events_title),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            uiState.recentMotionEvidence.forEach { evidence ->
-                Text(
-                    text = "${evidence.kind} ${evidence.activityType}" +
-                        (evidence.confidence?.let { " ($it%)" } ?: "") +
-                        " @ ${debugTimestampText(evidence.derivedWallClockEpochMilli / 1000)}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+            DebugDiagnosticRow(R.string.settings_debug_label_health_connect_status, device.healthConnectAvailable.toString())
+            DebugDiagnosticRow(R.string.settings_debug_label_step_counting_supported, device.onDeviceStepCountingSupported.toString())
         }
     }
 }
 
-/** "-" when never attempted; otherwise the latest transition/sampling registration outcome - see [com.example.stepsplit.data.motion.MotionDiagnosticsSnapshot]'s own doc comment for why the two are tracked separately. */
+/** "-" when never attempted; otherwise the latest subscription-check outcome. */
 @Composable
-private fun debugRegistrationText(succeeded: Boolean?, failureCategory: String?, failureStatusCode: Int?, atEpochSecond: Long?): String {
-    val at = debugTimestampText(atEpochSecond)
-    return when (succeeded) {
+private fun debugSubscriptionText(health: StepSourceHealthSnapshot): String {
+    val at = debugTimestampText(health.latestSubscriptionAtEpochSecond)
+    return when (health.latestSubscriptionSucceeded) {
         true -> "OK @ $at"
-        false -> "FAILED ($failureCategory, code=$failureStatusCode) @ $at"
+        false -> "FAILED (${health.latestSubscriptionFailureCategory}, code=${health.latestSubscriptionFailureStatusCode}) @ $at"
         null -> "-"
     }
 }
@@ -358,16 +307,6 @@ private fun debugWindowText(health: StepSourceHealthSnapshot): String {
     val end = health.latestRequestedWindowEndEpochSecond
     if (start == null || end == null) return "-"
     return "[${debugTimestampText(start)}, ${debugTimestampText(end)})"
-}
-
-@Composable
-private fun debugSubscriptionText(health: StepSourceHealthSnapshot): String {
-    val at = debugTimestampText(health.latestSubscriptionAtEpochSecond)
-    return when (health.latestSubscriptionSucceeded) {
-        true -> "OK @ $at"
-        false -> "FAILED (${health.latestSubscriptionFailureCategory}, code=${health.latestSubscriptionFailureStatusCode}) @ $at"
-        null -> "-"
-    }
 }
 
 private fun debugTimestampText(epochSecond: Long?): String = epochSecond?.let { Instant.ofEpochSecond(it).toString() } ?: "-"

@@ -12,9 +12,8 @@ room = "2.8.4"
 workManager = "2.11.2"
 datastore = "1.2.1"
 coroutines = "1.11.0"
-playServicesFitness = "21.3.0"
-playServicesBase = "18.10.0"
 playServicesLocation = "21.3.0"
+healthConnect = "1.1.0"
 junit = "4.13.2"
 robolectric = "4.16.1"
 androidxTestCore = "1.7.0"
@@ -50,14 +49,12 @@ androidx-room-testing = { group = "androidx.room", name = "room-testing", versio
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }
-androidx-work-testing = { group = "androidx.work", name = "work-testing", version.ref = "workManager" }
 
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutinesTest" }
 
-play-services-fitness = { group = "com.google.android.gms", name = "play-services-fitness", version.ref = "playServicesFitness" }
-play-services-base = { group = "com.google.android.gms", name = "play-services-base", version.ref = "playServicesBase" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+androidx-health-connect-client = { group = "androidx.health.connect", name = "connect-client", version.ref = "healthConnect" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

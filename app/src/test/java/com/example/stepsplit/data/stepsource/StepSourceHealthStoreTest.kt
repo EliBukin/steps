@@ -125,14 +125,14 @@ class StepSourceHealthStoreTest {
     @Test
     fun `a later successful read does NOT clear a previously recorded read failure - last-failure-ever semantics`() = runTest {
         val store = newStore()
-        store.recordReadFailure(ApiFailure(ApiFailureCategory.DATA_TYPE_NOT_ALLOWED, 5), atEpochSecond = 100L)
+        store.recordReadFailure(ApiFailure(ApiFailureCategory.API_UNAVAILABLE, 5), atEpochSecond = 100L)
 
         store.recordReadSuccess(intervalCount = 1, latestSampleEpochSecond = 200L, atEpochSecond = 200L)
 
         val snapshot = store.snapshot.first()
         assertEquals(
             "the earlier failure's category must survive a later success - it is the most useful evidence for a real-device investigation",
-            ApiFailureCategory.DATA_TYPE_NOT_ALLOWED,
+            ApiFailureCategory.API_UNAVAILABLE,
             snapshot.latestReadFailureCategory,
         )
         assertEquals(5, snapshot.latestReadFailureStatusCode)
@@ -145,7 +145,7 @@ class StepSourceHealthStoreTest {
     @Test
     fun `a newer read failure overwrites an older one, but is itself never cleared by a later success`() = runTest {
         val store = newStore()
-        store.recordReadFailure(ApiFailure(ApiFailureCategory.DATA_TYPE_NOT_ALLOWED, 5), atEpochSecond = 100L)
+        store.recordReadFailure(ApiFailure(ApiFailureCategory.API_UNAVAILABLE, 5), atEpochSecond = 100L)
         store.recordReadFailure(ApiFailure(ApiFailureCategory.PERMISSION_OR_SECURITY_FAILURE, 9), atEpochSecond = 150L)
 
         store.recordReadSuccess(intervalCount = 1, latestSampleEpochSecond = 200L, atEpochSecond = 200L)

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -18,11 +19,17 @@ import com.example.stepsplit.domain.model.GoalProgress
 import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.ui.common.CollectionStatusBanner
 import com.example.stepsplit.ui.common.GoalProgressSection
+import com.example.stepsplit.ui.common.StaleSourceBanner
 import com.example.stepsplit.ui.common.StatCard
 import com.example.stepsplit.ui.common.SyncFailureBanner
-import com.example.stepsplit.ui.common.ValidationStatusBanner
 import com.example.stepsplit.ui.common.WaitingForFirstSampleBanner
 import com.example.stepsplit.ui.common.formatSyncTime
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/** How often this screen re-imports from Health Connect while it stays visibly active - see the product requirement for a roughly-once-a-minute foreground refresh. */
+private const val FOREGROUND_REFRESH_INTERVAL_MILLIS = 60_000L
 
 @Composable
 fun TodayScreen(
@@ -31,16 +38,26 @@ fun TodayScreen(
     onGrantPermission: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val coroutineScope = rememberCoroutineScope()
     LifecycleResumeEffect(Unit) {
+        // Covers both "whenever the application resumes" and the immediate refresh right after
+        // permission is granted (see onGrantPermission's own wiring in StepSplitApp) - this effect
+        // re-runs every time the screen becomes resumed again.
         onRefresh()
-        onPauseOrDispose { }
+        val periodicRefreshJob = coroutineScope.launch {
+            while (isActive) {
+                delay(FOREGROUND_REFRESH_INTERVAL_MILLIS)
+                onRefresh()
+            }
+        }
+        onPauseOrDispose { periodicRefreshJob.cancel() }
     }
 
     val items = buildList {
         add(TodayItem.Availability)
         if (uiState.syncFailure != null) add(TodayItem.SyncFailure)
-        if (uiState.validationAccuracyUnavailable || uiState.pendingValidationCount > 0) add(TodayItem.ValidationStatus)
         if (uiState.collectionHealth == StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE) add(TodayItem.WaitingForFirstSample)
+        if (uiState.collectionHealth == StepCollectionHealth.STALE) add(TodayItem.StaleSource)
         add(TodayItem.Totals)
         add(TodayItem.DailyGoal)
         add(TodayItem.WeeklyGoal)
@@ -60,12 +77,9 @@ fun TodayScreen(
 
                 TodayItem.SyncFailure -> uiState.syncFailure?.let { failure -> SyncFailureBanner(failure) }
 
-                TodayItem.ValidationStatus -> ValidationStatusBanner(
-                    pendingCount = uiState.pendingValidationCount,
-                    accuracyUnavailable = uiState.validationAccuracyUnavailable,
-                )
-
                 TodayItem.WaitingForFirstSample -> WaitingForFirstSampleBanner()
+
+                TodayItem.StaleSource -> StaleSourceBanner()
 
                 TodayItem.Totals -> TotalsSection(uiState)
                 TodayItem.DailyGoal -> GoalProgressSection(
@@ -87,7 +101,7 @@ fun TodayScreen(
     }
 }
 
-private enum class TodayItem { Availability, SyncFailure, ValidationStatus, WaitingForFirstSample, Totals, DailyGoal, WeeklyGoal, LastSync }
+private enum class TodayItem { Availability, SyncFailure, WaitingForFirstSample, StaleSource, Totals, DailyGoal, WeeklyGoal, LastSync }
 
 @Composable
 private fun TotalsSection(uiState: TodayUiState) {

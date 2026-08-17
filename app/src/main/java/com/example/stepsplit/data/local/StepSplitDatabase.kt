@@ -19,6 +19,8 @@ import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
 import com.example.stepsplit.data.local.override.SessionOverrideDao
 import com.example.stepsplit.data.local.override.SessionOverrideEntity
+import com.example.stepsplit.data.local.stepcounter.StepCounterSampleDao
+import com.example.stepsplit.data.local.stepcounter.StepCounterSampleEntity
 import com.example.stepsplit.data.local.trip.TripDao
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointDao
@@ -49,8 +51,9 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         ActivityIntervalEntity::class,
         TemporalContinuityStateEntity::class,
         MotionEvidenceEntity::class,
+        StepCounterSampleEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -62,6 +65,7 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun activityIntervalDao(): ActivityIntervalDao
     abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
     abstract fun motionEvidenceDao(): MotionEvidenceDao
+    abstract fun stepCounterSampleDao(): StepCounterSampleDao
 
     companion object {
         private const val DATABASE_NAME = "stepsplit.db"
@@ -200,8 +204,38 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5: adds `step_counter_samples` for [com.example.stepsplit.data.stepsource.SensorStepCounterSource]
+         * - the direct `Sensor.TYPE_STEP_COUNTER` acquisition path added after production step
+         * acquisition via Local Recording alone was found to silently go stale on-device (see that
+         * class's own doc comment). Purely additive - a brand-new table, no existing table touched -
+         * so every existing `step_buckets` row (all 94-and-counting raw buckets from the field
+         * investigation this migration was written for) survives completely untouched.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `step_counter_samples` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`cumulativeSteps` INTEGER NOT NULL, " +
+                        "`elapsedRealtimeMillisAtSample` INTEGER NOT NULL, " +
+                        "`wallClockEpochMilli` INTEGER NOT NULL, " +
+                        "`bootSessionId` INTEGER NOT NULL, " +
+                        "`receivedAtEpochMilli` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_step_counter_samples_bootSessionId_elapsedRealtimeMillisAtSample` " +
+                        "ON `step_counter_samples` (`bootSessionId`, `elapsedRealtimeMillisAtSample`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_step_counter_samples_wallClockEpochMilli` " +
+                        "ON `step_counter_samples` (`wallClockEpochMilli`)",
+                )
+            }
+        }
+
         /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

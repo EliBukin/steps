@@ -19,18 +19,15 @@
     <string name="last_sync_label">Last synced: %1$s</string>
     <string name="last_sync_never">Not synced yet</string>
 
-    <string name="status_permission_not_granted">Grant activity recognition permission to count steps</string>
-    <string name="status_play_services_update_required">Update Google Play services to keep tracking steps</string>
+    <string name="status_permission_not_granted">Grant Health Connect permission to count steps</string>
+    <string name="status_play_services_update_required">Update Health Connect to keep tracking steps</string>
     <string name="status_api_unavailable">Step tracking is not available on this device</string>
     <string name="status_error">A problem occurred while collecting step data: %1$s</string>
     <string name="status_available">Step collection is active</string>
     <string name="status_waiting_for_first_sample">Waiting for first step data</string>
     <string name="status_sample_observed">Step data has been observed</string>
+    <string name="status_stale_data">The newest step data is too old - collection may have stopped</string>
     <string name="status_unknown">Checking data collection status…</string>
-
-    <string name="validation_checking_recent_steps">Checking recent steps…</string>
-    <string name="validation_accuracy_unavailable_title">Step accuracy verification unavailable</string>
-    <string name="validation_accuracy_unavailable_message">We can\'t confirm the most recent steps were walking rather than a vehicle. Steps won\'t be counted until verification is working again.</string>
 
     <string name="sync_failure_subscription_message">Steps aren\'t syncing: subscribing to step data failed. We\'ll keep retrying automatically.</string>
     <string name="sync_failure_read_message">Steps aren\'t syncing: the last attempt to read step data failed. We\'ll keep retrying automatically.</string>
@@ -38,6 +35,9 @@
     <string name="sync_failure_time_label">Last failed: %1$s</string>
 
     <string name="action_grant_permission">Grant permission</string>
+
+    <string name="health_permissions_rationale_title">How Bukin\'s Split Step uses Health Connect</string>
+    <string name="health_permissions_rationale_body">This app reads your step count from Health Connect to show daily and weekly totals, and to automatically tell apart workout walks from everyday incidental movement. Step data is never written back to Health Connect, and is never shared with anyone else.</string>
 
     <string name="history_title">Last 7 days</string>
     <string name="history_today_label">Today</string>
@@ -98,15 +98,8 @@
     <string name="settings_debug_environment_title">Device environment</string>
     <string name="settings_debug_label_device">Device</string>
     <string name="settings_debug_label_android_version">Android version</string>
-    <string name="settings_debug_label_play_services_version">Play services (installed / required)</string>
-    <string name="settings_debug_label_step_sensors">Step sensors (counter / detector)</string>
-    <string name="settings_debug_validation_title">Vehicle-aware step validation diagnostics</string>
-    <string name="settings_debug_label_policy_version">Validation policy version</string>
-    <string name="settings_debug_label_transition_registration">Transition API registration</string>
-    <string name="settings_debug_label_sampling_registration">Sampling API registration</string>
-    <string name="settings_debug_label_last_validation">Last successful validation</string>
-    <string name="settings_debug_label_validation_counts">Bucket counts by validation state</string>
-    <string name="settings_debug_recent_events_title">Recent motion events</string>
+    <string name="settings_debug_label_health_connect_status">Health Connect available</string>
+    <string name="settings_debug_label_step_counting_supported">On-device step counting supported</string>
 
     <string name="unit_steps">steps</string>
     <string name="cadence_unit_format">%1$.0f steps/min</string>
@@ -197,7 +190,4 @@
     <string name="stats_zero_state_message">No step data yet. Start walking to see your lifetime stats here.</string>
     <string name="stats_encouragement_label">Great job, keep it up!</string>
     <string name="stats_next_marathon_format">%1$,.1f more km to complete another marathon</string>
-    <string name="stats_legacy_title">Earlier recorded steps (not vehicle-verified)</string>
-    <string name="stats_legacy_distance_format">Estimated distance: %1$,.1f km</string>
-    <string name="stats_legacy_note">This data was collected before the app started verifying steps against vehicle detection, so it isn\'t included in your verified step total, distance, Earth progress, or achievements.</string>
 </resources>

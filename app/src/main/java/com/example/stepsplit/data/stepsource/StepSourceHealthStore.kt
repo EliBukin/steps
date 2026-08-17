@@ -47,7 +47,7 @@ data class StepSourceHealthSnapshot(
  * The set of health-recording operations real diagnostic *persistence* performs after every
  * subscribe/read attempt - suspend because genuine persistence (a Preferences DataStore write, in
  * [StepSourceHealthStore] below) genuinely needs to suspend. This is deliberately NOT what
- * [LocalRecordingStepSource] depends on directly - see [StepSourceHealthSink]'s own doc comment for
+ * [HealthConnectStepSource] depends on directly - see [StepSourceHealthSink]'s own doc comment for
  * why the acquisition side needs a structurally different, non-suspending contract instead. This
  * interface is instead the contract [AsyncStepSourceHealthRecorder] speaks *to* (as its own
  * `delegate`), and the one real persistence implementations like [StepSourceHealthStore] implement.
@@ -61,13 +61,14 @@ interface StepSourceHealthRecorder {
 }
 
 /**
- * The set of health-recording operations [LocalRecordingStepSource] itself depends on -
+ * The set of health-recording operations [HealthConnectStepSource] itself depends on -
  * deliberately NON-suspending, unlike [StepSourceHealthRecorder] above. This is what "encodes the
  * acquisition-side non-blocking guarantee" at the type level rather than just by convention: a
  * `suspend fun` COULD always be implemented by suspending on real, potentially-slow persistence (as
  * [StepSourceHealthStore] legitimately does) - there is nothing in a `suspend` signature itself that
- * rules that out, which is exactly how `LocalRecordingStepSource` used to accept
- * `StepSourceHealthStore(context)` directly as an unsafe default. A plain, non-suspend `fun` cannot
+ * rules that out, which is exactly how the source this app used before Health Connect
+ * (`LocalRecordingStepSource`) used to accept `StepSourceHealthStore(context)` directly as an
+ * unsafe default. A plain, non-suspend `fun` cannot
  * naturally do that: writing a blocking implementation now requires visibly fighting the type
  * (`runBlocking` or similar), not just implementing the interface normally, so the type itself is
  * the safeguard against ever reintroducing that bug by accident. [AsyncStepSourceHealthRecorder] is

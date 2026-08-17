@@ -111,9 +111,8 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
 
-    implementation(libs.play.services.fitness)
-    implementation(libs.play.services.base)
     implementation(libs.play.services.location)
+    implementation(libs.androidx.health.connect.client)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
@@ -122,6 +121,5 @@ dependencies {
     testImplementation(libs.androidx.test.runner)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.androidx.room.testing)
-    testImplementation(libs.androidx.work.testing)
     testImplementation(platform(libs.androidx.compose.bom))
 }

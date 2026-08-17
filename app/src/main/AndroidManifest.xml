@@ -3,25 +3,11 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Android 11+ package visibility: without this, PackageManager.getPackageInfo("com.google.android.gms", ...)
-      in the debug-only DeviceDiagnostics panel (see debug/DeviceDiagnostics.kt) would throw
-      NameNotFoundException even when Play services is actually installed, since the target API 36
-      manifest opts this app into the filtered-visibility behavior by default. Narrowly scoped to
-      the one package this app actually queries - never QUERY_ALL_PACKAGES, which requires a
-      separate Play Store policy declaration/review this app has no need for.
+      Health Connect: reads on-device step data written by the platform's own step-counting
+      mechanism (see HealthConnectStepSource's own doc comment). No WRITE_STEPS - this app is
+      read-only with respect to Health Connect.
     -->
-    <queries>
-        <package android:name="com.google.android.gms" />
-    </queries>
-
-    <!-- Required to subscribe to and read on-device step data via the Recording API, and to
-         register the Activity Recognition Transition/Sampling APIs for strict step validation. -->
-    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
-
-    <!-- Lets BootAndUpdateReceiver restore motion-evidence registration after a device reboot -
-         see that receiver's own doc comment. No location/background-location permission is added
-         anywhere in this feature. -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
 
     <!--
       Trip Route Recording (see TripRecordingService): requested only when the user taps "Start
@@ -60,11 +46,36 @@
         </activity>
 
         <!--
+          Health Connect requires a screen explaining how this app uses health data, reachable
+          from Health Connect's own "App permissions" -> app -> "view usage" flow - see
+          PermissionsRationaleActivity's own doc comment. Without both declarations below, Health
+          Connect silently refuses to honor a granted READ_STEPS permission at read time.
+        -->
+        <activity
+            android:name=".ui.PermissionsRationaleActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".ui.PermissionsRationaleActivity"
+            android:permission="android.permission.health.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
           Dedicated foreground service for manually recorded GPS trips - entirely separate from
-          the WorkManager-driven step-sync pipeline. Not exported: only this app ever starts it,
-          always via an explicit Start-trip user action (or the OS restarting an already-running
-          instance after process death - see TripRecordingService's own doc comment). There is no
-          boot receiver anywhere in this manifest, so a device reboot can never auto-start it.
+          the (foreground-only, see SyncScheduler) step-sync pipeline. Not exported: only this app
+          ever starts it, always via an explicit Start-trip user action (or the OS restarting an
+          already-running instance after process death - see TripRecordingService's own doc
+          comment). There is no boot receiver anywhere in this manifest, so a device reboot can
+          never auto-start it.
         -->
         <service
             android:name=".trip.service.TripRecordingService"
@@ -72,34 +83,14 @@
             android:foregroundServiceType="location" />
 
         <!--
-          Strict step validation: motion evidence acquisition (see data/motion package). Never
-          tied to any Activity's lifecycle - registered once via MotionEvidenceRegistrar and kept
-          receiving broadcasts while the UI is fully closed.
-        -->
-        <receiver
-            android:name=".data.motion.MotionEvidenceReceiver"
-            android:exported="false" />
-
-        <!--
-          Restores motion-evidence registration after a reboot or app update - exported="true" is
-          required for these OS-originated broadcasts to ever reach it. There is no other boot
-          receiver anywhere in this manifest (the GPS trip feature deliberately has none - see
-          TripRecordingService's own doc comment).
-        -->
-        <receiver
-            android:name=".data.motion.BootAndUpdateReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-
-        <!--
-          WorkManager's default on-demand initialization is replaced with an explicit
-          Configuration.Provider implementation on StepSplitApplication so the periodic
-          sync worker can receive a manually-constructed WorkerFactory (manual DI, no
-          reflection-based worker construction).
+          WorkManager's default automatic (ContentProvider/App-Startup-based) initialization is
+          replaced with on-demand initialization via a plain Configuration.Provider implementation
+          on StepSplitApplication - no custom WorkerFactory is needed for that (there is no longer
+          any app-defined Worker class; the only WorkManager call this app makes is a one-off
+          cancelUniqueWork on an old, no-longer-scheduled job - see SyncScheduler.cleanUp), but
+          on-demand initialization is still required: Robolectric's test environment does not
+          reliably run WorkManager's own library-manifest-declared automatic initializer, only the
+          Configuration.Provider fallback.
         -->
         <provider
             android:name="androidx.startup.InitializationProvider"

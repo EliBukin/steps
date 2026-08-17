@@ -39,7 +39,7 @@ class FakeStepSource(
         availability is StepSourceAvailability.Available && subscribeSucceeds
 
     override suspend fun readSteps(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval> {
-        // Mirrors LocalRecordingStepSource: unavailable-during-read must throw, never look like a
+        // Mirrors HealthConnectStepSource: unavailable-during-read must throw, never look like a
         // genuinely empty (but successful) read - see StepSource.readSteps's own doc comment. In
         // normal (non-racy) use this is unreachable, since StepRepository always checks
         // availability itself first and never calls readSteps while unavailable; it only matters

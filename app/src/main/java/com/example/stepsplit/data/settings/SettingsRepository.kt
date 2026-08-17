@@ -118,9 +118,8 @@ class SettingsRepository(context: Context) {
     }
 
     /**
-     * Persisted (not just in-memory ViewModel state) so a failure that happens during a
-     * background WorkManager sync is still visible the next time the app is opened, not only
-     * during the ViewModel call that happened to trigger it.
+     * Persisted (not just in-memory ViewModel state) so a failure is still visible the next time
+     * the app is opened, not only during the specific foreground refresh call that hit it.
      */
     suspend fun recordSyncFailure(failure: SyncFailure) {
         dataStore.edit { prefs ->

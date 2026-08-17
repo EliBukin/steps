@@ -95,10 +95,13 @@ fun StepSplitApp(
                 TodayScreen(
                     uiState = uiState,
                     onRefresh = viewModel::refresh,
-                    // Immediately re-checks availability and performs a subscription/sync attempt
-                    // the moment the permission is actually granted, rather than relying on the
-                    // next incidental LifecycleResumeEffect-driven resume to notice - see
-                    // MainActivity.requestActivityRecognitionPermission's own doc comment.
+                    // Immediately re-checks availability and attempts a sync the moment the
+                    // permission is actually granted. The system consent dialog launched by
+                    // MainActivity.requestHealthConnectPermission also pauses and resumes this
+                    // Activity, so TodayScreen's own resume effect fires an overlapping refresh()
+                    // around the same moment - viewModel.refresh() coalesces that redundancy away
+                    // rather than either caller needing to avoid the other (see its own doc
+                    // comment).
                     onGrantPermission = { onRequestPermission { granted -> if (granted) viewModel.refresh() } },
                 )
             }

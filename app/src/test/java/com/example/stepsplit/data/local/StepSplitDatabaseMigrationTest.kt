@@ -498,6 +498,150 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v4 -> v5 migration (adding `step_counter_samples` for
+     * [com.example.stepsplit.data.stepsource.SensorStepCounterSource] - see
+     * [StepSplitDatabase.MIGRATION_4_5]'s own doc comment) is both schema-correct and preserves
+     * every existing row untouched, using the same strategy as the tests above: a complete v4
+     * database is built from the exact `createSql`/`setupQueries` in the exported `4.json`, one
+     * representative row is seeded into `step_buckets` (plus `activity_intervals`,
+     * `temporal_continuity_state`, and `motion_evidence` to prove the migration touches none of
+     * them), and a real [StepSplitDatabase] then migrates and validates it. This is the direct
+     * regression test for "preserve the existing database and all raw buckets" - the field
+     * investigation this migration was written for had exactly 94 such rows.
+     */
+    @Test
+    fun `v4 to v5 full schema migration`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v4_v5.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildCompleteV4Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                val bucketCursor = migrated.query(
+                    "SELECT source, startEpochSecond, steps, validationState FROM step_buckets WHERE id = 1",
+                )
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals("local_recording_api", bucketCursor.getString(0))
+                assertEquals(1_000L, bucketCursor.getLong(1))
+                assertEquals(42L, bucketCursor.getLong(2))
+                assertEquals("LEGACY_UNVERIFIED", bucketCursor.getString(3))
+                bucketCursor.close()
+
+                val intervalCursor = migrated.query("SELECT COUNT(*) FROM activity_intervals")
+                assertTrue(intervalCursor.moveToFirst())
+                assertEquals(1, intervalCursor.getInt(0))
+                intervalCursor.close()
+
+                val evidenceCursor = migrated.query("SELECT COUNT(*) FROM motion_evidence")
+                assertTrue(evidenceCursor.moveToFirst())
+                assertEquals(1, evidenceCursor.getInt(0))
+                evidenceCursor.close()
+
+                // The new table exists and is actually usable, not merely present.
+                val emptySamplesCursor = migrated.query("SELECT COUNT(*) FROM step_counter_samples")
+                assertTrue(emptySamplesCursor.moveToFirst())
+                assertEquals(0, emptySamplesCursor.getInt(0))
+                emptySamplesCursor.close()
+
+                migrated.execSQL(
+                    "INSERT INTO step_counter_samples (cumulativeSteps, elapsedRealtimeMillisAtSample, " +
+                        "wallClockEpochMilli, bootSessionId, receivedAtEpochMilli) VALUES (500, 60000, 1723100000000, 3, 1723100000000)",
+                )
+                val sampleCursor = migrated.query("SELECT cumulativeSteps FROM step_counter_samples")
+                assertTrue(sampleCursor.moveToFirst())
+                assertEquals(500L, sampleCursor.getLong(0))
+                sampleCursor.close()
+
+                // The unique (bootSessionId, elapsedRealtimeMillisAtSample) index is enforced.
+                var duplicateRejected = false
+                try {
+                    migrated.execSQL(
+                        "INSERT INTO step_counter_samples (cumulativeSteps, elapsedRealtimeMillisAtSample, " +
+                            "wallClockEpochMilli, bootSessionId, receivedAtEpochMilli) VALUES (999, 60000, 1723100000000, 3, 1723100000000)",
+                    )
+                } catch (e: Exception) {
+                    duplicateRejected = true
+                }
+                assertTrue("duplicate (bootSessionId, elapsedRealtimeMillisAtSample) must be rejected by the unique index", duplicateRejected)
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /** Same approach as [buildCompleteV3Database], parsing `4.json` and seeding one row per v4 table. */
+    private fun buildCompleteV4Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/4.json")
+        check(schemaFile.exists()) {
+            "Expected the exported v4 schema at ${schemaFile.absolutePath} - " +
+                "this test must run with the app/ module directory as the working directory " +
+                "(true for `gradlew testDebugUnitTest`, which this project's tests are run under)."
+        }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(4) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                val indexSql = indices.getJSONObject(j).getString("createSql")
+                                db.execSQL(indexSql.replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+            db.execSQL(
+                "INSERT INTO activity_intervals (activityType, startWallClockEpochMilli, endWallClockEpochMilli, " +
+                    "temporalContinuityEpoch, closedReason) VALUES ('WALKING', 1000000, NULL, 1, 'OPEN')",
+            )
+            db.execSQL(
+                "INSERT INTO temporal_continuity_state (id, bootSessionId, bootEpochOffsetMillis, temporalContinuityEpoch) " +
+                    "VALUES (0, 5, 123456, 1)",
+            )
+            db.execSQL(
+                "INSERT INTO motion_evidence (kind, activityType, confidence, eventElapsedRealtimeMillis, bootSessionId, " +
+                    "derivedWallClockEpochMilli, temporalContinuityEpoch, receivedAtEpochMilli, dedupeKey, batchId) " +
+                    "VALUES ('SAMPLED', 'WALKING', 80, 2000, 5, 1000000, 1, 1000010, 'dedupe-1', 'batch-1')",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

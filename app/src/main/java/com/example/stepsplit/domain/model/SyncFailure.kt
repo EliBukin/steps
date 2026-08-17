@@ -8,7 +8,7 @@ enum class SyncFailureCategory {
     /** [com.example.stepsplit.data.stepsource.StepSource.ensureSubscribed] returned false. */
     SUBSCRIPTION_FAILED,
 
-    /** The step source's own read call failed - e.g. a non-success Local Recording API response. */
+    /** The step source's own read call failed - e.g. a non-success Health Connect read. */
     READ_FAILED,
 
     /** Any other unexpected failure during the sync pipeline. */
@@ -17,8 +17,8 @@ enum class SyncFailureCategory {
 
 /**
  * A structured record of the most recent sync failure, persisted (not just held in memory) so a
- * failure that happens during a background WorkManager sync is still visible the next time the
- * app is opened - see [com.example.stepsplit.data.settings.SettingsRepository]. Cleared the next
+ * failure is still visible the next time the app is opened - see
+ * [com.example.stepsplit.data.settings.SettingsRepository]. Cleared the next
  * time a sync genuinely succeeds; a source-availability problem (missing permission, API
  * unavailable) is a separate, orthogonal concern - see
  * [com.example.stepsplit.data.stepsource.StepSourceAvailability] - and does not go through this.

@@ -89,34 +89,6 @@ fun StatsScreen(
         if (stats.hasData) {
             item { EncouragementCard(stats.kilometersToNextMarathon) }
         }
-
-        if (uiState.legacyStats.lifetimeSteps > 0) {
-            item { LegacyStepsCard(uiState.legacyStats.lifetimeSteps, uiState.legacyEstimatedKilometers) }
-        }
-    }
-}
-
-/**
- * Pre-existing history recorded before this app collected motion evidence at all - see
- * [StatsUiState.legacyStats]'s own doc comment. Deliberately its own compact card, never merged
- * into the verified lifetime steps/distance/globe-progress/achievement cards above - those must
- * only ever reflect vehicle-verified walking.
- */
-@Composable
-private fun LegacyStepsCard(steps: Long, estimatedKilometers: Double) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text = stringResource(R.string.stats_legacy_title), style = MaterialTheme.typography.labelLarge)
-            Text(text = "$steps ${stringResource(R.string.unit_steps)}", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                text = stringResource(R.string.stats_legacy_distance_format, estimatedKilometers),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(text = stringResource(R.string.stats_legacy_note), style = MaterialTheme.typography.bodySmall)
-        }
     }
 }
 

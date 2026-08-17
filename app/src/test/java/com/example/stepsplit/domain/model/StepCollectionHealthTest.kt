@@ -86,4 +86,72 @@ class StepCollectionHealthTest {
             assertEquals(StepCollectionHealth.SAMPLE_OBSERVED, health)
         }
     }
+
+    @Test
+    fun `staleness is never evaluated when latestSampleEpochSecond or nowEpochSecond is omitted - existing callers are unaffected`() {
+        assertEquals(
+            StepCollectionHealth.SAMPLE_OBSERVED,
+            deriveStepCollectionHealth(StepSourceAvailability.Available, syncFailure = null, everObservedSample = true),
+        )
+        assertEquals(
+            StepCollectionHealth.SAMPLE_OBSERVED,
+            deriveStepCollectionHealth(
+                StepSourceAvailability.Available, syncFailure = null, everObservedSample = true,
+                latestSampleEpochSecond = 100L, nowEpochSecond = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `a newest sample within the staleness threshold is still SAMPLE_OBSERVED`() {
+        val now = 1_000_000L
+        assertEquals(
+            StepCollectionHealth.SAMPLE_OBSERVED,
+            deriveStepCollectionHealth(
+                StepSourceAvailability.Available, syncFailure = null, everObservedSample = true,
+                latestSampleEpochSecond = now - 3600, nowEpochSecond = now, staleThresholdSeconds = 48L * 3600,
+            ),
+        )
+    }
+
+    @Test
+    fun `a newest sample from 7 days ago is STALE - the exact real-device gap this state closes`() {
+        val now = 1_000_000L
+        val sevenDaysAgo = now - 7L * 24 * 3600
+        assertEquals(
+            StepCollectionHealth.STALE,
+            deriveStepCollectionHealth(
+                StepSourceAvailability.Available, syncFailure = null, everObservedSample = true,
+                latestSampleEpochSecond = sevenDaysAgo, nowEpochSecond = now, staleThresholdSeconds = 48L * 3600,
+            ),
+        )
+    }
+
+    @Test
+    fun `a sync failure still wins over staleness - never a weaker claim than an active failure`() {
+        val now = 1_000_000L
+        val sevenDaysAgo = now - 7L * 24 * 3600
+        assertEquals(
+            StepCollectionHealth.READ_FAILED,
+            deriveStepCollectionHealth(
+                StepSourceAvailability.Available,
+                SyncFailure(SyncFailureCategory.READ_FAILED, now),
+                everObservedSample = true,
+                latestSampleEpochSecond = sevenDaysAgo,
+                nowEpochSecond = now,
+            ),
+        )
+    }
+
+    @Test
+    fun `WAITING_FOR_FIRST_SAMPLE still wins over staleness - no sample yet is not the same problem as a stale one`() {
+        val now = 1_000_000L
+        assertEquals(
+            StepCollectionHealth.WAITING_FOR_FIRST_SAMPLE,
+            deriveStepCollectionHealth(
+                StepSourceAvailability.Available, syncFailure = null, everObservedSample = false,
+                latestSampleEpochSecond = null, nowEpochSecond = now,
+            ),
+        )
+    }
 }

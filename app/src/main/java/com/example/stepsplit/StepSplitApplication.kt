@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.work.Configuration
 import com.example.stepsplit.di.AppContainer
 import com.example.stepsplit.sync.SyncScheduler
-import kotlinx.coroutines.launch
 
 class StepSplitApplication : Application(), Configuration.Provider {
 
@@ -14,17 +13,15 @@ class StepSplitApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        // Idempotent: ExistingPeriodicWorkPolicy.KEEP means this is safe to call on every start.
-        SyncScheduler.schedulePeriodicSync(this)
-        // Idempotent (see MotionEvidenceRegistrar.ensureRegistered's own doc comment) - fire-and-
-        // forget on the process-lifetime motionEvidenceScope, since Application.onCreate is not a
-        // suspend context. Deliberately NOT tied to any Activity's lifecycle, so registration (and
-        // therefore evidence collection) stays live even while the UI is fully closed.
-        container.motionEvidenceScope.launch { container.motionEvidenceRegistrar.ensureRegistered() }
+        // Step import is foreground-only - see SyncScheduler's own doc comment. This only cancels
+        // an old periodic WorkManager job that may still be persisted from a prior app version; it
+        // schedules nothing new, and is a safe no-op once that job is gone.
+        SyncScheduler.cleanUp(this)
     }
 
+    // On-demand WorkManager initialization (see the manifest's own doc comment on why this stays)
+    // with a plain default Configuration - no custom WorkerFactory: this app defines no Worker
+    // class of its own anymore.
     override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setWorkerFactory(container.workerFactory)
-            .build()
+        get() = Configuration.Builder().build()
 }

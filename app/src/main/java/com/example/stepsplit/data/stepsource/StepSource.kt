@@ -22,11 +22,11 @@ sealed interface StepSourceAvailability {
 }
 
 /**
- * A pluggable source of step data. The MVP ships exactly one production implementation
- * ([LocalRecordingStepSource], backed by the accountless Recording API's local-only client) plus
- * [FakeStepSource] for tests and debug builds - but repository code depends only on this
- * interface, so a future Health Connect or on-device sensor provider can be added later without
- * touching the classification, aggregation, or UI layers.
+ * A pluggable source of step data. Production ships exactly one implementation
+ * ([HealthConnectStepSource], backed by Health Connect's on-device step counting) plus
+ * [FakeStepSource] for tests and debug builds - repository code depends only on this interface,
+ * and production must never combine or merge several simultaneously active sources (see
+ * [HealthConnectStepSource]'s own doc comment).
  */
 interface StepSource {
     val id: String
@@ -60,3 +60,17 @@ class StepSourceUnavailableException(
     val availability: StepSourceAvailability,
     message: String = "Step source became unavailable during read: $availability",
 ) : Exception(message)
+
+/**
+ * Thrown by [StepSource.readSteps] when the underlying source reports a genuine read failure
+ * (not an availability problem - see [StepSourceUnavailableException] for that). Reported by
+ * [com.example.stepsplit.data.repository.StepRepository] as [com.example.stepsplit.data.repository.SyncResult.Failed]
+ * without touching previously stored data. [apiFailure] is the sanitized category behind the
+ * failure, when known - never exposed as raw text in release UI; [cause] is kept for debug-only
+ * logging, never surfaced to the user.
+ */
+class StepSourceReadException(
+    message: String,
+    val apiFailure: ApiFailure? = null,
+    cause: Throwable? = null,
+) : Exception(message, cause)

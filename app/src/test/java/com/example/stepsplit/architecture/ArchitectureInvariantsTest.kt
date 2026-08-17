@@ -85,28 +85,95 @@ class ArchitectureInvariantsTest {
         )
     }
 
-    @Test
-    fun `domain-validation package stays pure Kotlin - no Android or GMS import`() {
-        // StrictStepValidationPolicy and IntervalReconstructor both document themselves as pure,
-        // no-Android decision engines (every timestamp/evidence value is passed in explicitly) -
-        // this is what makes them independently unit-testable and source-independent (a future
-        // Sensor.TYPE_STEP_COUNTER source passes through the identical validator). An Android or
-        // GMS import creeping in here would be the first sign of that boundary eroding.
-        val validationDir = File(mainSourceRoot, "domain/validation")
-        check(validationDir.isDirectory) { "Expected to find $validationDir" }
-        val violations = validationDir.walkTopDown()
+    /**
+     * Step acquisition/repository/classification code - everything automatic step counting
+     * touches - must never depend on the manually-started GPS trip feature. See the product
+     * requirement: step counting must never depend on GPS, trip state, location permission,
+     * location availability, route points, distance, or `TripRecordingService`.
+     */
+    private val stepSourceDirs = listOf(
+        "data/repository",
+        "data/stepsource",
+        "data/local/bucket",
+        "data/local/bout",
+        "data/local/override",
+        "domain/classification",
+        "domain/aggregation",
+        "domain/stats",
+    )
+
+    /** GPS trip recording code - everything manually-started trip recording touches - must never depend on step data. */
+    private val gpsDirs = listOf(
+        "data/trip",
+        "trip/service",
+        "domain/trip",
+        "data/local/trip",
+    )
+
+    private fun importLines(dirs: List<String>): List<Pair<File, String>> = dirs.flatMap { dir ->
+        val root = File(mainSourceRoot, dir)
+        if (!root.isDirectory) return@flatMap emptyList()
+        root.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .flatMap { file ->
                 file.readLines()
-                    .filter { line ->
-                        val trimmed = line.trimStart()
-                        trimmed.startsWith("import android.") || trimmed.startsWith("import com.google.android.gms")
-                    }
-                    .map { line -> "${file.name}: ${line.trim()}" }
+                    .map { it.trimStart() }
+                    .filter { it.startsWith("import ") }
+                    .map { file to it }
             }
             .toList()
+    }
+
+    @Test
+    fun `step acquisition and repository code never imports the GPS trip feature`() {
+        val forbiddenPrefixes = listOf(
+            "import com.example.stepsplit.data.trip",
+            "import com.example.stepsplit.trip.service",
+            "import com.example.stepsplit.domain.trip",
+            "import com.example.stepsplit.data.local.trip",
+            "import com.google.android.gms.location.FusedLocationProviderClient",
+        )
+        val violations = importLines(stepSourceDirs)
+            .filter { (_, line) -> forbiddenPrefixes.any { line.startsWith(it) } }
+            .map { (file, line) -> "${file.path}: $line" }
         assertTrue(
-            "domain/validation must stay pure Kotlin with no Android/GMS dependency:\n${violations.joinToString("\n")}",
+            "Step acquisition/repository code must never depend on the GPS trip feature (see the product requirement that step counting is completely independent of GPS):\n${violations.joinToString("\n")}",
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `step acquisition and repository code never references location permissions or FusedLocationProviderClient`() {
+        val forbiddenTokens = listOf("ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "FusedLocationProviderClient")
+        val violations: List<String> = stepSourceDirs.flatMap { dir ->
+            val root = File(mainSourceRoot, dir)
+            if (!root.isDirectory) return@flatMap emptyList<String>()
+            root.walkTopDown().filter { it.isFile && it.extension == "kt" }.flatMap { file ->
+                val text = file.readText()
+                forbiddenTokens.filter { text.contains(it) }.map { token -> "${file.path}: references $token" }
+            }.toList()
+        }
+        assertTrue(
+            "Step acquisition/repository code must never reference location permissions - opening Today must never request location:\n${violations.joinToString("\n")}",
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `GPS trip code never imports step repository, step source, or step-classification tables`() {
+        val forbiddenPrefixes = listOf(
+            "import com.example.stepsplit.data.repository",
+            "import com.example.stepsplit.data.stepsource",
+            "import com.example.stepsplit.data.local.bucket",
+            "import com.example.stepsplit.data.local.bout",
+            "import com.example.stepsplit.data.local.override",
+            "import com.example.stepsplit.domain.classification",
+        )
+        val violations = importLines(gpsDirs)
+            .filter { (_, line) -> forbiddenPrefixes.any { line.startsWith(it) } }
+            .map { (file, line) -> "${file.path}: $line" }
+        assertTrue(
+            "GPS trip code must never depend on step data/repository/classification (see the product requirement that GPS never reads, writes, or influences steps):\n${violations.joinToString("\n")}",
             violations.isEmpty(),
         )
     }
