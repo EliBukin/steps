@@ -22,6 +22,16 @@
     <!-- Lets the recording notification actually show on API 33+; a denial is handled honestly (see TripsViewModel), never assumed granted. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      Completed-trip detail map only (ui/trips/TripRouteMap.kt): fetches basemap style/vector
+      tiles from OpenFreeMap (a free, keyless tile provider - no API key/secret is stored anywhere
+      in this app) while the trip-detail screen is visible, to display the already-recorded route
+      on a real map. Never used for live location, navigation, or background loading - see
+      README's "Trip detail map" section. No other feature in this app performs any network
+      request.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".StepSplitApplication"
         android:allowBackup="false"

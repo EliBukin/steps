@@ -17,8 +17,6 @@ import com.example.stepsplit.data.local.motion.MotionEvidenceDao
 import com.example.stepsplit.data.local.motion.MotionEvidenceEntity
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
-import com.example.stepsplit.data.local.override.SessionOverrideDao
-import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleDao
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleEntity
 import com.example.stepsplit.data.local.trip.TripDao
@@ -37,14 +35,18 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
  * installation may already be on schema version 2 with real `manual_walks` rows, and removing an
  * entity/table safely requires its own dedicated migration (`DROP TABLE`) rather than an
  * opportunistic deletion alongside an unrelated change. Dropping `manual_walks` is left to a
- * future, dedicated migration that bumps [version] to 3. There is deliberately no DAO for it
- * anymore - only the entity declaration is needed to keep the schema consistent.
+ * future, dedicated migration. There is deliberately no DAO for it anymore - only the entity
+ * declaration is needed to keep the schema consistent.
+ *
+ * The now-removed `SessionOverrideEntity` (manual walking-bout reclassification, and the Sessions
+ * screen that surfaced it) is a counterexample to that same compatibility policy: unlike
+ * `manual_walks`, dropping `session_overrides` in [MIGRATION_5_6] *was* done as its own dedicated,
+ * explicit migration rather than left in place - see that migration's own doc comment.
  */
 @Database(
     entities = [
         StepBucketEntity::class,
         WalkBoutEntity::class,
-        SessionOverrideEntity::class,
         ManualWalkEntity::class,
         TripEntity::class,
         TripPointEntity::class,
@@ -53,13 +55,12 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         MotionEvidenceEntity::class,
         StepCounterSampleEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun stepBucketDao(): StepBucketDao
     abstract fun walkBoutDao(): WalkBoutDao
-    abstract fun sessionOverrideDao(): SessionOverrideDao
     abstract fun tripDao(): TripDao
     abstract fun tripPointDao(): TripPointDao
     abstract fun activityIntervalDao(): ActivityIntervalDao
@@ -234,8 +235,24 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v5 -> v6: drops `session_overrides`. It backed manual walking-bout reclassification and
+         * the Sessions screen, both removed - unlike `manual_walks` (see this class's own doc
+         * comment for why that one is instead kept in place indefinitely), removing this table is
+         * safe as a clean, dedicated migration: `session_overrides` held nothing but reclassify
+         * choices layered on top of `walk_bouts`, so dropping it discards only those manual
+         * overrides, never a raw step, a `walk_bouts` row, or any other table. `walk_bouts` itself,
+         * `step_buckets`, `trips`/`trip_points`, motion evidence, and `step_counter_samples` are all
+         * completely untouched by this migration.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `session_overrides`")
+            }
+        }
+
         /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

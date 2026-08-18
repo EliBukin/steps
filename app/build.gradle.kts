@@ -114,6 +114,12 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.androidx.health.connect.client)
 
+    // Completed-trip detail map only (ui/trips/TripRouteMap.kt) - official MapLibre Compose,
+    // consumed directly as a plain Android AAR (no Kotlin Multiplatform plugin needed; its
+    // Android-target Compose dependencies resolve to the same real androidx Compose artifacts
+    // already pinned by this project's own compose-bom). See README's "Trip detail map" section.
+    implementation(libs.maplibre.compose.android)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)

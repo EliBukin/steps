@@ -1,7 +1,6 @@
 package com.example.stepsplit.ui
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Place
@@ -39,8 +38,6 @@ import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.navigation.bottomNavScreens
-import com.example.stepsplit.ui.sessions.SessionsScreen
-import com.example.stepsplit.ui.sessions.SessionsViewModel
 import com.example.stepsplit.ui.settings.SettingsScreen
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.stats.StatsScreen
@@ -115,11 +112,6 @@ fun StepSplitApp(
                 val uiState by viewModel.uiState.collectAsState()
                 StatsScreen(uiState = uiState, onRefresh = viewModel::refresh)
             }
-            composable(Screen.Sessions.route) {
-                val viewModel: SessionsViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                SessionsScreen(uiState = uiState, onRefresh = viewModel::refresh, onReclassify = viewModel::reclassify)
-            }
             composable(Screen.Trips.route) {
                 val viewModel: TripsViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
@@ -189,7 +181,6 @@ private fun Screen.icon(): ImageVector = when (this) {
     Screen.Today -> Icons.Filled.Home
     Screen.History -> Icons.Filled.DateRange
     Screen.Stats -> Icons.Filled.Star
-    Screen.Sessions -> Icons.AutoMirrored.Filled.List
     Screen.Trips -> Icons.Filled.Place
     Screen.Settings -> Icons.Filled.Settings
     is Screen.TripDetail -> Icons.Filled.Place
@@ -199,7 +190,6 @@ private fun Screen.labelRes(): Int = when (this) {
     Screen.Today -> R.string.nav_today
     Screen.History -> R.string.nav_history
     Screen.Stats -> R.string.nav_stats
-    Screen.Sessions -> R.string.nav_sessions
     Screen.Trips -> R.string.nav_trips
     Screen.Settings -> R.string.nav_settings
     is Screen.TripDetail -> R.string.nav_trips

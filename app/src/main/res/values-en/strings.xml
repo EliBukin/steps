@@ -5,7 +5,6 @@
     <string name="nav_today">Today</string>
     <string name="nav_history">History</string>
     <string name="nav_stats">Stats</string>
-    <string name="nav_sessions">Sessions</string>
     <string name="nav_trips">Trips</string>
     <string name="nav_settings">Settings</string>
 
@@ -41,25 +40,11 @@
 
     <string name="history_title">Last 7 days</string>
     <string name="history_today_label">Today</string>
-
-    <string name="sessions_title">Walking sessions</string>
-    <string name="sessions_empty">No walking sessions detected yet</string>
-    <string name="session_classification_workout">Workout walk</string>
-    <string name="session_classification_incidental">Everyday movement</string>
-    <string name="session_origin_auto">Auto-detected</string>
-    <string name="session_origin_manual">Manual</string>
-    <string name="session_reclassify_action">Reclassify</string>
-    <string name="session_reclassify_dialog_title">Classify this session</string>
-    <string name="session_confidence_label">Confidence: %1$d%%</string>
-    <string name="session_duration_format">%1$d min</string>
-
-    <string name="reason_meets_all_thresholds">Meets every workout threshold</string>
-    <string name="reason_duration_too_short">Too short in duration for a workout</string>
-    <string name="reason_too_few_active_minutes">Too few active minutes for a workout</string>
-    <string name="reason_too_few_steps">Too few steps for a workout</string>
-    <string name="reason_cadence_too_low">Cadence too slow for a workout</string>
-    <string name="reason_multiple_not_met">Several workout conditions were not met</string>
-    <string name="reason_manually_reclassified">You manually changed this classification</string>
+    <string name="history_chart_goal_label">Daily goal: %1$s steps</string>
+    <string name="history_estimated_distance_label">Estimated distance</string>
+    <string name="history_estimated_distance_km_format">%1$,.1f km</string>
+    <string name="history_estimated_distance_meters_format">%1$d m</string>
+    <string name="cd_total_steps">Total steps: %1$s</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_daily_goal_label">Daily step goal</string>
@@ -75,7 +60,7 @@
     <string name="settings_threshold_min_cadence">Minimum cadence (steps per minute)</string>
     <string name="settings_reset_thresholds">Reset to defaults</string>
     <string name="settings_classification_limitation_title">Limitations of automatic classification</string>
-    <string name="settings_classification_limitation_note">A phone cannot know your intent with certainty - a continuous walk to a store can look identical to a walking workout. Classification uses a transparent heuristic only. You can correct any classification on the Sessions screen, and a manual correction always overrides the automatic result.</string>
+    <string name="settings_classification_limitation_note">A phone cannot know your intent with certainty - a continuous walk to a store can look identical to a walking workout. Classification uses a transparent heuristic only, and you can adjust its thresholds right here in Settings.</string>
     <string name="settings_permission_status_title">Permission status</string>
     <string name="settings_data_collection_status_title">Data collection status</string>
     <string name="settings_debug_section_title">Debug tools (debug builds only)</string>
@@ -102,7 +87,6 @@
     <string name="settings_debug_label_step_counting_supported">On-device step counting supported</string>
 
     <string name="unit_steps">steps</string>
-    <string name="cadence_unit_format">%1$.0f steps/min</string>
     <string name="percent_of_goal_format">%1$d%% of goal</string>
 
     <string name="cd_daily_progress">Daily goal progress, %1$d percent</string>
@@ -151,6 +135,9 @@
     <string name="trip_detail_end_label">Finished</string>
     <string name="trip_detail_duration_label">Duration</string>
     <string name="trip_detail_distance_label">Distance</string>
+    <string name="trip_detail_export_gpx_action">Export GPX</string>
+    <string name="trip_gpx_export_success">GPX file saved successfully</string>
+    <string name="trip_gpx_export_failure">Failed to save the GPX file</string>
     <string name="trip_detail_delete_action">Delete trip</string>
     <string name="trip_detail_delete_confirm_title">Delete this trip?</string>
     <string name="trip_detail_delete_confirm_message">This permanently deletes the trip and its recorded route. This cannot be undone.</string>
@@ -169,7 +156,10 @@
 
     <string name="cd_trip_recording_active">Trip recording is active</string>
     <string name="cd_trip_route_trace">Map of the recorded route</string>
+    <string name="cd_trip_map_with_markers">Map of the recorded route, including start and finish markers</string>
     <string name="cd_navigate_back">Back</string>
+    <string name="trip_detail_map_unavailable_message">The map couldn\'t be loaded (you may be offline). Showing an offline route trace instead.</string>
+    <string name="trip_detail_map_retry_action">Retry map</string>
 
     <string name="stats_title">Lifetime Stats</string>
     <string name="stats_lifetime_steps_label">Total steps ever</string>
@@ -180,6 +170,11 @@
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
     <string name="stats_earth_percent_below_min">Less than 0.01%</string>
+    <string name="stats_moon_progress_label">Progress to the Moon</string>
+    <string name="stats_moon_percent_format">%1$.2f%%</string>
+    <string name="stats_moon_percent_zero">0%</string>
+    <string name="stats_moon_percent_below_min">Less than 0.01%</string>
+    <string name="stats_moon_progress_context_format">%1$,.1f of %2$,.0f km to the Moon</string>
     <string name="stats_marathon_label">Marathon equivalents</string>
     <string name="stats_marathon_format">%1$,.1f</string>
     <string name="stats_active_days_label">Active days</string>

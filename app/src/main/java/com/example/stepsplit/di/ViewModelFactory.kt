@@ -3,7 +3,6 @@ package com.example.stepsplit.di
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.stepsplit.ui.history.HistoryViewModel
-import com.example.stepsplit.ui.sessions.SessionsViewModel
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayViewModel
@@ -28,8 +27,6 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         )
 
         StatsViewModel::class.java -> StatsViewModel(container.stepRepository)
-
-        SessionsViewModel::class.java -> SessionsViewModel(container.stepRepository)
 
         SettingsViewModel::class.java -> SettingsViewModel(
             container.settingsRepository,

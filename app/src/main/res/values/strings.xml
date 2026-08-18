@@ -5,7 +5,6 @@
     <string name="nav_today">היום</string>
     <string name="nav_history">היסטוריה</string>
     <string name="nav_stats">סטטיסטיקה</string>
-    <string name="nav_sessions">הליכות</string>
     <string name="nav_trips">טיולים</string>
     <string name="nav_settings">הגדרות</string>
 
@@ -41,25 +40,11 @@
 
     <string name="history_title">7 הימים האחרונים</string>
     <string name="history_today_label">היום</string>
-
-    <string name="sessions_title">הליכות</string>
-    <string name="sessions_empty">לא זוהו הליכות עדיין</string>
-    <string name="session_classification_workout">אימון הליכה</string>
-    <string name="session_classification_incidental">תנועה יומיומית</string>
-    <string name="session_origin_auto">זוהה אוטומטית</string>
-    <string name="session_origin_manual">ידני</string>
-    <string name="session_reclassify_action">שינוי סיווג</string>
-    <string name="session_reclassify_dialog_title">סיווג ההליכה</string>
-    <string name="session_confidence_label">רמת ביטחון: %1$d%%</string>
-    <string name="session_duration_format">%1$d דקות</string>
-
-    <string name="reason_meets_all_thresholds">עומד בכל הסף להגדרת אימון</string>
-    <string name="reason_duration_too_short">משך ההליכה קצר מדי לאימון</string>
-    <string name="reason_too_few_active_minutes">מעט מדי דקות פעילות לאימון</string>
-    <string name="reason_too_few_steps">מספר הצעדים נמוך מדי לאימון</string>
-    <string name="reason_cadence_too_low">קצב הצעידה איטי מדי לאימון</string>
-    <string name="reason_multiple_not_met">מספר תנאים לא התקיימו עבור אימון</string>
-    <string name="reason_manually_reclassified">הסיווג שונה ידנית על ידך</string>
+    <string name="history_chart_goal_label">יעד יומי: %1$s צעדים</string>
+    <string name="history_estimated_distance_label">מרחק משוער</string>
+    <string name="history_estimated_distance_km_format">%1$,.1f ק״מ</string>
+    <string name="history_estimated_distance_meters_format">%1$d מ׳</string>
+    <string name="cd_total_steps">סך הכול צעדים: %1$s</string>
 
     <string name="settings_title">הגדרות</string>
     <string name="settings_daily_goal_label">יעד צעדים יומי</string>
@@ -75,7 +60,7 @@
     <string name="settings_threshold_min_cadence">קצב צעידה מזערי (צעדים לדקה)</string>
     <string name="settings_reset_thresholds">איפוס לברירת המחדל</string>
     <string name="settings_classification_limitation_title">מגבלות הסיווג האוטומטי</string>
-    <string name="settings_classification_limitation_note">מכשיר נייד אינו יכול לדעת בוודאות מהי כוונת המשתמש - הליכה רצופה לחנות עשויה להיראות זהה להליכת אימון. הסיווג מבוסס על היוריסטיקה שקופה בלבד. ניתן לתקן כל סיווג באופן ידני במסך ההליכות, ותיקון ידני תמיד גובר על הסיווג האוטומטי.</string>
+    <string name="settings_classification_limitation_note">מכשיר נייד אינו יכול לדעת בוודאות מהי כוונת המשתמש - הליכה רצופה לחנות עשויה להיראות זהה להליכת אימון. הסיווג מבוסס על היוריסטיקה שקופה בלבד, וניתן להתאים את הסף שלה בהגדרות אלו.</string>
     <string name="settings_permission_status_title">סטטוס הרשאה</string>
     <string name="settings_data_collection_status_title">סטטוס איסוף נתונים</string>
     <string name="settings_debug_section_title">כלי פיתוח (Debug בלבד)</string>
@@ -102,7 +87,6 @@
     <string name="settings_debug_label_step_counting_supported">ספירת צעדים במכשיר נתמכת</string>
 
     <string name="unit_steps">צעדים</string>
-    <string name="cadence_unit_format">%1$.0f צעדים לדקה</string>
     <string name="percent_of_goal_format">%1$d%% מהיעד</string>
 
     <string name="cd_daily_progress">התקדמות יעד יומי, %1$d אחוז</string>
@@ -151,6 +135,9 @@
     <string name="trip_detail_end_label">סיום</string>
     <string name="trip_detail_duration_label">משך</string>
     <string name="trip_detail_distance_label">מרחק</string>
+    <string name="trip_detail_export_gpx_action">ייצוא GPX</string>
+    <string name="trip_gpx_export_success">קובץ ה-GPX נשמר בהצלחה</string>
+    <string name="trip_gpx_export_failure">שמירת קובץ ה-GPX נכשלה</string>
     <string name="trip_detail_delete_action">מחיקת טיול</string>
     <string name="trip_detail_delete_confirm_title">למחוק את הטיול הזה?</string>
     <string name="trip_detail_delete_confirm_message">פעולה זו תמחק לצמיתות את הטיול ואת המסלול שנרשם. לא ניתן לבטל פעולה זו.</string>
@@ -169,7 +156,10 @@
 
     <string name="cd_trip_recording_active">הקלטת טיול פעילה</string>
     <string name="cd_trip_route_trace">מפת המסלול שנרשם</string>
+    <string name="cd_trip_map_with_markers">מפת המסלול שנרשם, כולל סמן התחלה וסמן סיום</string>
     <string name="cd_navigate_back">חזרה</string>
+    <string name="trip_detail_map_unavailable_message">לא ניתן היה לטעון את המפה (ייתכן שאין חיבור לאינטרנט). מוצג קו מסלול לא מקוון במקום.</string>
+    <string name="trip_detail_map_retry_action">נסה לטעון את המפה שוב</string>
 
     <string name="stats_title">סטטיסטיקה לכל הזמנים</string>
     <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
@@ -180,6 +170,11 @@
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
     <string name="stats_earth_percent_below_min">פחות מ-0.01%</string>
+    <string name="stats_moon_progress_label">התקדמות אל הירח</string>
+    <string name="stats_moon_percent_format">%1$.2f%%</string>
+    <string name="stats_moon_percent_zero">0%</string>
+    <string name="stats_moon_percent_below_min">פחות מ-0.01%</string>
+    <string name="stats_moon_progress_context_format">%1$,.1f מתוך %2$,.0f ק״מ למרחק הירח</string>
     <string name="stats_marathon_label">מרתונים מקבילים</string>
     <string name="stats_marathon_format">%1$,.1f</string>
     <string name="stats_active_days_label">ימים פעילים</string>

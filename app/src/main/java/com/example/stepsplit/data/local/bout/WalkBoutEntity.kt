@@ -5,11 +5,9 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * The cached AUTO classification result for one detected walking bout. This table is fully
- * regenerated (inside a transaction) every time the classifier reruns over the raw step
- * buckets - it is a derived cache, never a source of truth, so recomputing it can never corrupt
- * raw data. Manual overrides live in a separate table keyed by [startEpochSecond] and are
- * re-applied on top after every regeneration.
+ * The cached classification result for one detected walking bout. This table is fully regenerated
+ * (inside a transaction) every time the classifier reruns over the raw step buckets - it is a
+ * derived cache, never a source of truth, so recomputing it can never corrupt raw data.
  */
 @Entity(
     tableName = "walk_bouts",

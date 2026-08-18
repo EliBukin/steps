@@ -4,7 +4,6 @@ sealed class Screen(val route: String) {
     data object Today : Screen("today")
     data object History : Screen("history")
     data object Stats : Screen("stats")
-    data object Sessions : Screen("sessions")
     data object Trips : Screen("trips")
     data object Settings : Screen("settings")
 
@@ -15,4 +14,4 @@ sealed class Screen(val route: String) {
     }
 }
 
-val bottomNavScreens = listOf(Screen.Today, Screen.History, Screen.Stats, Screen.Sessions, Screen.Trips, Screen.Settings)
+val bottomNavScreens = listOf(Screen.Today, Screen.History, Screen.Stats, Screen.Trips, Screen.Settings)

@@ -167,14 +167,17 @@ class StepSplitDatabaseMigrationTest {
     /**
      * Proves the v2 -> v3 migration (adding the Trip Route Recording tables `trips` and
      * `trip_points` - see [StepSplitDatabase.MIGRATION_2_3]'s own doc comment) is both
-     * schema-correct and preserves every existing table's data untouched, using the same
+     * schema-correct and leaves MIGRATION_2_3's own table untouched, using the same
      * two-part strategy as [`v1 to v2 full schema migration`][buildCompleteV1Database] above: a
      * complete v2 database is built from the exact `createSql`/`setupQueries` in the exported
      * `2.json`, one representative row is seeded into all four v2 tables (`step_buckets`,
      * `walk_bouts`, `session_overrides`, and the deprecated-but-preserved `manual_walks`), and a
      * real [StepSplitDatabase] then migrates and validates it. Migrating straight from v2 (not v1)
      * additionally proves the whole registered [StepSplitDatabase.MIGRATIONS] chain works when
-     * only its later segment actually needs to run.
+     * only its later segment actually needs to run - which, as of schema v6, now runs all the way
+     * through [StepSplitDatabase.MIGRATION_5_6], so the seeded `session_overrides` row is expected
+     * to end up dropped rather than surviving (see `v5 to v6 full schema migration` below for that
+     * migration's own dedicated, table-scoped coverage).
      */
     @Test
     fun `v2 to v3 full schema migration`() {
@@ -211,12 +214,17 @@ class StepSplitDatabaseMigrationTest {
                 assertEquals("WORKOUT", boutCursor.getString(3))
                 boutCursor.close()
 
-                val overrideCursor = migrated.query(
-                    "SELECT classification, overriddenAtEpochSecond FROM session_overrides WHERE boutStartEpochSecond = 1000",
+                // The seeded session_overrides row itself is NOT expected to survive here: this test
+                // runs the full registered MIGRATIONS chain (not just MIGRATION_2_3), which - as of
+                // schema v6 - continues on to MIGRATION_5_6, dropping session_overrides entirely. See
+                // `v5 to v6 full schema migration` below for that migration's own dedicated coverage;
+                // seeding this row here still proves MIGRATION_2_3 itself does not choke on or
+                // mishandle the table it touches nothing about.
+                val tableCursor = migrated.query(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_overrides'",
                 )
-                assertTrue(overrideCursor.moveToFirst())
-                assertEquals("INCIDENTAL", overrideCursor.getString(0))
-                overrideCursor.close()
+                assertTrue("session_overrides must no longer exist by the end of the full migration chain", !tableCursor.moveToFirst())
+                tableCursor.close()
 
                 val manualWalkCursor = migrated.query(
                     "SELECT startEpochSecond, endEpochSecond, steps, autoCompleted, autoCompletionMessageShown " +
@@ -322,10 +330,12 @@ class StepSplitDatabaseMigrationTest {
      * every existing row untouched apart from the new columns, using the same strategy as the two
      * tests above: a complete v3 database is built from the exact `createSql`/`setupQueries` in the
      * exported `3.json`, one representative row is seeded into `step_buckets` (plus one each into
-     * `walk_bouts`, `session_overrides`, `trips`, `trip_points`, `manual_walks` to prove the
-     * migration touches none of them), and a real [StepSplitDatabase] then migrates and validates
-     * it. This is required regression test #16 ("existing history survives migration as legacy
-     * data").
+     * `walk_bouts`, `session_overrides`, `trips`, `trip_points`, `manual_walks` to prove
+     * MIGRATION_3_4 itself touches none of them), and a real [StepSplitDatabase] then migrates and
+     * validates it. This is required regression test #16 ("existing history survives migration as
+     * legacy data"). As with the v2->v3 test above, the full registered migration chain now
+     * continues past v4 all the way to v6, so the seeded `session_overrides` row is expected to end
+     * up dropped by MIGRATION_5_6, not preserved - see `v5 to v6 full schema migration` below.
      */
     @Test
     fun `v3 to v4 full schema migration`() {
@@ -371,10 +381,14 @@ class StepSplitDatabaseMigrationTest {
                 assertEquals("WORKOUT", boutCursor.getString(0))
                 boutCursor.close()
 
-                val overrideCursor = migrated.query("SELECT classification FROM session_overrides WHERE boutStartEpochSecond = 1000")
-                assertTrue(overrideCursor.moveToFirst())
-                assertEquals("INCIDENTAL", overrideCursor.getString(0))
-                overrideCursor.close()
+                // Not expected to survive here for the same reason as the v2->v3 test above: this
+                // test runs the full registered MIGRATIONS chain, which by schema v6 has dropped
+                // session_overrides via MIGRATION_5_6 - see `v5 to v6 full schema migration` below.
+                val tableCursor = migrated.query(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_overrides'",
+                )
+                assertTrue("session_overrides must no longer exist by the end of the full migration chain", !tableCursor.moveToFirst())
+                tableCursor.close()
 
                 val tripCursor = migrated.query("SELECT state FROM trips WHERE id = 1")
                 assertTrue(tripCursor.moveToFirst())
@@ -636,6 +650,199 @@ class StepSplitDatabaseMigrationTest {
                 "INSERT INTO motion_evidence (kind, activityType, confidence, eventElapsedRealtimeMillis, bootSessionId, " +
                     "derivedWallClockEpochMilli, temporalContinuityEpoch, receivedAtEpochMilli, dedupeKey, batchId) " +
                     "VALUES ('SAMPLED', 'WALKING', 80, 2000, 5, 1000000, 1, 1000010, 'dedupe-1', 'batch-1')",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
+    /**
+     * Proves the v5 -> v6 migration ([StepSplitDatabase.MIGRATION_5_6]: drops `session_overrides`,
+     * the manual walking-bout reclassification table left behind by the removed Sessions screen)
+     * is both schema-correct and drops *only* that one table, using the same strategy as the tests
+     * above: a complete v5 database is built from the exact `createSql`/`setupQueries` in the
+     * exported `5.json`, one representative row is seeded into *every* v5 table (including
+     * `session_overrides` itself, plus `step_buckets`, `walk_bouts`, `trips`/`trip_points`,
+     * `manual_walks`, and the motion-evidence/step-counter tables, to prove none of them are
+     * touched), and a real [StepSplitDatabase] then migrates and validates it.
+     */
+    @Test
+    fun `v5 to v6 full schema migration`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v5_v6.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildCompleteV5Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                // session_overrides must be gone entirely - not just empty.
+                val tableCursor = migrated.query(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_overrides'",
+                )
+                assertTrue("session_overrides must no longer exist as a table after MIGRATION_5_6", !tableCursor.moveToFirst())
+                tableCursor.close()
+
+                // Every other existing table's seeded row survives completely untouched.
+                val bucketCursor = migrated.query(
+                    "SELECT source, startEpochSecond, steps, validationState FROM step_buckets WHERE id = 1",
+                )
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals("local_recording_api", bucketCursor.getString(0))
+                assertEquals(1_000L, bucketCursor.getLong(1))
+                assertEquals(42L, bucketCursor.getLong(2))
+                assertEquals("LEGACY_UNVERIFIED", bucketCursor.getString(3))
+                bucketCursor.close()
+
+                val boutCursor = migrated.query(
+                    "SELECT startEpochSecond, autoClassification, classifierVersion FROM walk_bouts WHERE id = 1",
+                )
+                assertTrue(boutCursor.moveToFirst())
+                assertEquals(1_000L, boutCursor.getLong(0))
+                assertEquals("WORKOUT", boutCursor.getString(1))
+                boutCursor.close()
+
+                val manualWalkCursor = migrated.query("SELECT steps FROM manual_walks WHERE id = 1")
+                assertTrue(manualWalkCursor.moveToFirst())
+                assertEquals(42L, manualWalkCursor.getLong(0))
+                manualWalkCursor.close()
+
+                val tripCursor = migrated.query("SELECT state FROM trips WHERE id = 1")
+                assertTrue(tripCursor.moveToFirst())
+                assertEquals("ACTIVE", tripCursor.getString(0))
+                tripCursor.close()
+
+                val tripPointCursor = migrated.query("SELECT COUNT(*) FROM trip_points WHERE tripId = 1")
+                assertTrue(tripPointCursor.moveToFirst())
+                assertEquals(1, tripPointCursor.getInt(0))
+                tripPointCursor.close()
+
+                val intervalCursor = migrated.query("SELECT COUNT(*) FROM activity_intervals")
+                assertTrue(intervalCursor.moveToFirst())
+                assertEquals(1, intervalCursor.getInt(0))
+                intervalCursor.close()
+
+                val continuityCursor = migrated.query("SELECT bootSessionId FROM temporal_continuity_state WHERE id = 0")
+                assertTrue(continuityCursor.moveToFirst())
+                assertEquals(5L, continuityCursor.getLong(0))
+                continuityCursor.close()
+
+                val evidenceCursor = migrated.query("SELECT COUNT(*) FROM motion_evidence")
+                assertTrue(evidenceCursor.moveToFirst())
+                assertEquals(1, evidenceCursor.getInt(0))
+                evidenceCursor.close()
+
+                val sampleCursor = migrated.query("SELECT cumulativeSteps FROM step_counter_samples")
+                assertTrue(sampleCursor.moveToFirst())
+                assertEquals(500L, sampleCursor.getLong(0))
+                sampleCursor.close()
+
+                // The table is still usable for a brand-new insert too, not merely present.
+                migrated.execSQL(
+                    "INSERT INTO walk_bouts (startEpochSecond, endEpochSecond, steps, activeMinutes, elapsedMinutes, " +
+                        "cadence, autoClassification, autoConfidence, autoReasonCode, classifierVersion, computedAtEpochSecond) " +
+                        "VALUES (5000, 5600, 100, 5, 5, 20.0, 'INCIDENTAL', 0.6, 'TOO_FEW_STEPS', 2, 5600)",
+                )
+                val newBoutCursor = migrated.query("SELECT COUNT(*) FROM walk_bouts")
+                assertTrue(newBoutCursor.moveToFirst())
+                assertEquals(2, newBoutCursor.getInt(0))
+                newBoutCursor.close()
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /** Same approach as [buildCompleteV4Database], parsing `5.json` and seeding one row per v5 table (including `session_overrides` itself, about to be dropped). */
+    private fun buildCompleteV5Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/5.json")
+        check(schemaFile.exists()) {
+            "Expected the exported v5 schema at ${schemaFile.absolutePath} - " +
+                "this test must run with the app/ module directory as the working directory " +
+                "(true for `gradlew testDebugUnitTest`, which this project's tests are run under)."
+        }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(5) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                val indexSql = indices.getJSONObject(j).getString("createSql")
+                                db.execSQL(indexSql.replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+            db.execSQL(
+                "INSERT INTO walk_bouts (id, startEpochSecond, endEpochSecond, steps, activeMinutes, elapsedMinutes, " +
+                    "cadence, autoClassification, autoConfidence, autoReasonCode, classifierVersion, computedAtEpochSecond) " +
+                    "VALUES (1, 1000, 2000, 500, 15, 16, 90.0, 'WORKOUT', 0.9, 'MEETS_ALL_THRESHOLDS', 2, 2000)",
+            )
+            db.execSQL(
+                "INSERT INTO session_overrides (boutStartEpochSecond, classification, overriddenAtEpochSecond) " +
+                    "VALUES (1000, 'INCIDENTAL', 2500)",
+            )
+            db.execSQL(
+                "INSERT INTO manual_walks (id, startEpochSecond, endEpochSecond, steps, createdAtEpochSecond, autoCompleted, autoCompletionMessageShown) " +
+                    "VALUES (1, 1000, 1600, 42, 1000, 0, 0)",
+            )
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) " +
+                    "VALUES (1, 2000, NULL, 'UTC', 'ACTIVE', 0.0, NULL, 2000)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_points (tripId, capturedAtEpochSecond, latitude, longitude, accuracyMeters, " +
+                    "altitudeMeters, speedMetersPerSecond) VALUES (1, 2001, 32.0, 34.0, 10.0, NULL, NULL)",
+            )
+            db.execSQL(
+                "INSERT INTO activity_intervals (activityType, startWallClockEpochMilli, endWallClockEpochMilli, " +
+                    "temporalContinuityEpoch, closedReason) VALUES ('WALKING', 1000000, NULL, 1, 'OPEN')",
+            )
+            db.execSQL(
+                "INSERT INTO temporal_continuity_state (id, bootSessionId, bootEpochOffsetMillis, temporalContinuityEpoch) " +
+                    "VALUES (0, 5, 123456, 1)",
+            )
+            db.execSQL(
+                "INSERT INTO motion_evidence (kind, activityType, confidence, eventElapsedRealtimeMillis, bootSessionId, " +
+                    "derivedWallClockEpochMilli, temporalContinuityEpoch, receivedAtEpochMilli, dedupeKey, batchId) " +
+                    "VALUES ('SAMPLED', 'WALKING', 80, 2000, 5, 1000000, 1, 1000010, 'dedupe-1', 'batch-1')",
+            )
+            db.execSQL(
+                "INSERT INTO step_counter_samples (cumulativeSteps, elapsedRealtimeMillisAtSample, " +
+                    "wallClockEpochMilli, bootSessionId, receivedAtEpochMilli) VALUES (500, 60000, 1723100000000, 3, 1723100000000)",
             )
         } finally {
             openHelper.close()

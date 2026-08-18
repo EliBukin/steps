@@ -4,7 +4,6 @@ import androidx.room.withTransaction
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
-import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.RawStepInterval
 import com.example.stepsplit.data.stepsource.StepSource
@@ -14,19 +13,17 @@ import com.example.stepsplit.data.stepsource.StepSourceUnavailableException
 import com.example.stepsplit.domain.aggregation.BucketNormalizer
 import com.example.stepsplit.domain.aggregation.DatedBucket
 import com.example.stepsplit.domain.aggregation.DateStepBreakdown
+import com.example.stepsplit.domain.aggregation.EpochInterval
 import com.example.stepsplit.domain.aggregation.RawInterval
 import com.example.stepsplit.domain.aggregation.StepAggregator
 import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
-import com.example.stepsplit.domain.classification.ClassificationReasonCode
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.classification.ClassifiedBout
 import com.example.stepsplit.domain.classification.MinuteBucket
 import com.example.stepsplit.domain.classification.WalkClassifier
-import com.example.stepsplit.domain.model.SessionMerger
 import com.example.stepsplit.domain.model.SyncFailure
 import com.example.stepsplit.domain.model.SyncFailureCategory
-import com.example.stepsplit.domain.model.WalkSession
 import com.example.stepsplit.domain.stats.LifetimeStepTotals
 import java.time.Clock
 import java.time.Duration
@@ -229,8 +226,9 @@ class StepRepository(
      * see [rescheduleFinalizationJob]) reflect the current local raw data before this call
      * returns. Recomputes straight from the raw [StepBucketEntity] history already stored in
      * Room, so this works even when [stepSource] is unavailable, unsubscribed, or failing; it
-     * never performs a source read. [observeSessions] also filters stale-version rows directly,
-     * so nothing stale is ever shown even in the brief window before a recompute completes.
+     * never performs a source read. [observeDailyBreakdowns] also filters stale-version rows
+     * directly, so nothing stale is ever shown even in the brief window before a recompute
+     * completes.
      *
      * Two independent reasons a recompute can be needed:
      *
@@ -294,10 +292,9 @@ class StepRepository(
     /**
      * The transactional half of classification recompute: reruns the classifier over the full raw
      * history (every positive-step minute - see [com.example.stepsplit.data.local.bucket.StepBucketDao.getAllActive])
-     * and atomically replaces the AUTO cache (and reconciles override anchors - see
-     * [reconcileOverrideAnchors]). Passes the current instant explicitly so the classifier can
-     * decide whether the most recent bout is finished yet (see [WalkClassifier]'s own doc comment)
-     * without reading a clock itself - it stays a pure function of its inputs.
+     * and atomically replaces the classification cache. Passes the current instant explicitly so
+     * the classifier can decide whether the most recent bout is finished yet (see [WalkClassifier]'s
+     * own doc comment) without reading a clock itself - it stays a pure function of its inputs.
      *
      * Deliberately does NOT touch [finalizationJob] or call [rescheduleFinalizationJob] - that
      * must only ever happen once the transaction this function opens (or joins, if already inside
@@ -317,13 +314,8 @@ class StepRepository(
 
         val entities = classified.map { it.toEntity(computedAt) }
         database.withTransaction {
-            // Snapshotted before clearAll() below removes it - reconcileOverrideAnchors needs each
-            // override's PREVIOUS bout interval to decide whether a new bout is clearly the same
-            // walking session.
-            val previousBoutsByStart = database.walkBoutDao().getAll().associateBy { it.startEpochSecond }
             database.walkBoutDao().clearAll()
             database.walkBoutDao().insertAll(entities)
-            reconcileOverrideAnchors(previousBoutsByStart, classified)
         }
 
         return ClassificationRecomputeResult(minuteBuckets, thresholds, computedAt)
@@ -343,114 +335,11 @@ class StepRepository(
     }
 
     /**
-     * Manual overrides are keyed by a bout's [SessionOverrideEntity.boutStartEpochSecond] anchor,
-     * but a classifier rerun can shift what that anchor actually represents for the very same
-     * walking session - e.g. an earlier active minute extends it backward, or a corrected/removed
-     * minute shortens it - or can even leave an override's anchor numerically unchanged while the
-     * bout at that anchor is no longer the same session at all (a split whose first fragment keeps
-     * the original start, or a merge whose combined bout keeps the first original bout's start).
-     * *Every* override is reconsidered here - never fast-pathed as "fine" purely because its exact
-     * anchor still exists in [newBouts] - specifically because that coincidence is exactly what the
-     * two bugs above hinge on.
-     *
-     * For every override, this looks for a single newly computed bout that overlaps the override's
-     * PREVIOUS bout interval (from [previousBoutsByStart], snapshotted before the replace above) by
-     * a strong majority in both directions (see [isStrongOneToOneOverlap]) - i.e. clearly the same
-     * walking session, not a coincidental adjacency:
-     * - If that single match is the override's own current anchor, it is *self-consistent* - left
-     *   untouched, and its anchor is reserved: no other override may reattach there, no matter what
-     *   the claim-count arithmetic below would otherwise suggest, since this override isn't going
-     *   anywhere.
-     * - If that single match is a *different* anchor, and no other override independently resolved
-     *   the same target (a claim-count of exactly one) and that target isn't reserved by a
-     *   self-consistent override, it is a genuine, unambiguous reattachment: the override is moved
-     *   (old row deleted, new one inserted at the new anchor).
-     * - Otherwise (zero or multiple candidates, or a target that lost the claim-count/reservation
-     *   arbitration) the match is ambiguous. If the override's own current anchor still coincides
-     *   with a live bout - which the overlap check just proved is NOT the same session anymore, or
-     *   which is legitimately owned by a different, self-consistent override - leaving it in place
-     *   would silently misapply it, so the row is deleted rather than risking that. If its current
-     *   anchor matches no live bout at all, it is genuinely, harmlessly orphaned (can never
-     *   accidentally reapply) and is left exactly as it was - preserved, never deleted, simply
-     *   inactive (see the README).
-     *
-     * All deletes (both moves' old anchors and evictions) run before any insert, so a mover's
-     * insert can never race against, or be clobbered by (via `OnConflictStrategy.REPLACE`),
-     * another row's own delete of that same target key - every target above is unique among movers
-     * and never a reserved anchor, so by the time inserts run each target is guaranteed free. This
-     * always runs from inside [recomputeClassificationWithinTransaction]'s own transaction, so a
-     * concurrent [observeSessions] can never see a transient, half-applied state.
-     */
-    private suspend fun reconcileOverrideAnchors(
-        previousBoutsByStart: Map<Long, WalkBoutEntity>,
-        newBouts: List<ClassifiedBout>,
-    ) {
-        val overrides = database.sessionOverrideDao().getAll()
-        if (overrides.isEmpty()) return
-        val newStarts = newBouts.map { it.startEpochSecond }.toSet()
-
-        val desiredTarget: Map<SessionOverrideEntity, Long?> = overrides.associateWith { override ->
-            val previous = previousBoutsByStart[override.boutStartEpochSecond] ?: return@associateWith null
-            newBouts.filter { candidate -> isStrongOneToOneOverlap(previous, candidate) }
-                .singleOrNull()
-                ?.startEpochSecond
-        }
-
-        val selfConsistent = overrides.filter { desiredTarget.getValue(it) == it.boutStartEpochSecond }
-        val reservedAnchors = selfConsistent.map { it.boutStartEpochSecond }.toSet()
-
-        val candidateMovers = overrides.filter { override ->
-            val target = desiredTarget.getValue(override)
-            target != null && target != override.boutStartEpochSecond
-        }
-        // A target claimed by more than one candidate mover is itself ambiguous (a merge target,
-        // or two unrelated overrides both resolving to the same destination) - neither claimant
-        // may take it.
-        val claimCounts = candidateMovers.groupingBy { desiredTarget.getValue(it) }.eachCount()
-        val movers = candidateMovers.filter { override ->
-            val target = desiredTarget.getValue(override)
-            claimCounts[target] == 1 && target !in reservedAnchors
-        }
-
-        val moverSet = movers.toSet()
-        val remaining = overrides - moverSet - selfConsistent.toSet()
-
-        for (override in movers) database.sessionOverrideDao().deleteByAnchor(override.boutStartEpochSecond)
-        for (override in remaining) {
-            if (override.boutStartEpochSecond in newStarts) {
-                database.sessionOverrideDao().deleteByAnchor(override.boutStartEpochSecond)
-            }
-        }
-        for (override in movers) {
-            val target = desiredTarget.getValue(override)!!
-            database.sessionOverrideDao().upsert(override.copy(boutStartEpochSecond = target))
-        }
-    }
-
-    /**
-     * True when [candidate] overlaps [previous] by at least [OVERLAP_MAJORITY_FRACTION] of BOTH
-     * intervals' own durations - i.e. neither interval is mostly something else. This is what
-     * keeps a split (each fragment covers only a minority of the original) or a merge (the
-     * combined bout is mostly *not* either original interval) from ever counting as a match; only
-     * a bout that is clearly, substantially the same walking session as before qualifies.
-     */
-    private fun isStrongOneToOneOverlap(previous: WalkBoutEntity, candidate: ClassifiedBout): Boolean {
-        val overlapStart = maxOf(previous.startEpochSecond, candidate.startEpochSecond)
-        val overlapEnd = minOf(previous.endEpochSecond, candidate.endEpochSecond)
-        val overlapSeconds = overlapEnd - overlapStart
-        if (overlapSeconds <= 0) return false
-        val previousDuration = previous.endEpochSecond - previous.startEpochSecond
-        val candidateDuration = candidate.endEpochSecond - candidate.startEpochSecond
-        if (previousDuration <= 0 || candidateDuration <= 0) return false
-        return overlapSeconds >= previousDuration * OVERLAP_MAJORITY_FRACTION &&
-            overlapSeconds >= candidateDuration * OVERLAP_MAJORITY_FRACTION
-    }
-
-    /**
      * Schedules a single cancellable, one-shot local timer so a trailing bout that
      * [WalkClassifier] withheld (still waiting out [ClassificationThresholds.idleFinalizeMinutes])
-     * gets reclassified - and, once idle long enough, appears as a session - the moment its own
-     * deadline passes, rather than only on the next sync (periodic syncs are hours apart). The
+     * gets reclassified - and, once idle long enough, finalizes into a workout/incidental result -
+     * the moment its own deadline passes, rather than only on the next sync (periodic syncs are
+     * hours apart). The
      * timer only ever reruns the classifier over data already in Room; it never touches
      * [stepSource]. Any previously scheduled timer is replaced here every time this function runs
      * - i.e. on every sync, threshold change, or debug import - so new raw data or a threshold
@@ -479,19 +368,9 @@ class StepRepository(
         }
     }
 
-    suspend fun reclassify(anchorEpochSecond: Long, classification: BoutClassification) {
-        database.sessionOverrideDao().upsert(
-            SessionOverrideEntity(
-                boutStartEpochSecond = anchorEpochSecond,
-                classification = classification.name,
-                overriddenAtEpochSecond = clock.instant().epochSecond,
-            ),
-        )
-    }
-
     /**
      * Persists new classification thresholds and immediately reruns the classifier against them,
-     * rather than leaving existing sessions showing stale classifications until the next sync.
+     * rather than leaving existing bouts showing stale classifications until the next sync.
      * Shares [syncMutex] with [syncNowLocked] so a threshold change can never interleave with (or
      * be clobbered by) a concurrent sync's own classify-and-replace.
      */
@@ -508,7 +387,7 @@ class StepRepository(
 
     /**
      * Debug-only entry point (see [com.example.stepsplit.debug.DebugDataSeeder]): seeds the
-     * database from arbitrary raw intervals through the same normalize -> upsert -> reclassify
+     * database from arbitrary raw intervals through the same normalize -> upsert -> classify
      * pipeline as a real sync, without touching the configured [stepSource]. Never invoked from
      * release code paths.
      */
@@ -532,26 +411,29 @@ class StepRepository(
 
     // ---- UI-facing reads ----
 
-    fun observeSessions(): Flow<List<WalkSession>> = combine(
-        database.walkBoutDao().observeAll(),
-        database.sessionOverrideDao().observeAll(),
-    ) { bouts, overrides ->
-        // A row computed by an older CLASSIFIER_VERSION must never be treated as current - see
-        // ensureClassificationFreshLocked. Filtered here too (not just relying on that recompute
-        // having already run) so a stale row is never shown even in the brief window before it does.
-        val current = bouts.filter { it.classifierVersion == CLASSIFIER_VERSION }
-        val overrideMap = overrides.associate { it.boutStartEpochSecond to BoutClassification.valueOf(it.classification) }
-        SessionMerger.fromAutoBouts(current.map { it.toDomain() }, overrideMap).sortedByDescending { it.startEpochSecond }
-    }
-
+    /**
+     * Splits raw step buckets into workout/incidental totals per local calendar day, combining
+     * [com.example.stepsplit.data.local.bucket.StepBucketEntity] rows directly with the current
+     * automatic [WalkBoutEntity] cache - there is no manual-override layer to merge in. A row
+     * computed by an older [CLASSIFIER_VERSION] must never be treated as current - see
+     * [ensureClassificationFreshLocked] - and is filtered here too (not just relying on that
+     * recompute having already run) so a stale row is never attributed to a day's workout total,
+     * even in the brief window before a recompute completes. Only bouts finalized as
+     * [BoutClassification.WORKOUT] contribute a workout interval; a still-withheld trailing bout
+     * (see [WalkClassifier]) has no current-version row at all yet, so its raw steps fall through
+     * to incidental until it finalizes - preserving `totalSteps == workoutSteps + incidentalSteps`
+     * at every point in time.
+     */
     fun observeDailyBreakdowns(dates: List<LocalDate>): Flow<Map<LocalDate, DateStepBreakdown>> {
         val dateStrings = dates.map { it.toString() }
         return combine(
             database.stepBucketDao().observeForDates(dateStrings),
-            observeSessions(),
-        ) { buckets, sessions ->
+            database.walkBoutDao().observeAll(),
+        ) { buckets, bouts ->
             val dated = buckets.map { DatedBucket(LocalDate.parse(it.localDate), it.startEpochSecond, it.steps) }
-            val workoutIntervals = SessionMerger.workoutIntervals(sessions)
+            val workoutIntervals = bouts
+                .filter { it.classifierVersion == CLASSIFIER_VERSION && BoutClassification.valueOf(it.autoClassification) == BoutClassification.WORKOUT }
+                .map { EpochInterval(it.startEpochSecond, it.endEpochSecond) }
             val breakdowns = StepAggregator.aggregateByDate(dated, workoutIntervals)
             dates.associateWith { date -> breakdowns[date] ?: DateStepBreakdown(date, 0L, 0L, 0L) }
         }
@@ -584,9 +466,6 @@ class StepRepository(
          */
         val RETENTION_WINDOW: Duration = Duration.ofDays(10)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
-
-        /** See [reconcileOverrideAnchors]/[isStrongOneToOneOverlap]: how much of BOTH the old and new bout interval must overlap for a manual override to be reattached to the new bout. */
-        private const val OVERLAP_MAJORITY_FRACTION = 0.5
     }
 }
 
@@ -602,16 +481,4 @@ private fun ClassifiedBout.toEntity(computedAtEpochSecond: Long) = WalkBoutEntit
     autoReasonCode = reasonCode.name,
     classifierVersion = CLASSIFIER_VERSION,
     computedAtEpochSecond = computedAtEpochSecond,
-)
-
-private fun WalkBoutEntity.toDomain() = ClassifiedBout(
-    startEpochSecond = startEpochSecond,
-    endEpochSecond = endEpochSecond,
-    steps = steps,
-    activeMinutes = activeMinutes,
-    elapsedMinutes = elapsedMinutes,
-    cadence = cadence,
-    classification = BoutClassification.valueOf(autoClassification),
-    confidence = autoConfidence,
-    reasonCode = ClassificationReasonCode.valueOf(autoReasonCode),
 )

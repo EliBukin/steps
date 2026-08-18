@@ -55,14 +55,9 @@ enum class ClassificationReasonCode {
     TOO_FEW_STEPS,
     CADENCE_TOO_LOW,
     MULTIPLE_THRESHOLDS_NOT_MET,
-    MANUALLY_RECLASSIFIED,
 }
 
-/**
- * The result of automatically classifying one contiguous walking bout. This is the AUTO/derived
- * result only - manual overrides are stored and applied separately so a classifier rerun can
- * never silently discard a user's correction.
- */
+/** The result of automatically classifying one contiguous walking bout. */
 data class ClassifiedBout(
     val startEpochSecond: Long,
     val endEpochSecond: Long,

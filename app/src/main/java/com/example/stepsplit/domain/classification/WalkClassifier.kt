@@ -2,8 +2,8 @@ package com.example.stepsplit.domain.classification
 
 /**
  * Pure, deterministic bout-detection and workout classification. No Android dependencies, no
- * I/O, no internal wall-clock reads - safe to rerun over the full raw history at any time without
- * losing manual corrections, because manual overrides are stored and merged in a separate layer.
+ * I/O, no internal wall-clock reads - safe to rerun over the full raw history at any time; its
+ * cached output (`walk_bouts`) is fully regenerated on every rerun, never accumulated or patched.
  * The one piece of "now" this needs - to decide whether the most recent bout is finished yet, see
  * step 3 below - is passed in explicitly by the caller rather than read from a system clock here.
  * [nowEpochSecond] has no default: every production call site must decide what "now" means
@@ -20,9 +20,9 @@ package com.example.stepsplit.domain.classification
  * 3. The trailing (most recent) bout is retrospective, not live: more of it could still arrive on
  *    a later sync, so it is only classified and returned once
  *    [ClassificationThresholds.idleFinalizeMinutes] worth of fully-elapsed minutes have passed
- *    since its last active minute, per [nowEpochSecond]. Until then it is withheld entirely - its
- *    raw steps stay out of every session, so they fall back to being counted as incidental in
- *    daily totals until the bout actually finalizes. Earlier, non-trailing bouts are never
+ *    since its last active minute, per [nowEpochSecond]. Until then it is withheld entirely - not
+ *    yet classified as workout or incidental, so its raw steps fall back to being counted as
+ *    incidental in daily totals until the bout actually finalizes. Earlier, non-trailing bouts are never
  *    withheld - by definition something newer already exists after them, so they cannot still be
  *    growing.
  * 4. Classify each finalized bout as a likely WORKOUT only if it satisfies every threshold

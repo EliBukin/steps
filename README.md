@@ -1,27 +1,34 @@
 # Bukin's Split Step
 
-A lightweight, fully offline Android app that counts daily steps and splits them into **workout
+A lightweight, mostly-offline Android app that counts daily steps and splits them into **workout
 walking** and **incidental/everyday** movement. Hebrew + RTL is the default UI language, with
 English as a fallback locale.
 
 No account, no cloud backend, no ads, no analytics. Location is used only while you are actively
 recording a manually started trip (see "Trip Route Recording" below) - never in the background,
-and never for the automatic step tracking above.
+and never for the automatic step tracking above. Step tracking and GPS trip recording themselves
+are always fully offline. The only network requests this app ever makes are basemap tile/style
+requests while a completed trip's detail screen is on screen, to draw its route on a real map (see
+"Trip detail: route map, offline fallback, and delete" below): these never upload the trip's own
+recorded points or its GPX export, but requesting map tiles for the route's viewport necessarily
+reveals *which geographic area is being viewed* to the tile provider - see "Data storage and
+privacy" below for the honest, complete picture of what that does and doesn't disclose.
 
 ## What it does
 
 - Automatically collects all steps in the background via periodic sync - there is nothing to
   start or stop, and no way to explicitly record a session.
-- Detects walking sessions retrospectively from imported step data and splits them into
+- Detects walking bouts retrospectively from imported step data and classifies each as
   workout-walk steps vs. incidental steps using a transparent, adjustable heuristic.
 - Shows today's totals, daily/weekly goal progress (uncapped - 120% displays as 120%, not clamped to 100%), and a 7-day history with a stacked bar chart.
-- Lets you manually correct any detected session's classification (workout vs. incidental) after
-  the fact - the only manual intervention the automatic step-tracking side of the app offers.
 - Lets you manually record a GPS route for an occasional hike or trip - a completely separate,
   user-controlled feature (**Trips** tab) that never touches automatic step tracking. See "Trip
   Route Recording" below.
-- Works fully offline. `ACTIVITY_RECOGNITION` is required for automatic step tracking; location
-  permissions are requested only if/when you start a trip.
+- Works offline for everything except the completed-trip route map (see below); step tracking and
+  GPS trip recording never need a network connection. `ACTIVITY_RECOGNITION` is required for
+  automatic step tracking; location permissions are requested only if/when you start a trip.
+- Lets you export a completed trip's recorded route as a GPX file, and view it on a real basemap
+  in the trip detail screen - see "Trip detail: route map, offline fallback, and delete" below.
 
 ## Architecture
 
@@ -30,15 +37,15 @@ data flow from Room/DataStore through a repository, into `StateFlow`-based ViewM
 Compose UI.
 
 ```
-ui/            Compose screens (Today, History, Sessions, Trips, Settings), navigation, theme
+ui/            Compose screens (Today, History, Stats, Trips, Settings), navigation, theme
 di/            Hand-written AppContainer + ViewModelFactory (no DI framework)
 domain/        Pure Kotlin, no Android deps: classification, aggregation, time, models, trip
 data/
-  local/       Room entities/DAOs (step_buckets, walk_bouts, session_overrides, trips,
+  local/       Room entities/DAOs (step_buckets, walk_bouts, trips,
                trip_points; manual_walks is deprecated - see Schema notes)
   settings/    Preferences DataStore (daily goal, thresholds, last sync time)
   stepsource/  StepSource interface + LocalRecordingStepSource + FakeStepSource
-  repository/  StepRepository - the single place that imports, normalizes, classifies, merges
+  repository/  StepRepository - the single place that imports, normalizes, classifies
   trip/        TripRepository + TripLocationClient (Fused/Fake) + TripRecordingCoordinator -
                entirely separate from repository/ above
 sync/          StepSyncWorker (CoroutineWorker) + WorkManager scheduling/factory
@@ -127,17 +134,45 @@ this - none does today.
   `FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS` - Trip Route Recording only. Requested only
   when you tap "Start trip", never at app launch and never just from opening the Trips tab. See
   "Trip Route Recording" below for the full permission flow.
-
-No internet permission at all - the app is fully offline, including trip recording (no maps, no
-map tiles, no upload).
+- `android.permission.INTERNET` - completed-trip detail map only (see "Trip detail: route map,
+  offline fallback, and delete" below). Requests basemap tiles/style from OpenFreeMap, a free,
+  keyless tile provider, only while that screen is on screen; this necessarily reveals the viewed
+  route's geographic area to OpenFreeMap's delivery infrastructure (see "Data storage and privacy"
+  below for exactly what that does and doesn't disclose) - it never uploads the trip's own recorded
+  points or GPX. Recording a trip itself, and every other screen/feature in this app, still needs no
+  network connection and makes no network request - GPS trip recording, step tracking, and Health
+  Connect access are all still fully offline.
 
 ## Data storage and privacy
 
-Everything lives in a local Room database (`stepsplit.db`) and a local Preferences DataStore
-file - nothing leaves the device. There is no account, no analytics/telemetry, no crash reporter,
-and `android:allowBackup="false"` so step data is not swept into cloud backups. Release builds do
-not log step/activity data (see `debug/DebugDataSeeder.kt` and the `BuildConfig.DEBUG` gates in
-Settings for the only debug-only surface).
+Everything lives in a local Room database (`stepsplit.db`) and a local Preferences DataStore file,
+and step tracking and GPS trip recording themselves never make a network request of any kind. There
+is no account, no analytics/telemetry, no crash reporter, and `android:allowBackup="false"` so step
+data is not swept into cloud backups. Release builds do not log step/activity data (see
+`debug/DebugDataSeeder.kt` and the `BuildConfig.DEBUG` gates in Settings for the only debug-only
+surface).
+
+The one network-facing exception is the completed-trip map (`ui/trips/TripRouteMap.kt`): while that
+screen is visible, it requests basemap tiles/style JSON from OpenFreeMap over plain HTTPS. To be
+precise about exactly what that does and doesn't reveal, rather than a blanket "nothing leaves the
+device" claim that wouldn't hold up to scrutiny here:
+
+- The request does **not** carry the trip's raw GPS points, its GPX export, an account identifier,
+  or any analytics payload - it is an ordinary map-tile image/style request, indistinguishable from
+  the request any visitor to a map of that same area would make.
+- It **does** necessarily reveal the geographic area being viewed - the route's bounding box, via
+  which map tiles get requested - to OpenFreeMap and to whatever CDN/hosting infrastructure actually
+  serves those tiles, along with the ordinary network metadata any HTTPS request carries (IP
+  address, timestamp, user agent). That's an inherent property of requesting map tiles for a
+  specific viewport, not something this app adds on top of a plain tile request - and once made,
+  that request is handled according to OpenFreeMap's (and its infrastructure's) own policies, not
+  this app's.
+- These requests only ever happen while a completed Trip detail screen showing that route is on
+  screen - never in the background, never for Today/History/Stats/Settings, and never while
+  a trip is actively being recorded.
+
+See "Trip detail: route map, offline fallback, and delete" below for the full provider/attribution/
+caching details.
 
 ### Schema notes
 
@@ -146,22 +181,25 @@ Settings for the only debug-only surface).
   repeated or overlapping reads can never duplicate steps. Each row also stores the `zoneId` and
   precomputed `localDate` captured at import time, so a later device timezone change never
   retroactively changes which calendar day a past step belongs to.
-- `walk_bouts`: the cached AUTO classification result. Fully regenerated inside a transaction
+- `walk_bouts`: the cached classification result. Fully regenerated inside a transaction
   every time the classifier reruns (see below) - it is a derived cache, never a source of truth.
   Every row is stamped with the `CLASSIFIER_VERSION` (`domain/classification/Classification.kt`)
   that produced it. If the algorithm changes, `CLASSIFIER_VERSION` is bumped and any row stamped
   with an older version is treated as stale: `StepRepository` recomputes it from the raw
   `step_buckets` history the next time a sync runs (even if that sync's remote read itself fails
   or the source is unavailable - the recompute never depends on it), and in the meantime
-  `observeSessions()` filters stale rows out directly so nothing outdated is ever shown, even
-  briefly. Independent of that version check, `StepRepository` also unconditionally recomputes
-  once on the very first classification check of its own process lifetime (regardless of whether
-  any row is version-stale, or whether `walk_bouts` is empty) - this restores a pending trailing-
-  bout finalization deadline that a killed-and-restarted process would otherwise have no memory of
-  (see "Automatic classification heuristic" below).
-- `session_overrides`: manual reclassifications, keyed by the bout's stable start-time anchor,
-  stored **separately** from `walk_bouts` so regenerating the AUTO cache can never discard a
-  manual correction.
+  `observeDailyBreakdowns()` filters stale rows out directly so nothing outdated is ever attributed
+  to a day's workout total, even briefly. Independent of that version check, `StepRepository` also
+  unconditionally recomputes once on the very first classification check of its own process
+  lifetime (regardless of whether any row is version-stale, or whether `walk_bouts` is empty) -
+  this restores a pending trailing-bout finalization deadline that a killed-and-restarted process
+  would otherwise have no memory of (see "Automatic classification heuristic" below).
+- `session_overrides` (**removed in schema v6**): previously stored manual walking-bout
+  reclassifications made from a since-removed Sessions screen. That screen and the whole manual
+  reclassification feature were removed; `MIGRATION_5_6` drops the now-unused table outright. Since
+  it held nothing but reclassification choices layered on top of `walk_bouts`, dropping it discards
+  only those manual overrides - no raw step, `walk_bouts` row, or any other table is affected. See
+  `StepSplitDatabaseMigrationTest`'s `v5 to v6` test for the exact preservation coverage.
 - `manual_walks`: **deprecated**. It backed an earlier explicit "Start walk / Finish walk" feature
   that has since been removed in favor of fully automatic, retrospective detection. No product
   code reads or writes it anymore. The table, its Room entity, and the version 1→2 migration that
@@ -187,10 +225,10 @@ Android dependencies:
 2. Group consecutive active minutes into a *bout*: an idle gap of up to **2 minutes**
    (`maxGapMinutes`) stays inside the same bout; anything longer starts a new one.
 3. The **trailing** (most recent) bout is retrospective, not live: more of it could still arrive
-   on a later sync, so it is only classified and surfaced as a session once **3 minutes**
+   on a later sync, so it is only classified and finalized once **3 minutes**
    (`idleFinalizeMinutes`, always greater than `maxGapMinutes`) worth of fully-elapsed minutes have
-   passed since its last active minute. Until then it is withheld entirely - not shown on the
-   Sessions screen, and its raw steps count as incidental in daily totals rather than being
+   passed since its last active minute. Until then it is withheld entirely - not yet classified as
+   workout or incidental, and its raw steps count as incidental in daily totals rather than being
    prematurely counted as a workout. Earlier, non-trailing bouts are never withheld. `WalkClassifier.classify()`
    takes the current instant as a required (no default) explicit parameter for this rather than
    reading a system clock itself, so it stays a pure function of its inputs - `StepRepository`
@@ -224,22 +262,12 @@ All six thresholds are user-editable in Settings ("Advanced"), with a reset-to-d
 They are an initial heuristic, not an objective truth - the Settings screen says so explicitly.
 Regardless of `idleFinalizeMinutes`, every raw step is always counted somewhere:
 `totalSteps == workoutSteps + incidentalSteps` holds whether or not the trailing bout has
-finalized yet, since daily totals are aggregated from raw buckets, not from sessions.
+finalized yet, since daily totals are aggregated from raw buckets, not from finalized bouts.
 
-### Manual reclassification
-
-Any auto-detected session can be reclassified from the Sessions screen, between **Workout** and
-**Incidental activity**. A reclassification is stored in `session_overrides`, separate from the
-derived `walk_bouts` cache, and **always wins** over the automatic result when the UI/aggregation
-layer merges them (`domain/model/SessionMerger.kt`). Rerunning the classifier (which happens on
-every sync) fully regenerates `walk_bouts` but never touches `session_overrides`, so manual
-corrections survive indefinitely - including the case where more data arrives later and a bout
-that used to be too short for a workout grows into one.
-
-This is the only manual intervention in the app. There is no way to explicitly start, stop, or
-otherwise directly record a session - every session on the Sessions screen is detected
-retrospectively from imported step data, and reclassifying one only changes how it is labeled,
-never what raw steps it covers or how many steps count toward the day's total.
+Classification is fully automatic - there is no way to explicitly start, stop, or manually
+reclassify a walking bout. Every bout is detected retrospectively from imported step data, and its
+classification changes only when the raw data or the thresholds above change and the classifier
+reruns.
 
 ## How periodic synchronization works
 
@@ -356,14 +384,14 @@ subscribe/read attempt, gated the same way.
 
 A second, completely independent recording mechanism for occasional hikes/trips - manually
 started, manually finished, and never confused with the automatic step tracking described above.
-**A manually recorded trip and an automatically detected walking session are different concepts.**
+**A manually recorded trip and an automatically detected walking bout are different concepts.**
 They may overlap in time, but neither owns or mutates the other: a trip never inserts or edits
-`walk_bouts`, never creates a `session_overrides` row, never forces a workout classification, and
-never changes daily step totals or duplicates steps. This MVP does not read step data at all - it
-only persists a trip's own timestamps, route, and distance; a read-only association with
-already-synced step data is left for a future version.
+`walk_bouts`, never forces a workout classification, and never changes daily step totals or
+duplicates steps. This MVP does not read step data at all - it only persists a trip's own
+timestamps, route, and distance; a read-only association with already-synced step data is left for
+a future version.
 
-There is no way to enable/disable the feature in Settings. The **Trips** tab (between Sessions and
+There is no way to enable/disable the feature in Settings. The **Trips** tab (between Stats and
 Settings, `Icons.Filled.Place`) is always visible; "off" simply means no trip is currently
 recording, and opening the tab alone requests no permission and starts no service.
 
@@ -694,21 +722,40 @@ implausible-jump check above compares `impliedSpeed > MAX_PLAUSIBLE_SPEED...`, a
 against `NaN` is `false` in IEEE 754 - an unclamped `NaN` would have silently defeated that
 rejection and let a GPS-teleport artifact through with a poisoned, non-finite persisted distance.
 
-### Trip detail: offline route trace and delete
+### Trip detail: route map, offline fallback, and delete
 
-The MVP detail screen is deliberately minimal: date, start/end times (in the trip's own stored
-`startZoneId`, consistent with its date - see "Schema" below - not the device's *current* zone), duration, distance, the offline route
-trace, and delete. Estimated steps and GPX export were both cut from this first version (see
-"Known limitations") to keep trips completely independent of the step pipeline and reduce MVP
-surface area; both are straightforward to reintroduce later since `trips`/`trip_points` already
-retain everything (timestamps, points) either would need.
+The detail screen shows: date, start/end times (in the trip's own stored `startZoneId`, consistent
+with its date - see "Schema" below - not the device's *current* zone), duration, distance, the
+route on a real map, an "Export GPX" action (see "GPX export" below), and delete. Estimated steps
+are still out of scope (see "Known limitations") to keep trips independent of the step pipeline;
+GPX export and a real map were reintroduced in this redesign, since `trips`/`trip_points` already
+retained everything (timestamps, points) either needed.
 
-- The route trace (`ui/trips/RouteTraceCanvas.kt`) is a plain Compose `Canvas` polyline over a
-  pure, unit-tested normalization function (`domain/trip/RouteTraceGeometry.kt`) - a simple
-  degree-based linear fit, **not** a real map/projection, and safe for empty, one-point, and
-  perfectly horizontal/vertical routes (all handled explicitly, not just assumed away). No Google
-  Maps, no map tiles, no API key/billing, no Internet permission, no routing, no offline map
-  downloads - the app's offline character is fully preserved.
+- **Map** (`ui/trips/TripRouteMap.kt`, `TripRouteMapCard`) - the official
+  [MapLibre Compose](https://maplibre.org/maplibre-compose/) library
+  (`org.maplibre.compose:maplibre-compose-android`), consumed as a plain Android dependency (no
+  Kotlin Multiplatform plugin adopted by this project - see that file's own doc comment for why
+  that's safe). Tiles/style come from [OpenFreeMap](https://openfreemap.org) - a free, keyless
+  vector tile provider with no request limits and explicit commercial-use permission - via a style
+  URL that switches between its `positron` (light) and `dark` styles with the system theme. No API
+  key or secret is stored anywhere in this app. MapLibre's built-in attribution/logo control
+  (`MapOptions.ornamentOptions`, left at its default `AllEnabled`) is always shown, satisfying
+  OpenFreeMap's attribution requirement. Tiles are only ever requested while `TripRouteMapCard` is
+  part of the composition, i.e. only while the trip-detail screen showing it is visible - no
+  prefetching, no offline pack download (the library's own `offline` APIs are never called), no
+  background loading, and no upload of the trip's own recorded points or GPX. Requesting tiles for a
+  specific viewport does, like any map, reveal that viewport (the route's geographic area) to the
+  tile provider - see "Data storage and privacy" above for the precise, honest disclosure.
+  - The camera automatically fits the complete route on load, via a pure, unit-tested bounding-box
+    calculation (`ui/trips/RouteCameraBounds.kt`) that pads a single point or a cluster of
+    identical/near-identical points to a sensible minimum span, so the camera never lands on an
+    extreme or undefined zoom.
+  - Start and finish are marked with distinctly colored circle layers.
+  - If the basemap fails to load (e.g. no network), the card falls back to the original
+    fully-offline, non-geographic route trace (`ui/trips/RouteTraceCanvas.kt` - a plain Compose
+    `Canvas` polyline over a pure, unit-tested normalization function,
+    `domain/trip/RouteTraceGeometry.kt`, unchanged from before this redesign) with an honest "map
+    unavailable" message, rather than silently showing nothing or crashing.
 - **Delete trip** cascades (`ON DELETE CASCADE` on `trip_points.tripId`) to remove every point with
   it, with an in-app confirmation first.
 
@@ -920,33 +967,22 @@ physical device with the screen off and the app backgrounded, not merely compile
   shipped ~January 2026) and broke on first contact with this project's straightforward setup;
   the traditional `org.jetbrains.kotlin.android` + `org.jetbrains.kotlin.plugin.compose` + KSP
   plugin combination is used instead, which is still fully supported.
-- **Manual-override anchoring across classifier reruns is reconciled, but only for unambiguous
-  matches.** Overrides are keyed by a bout's start-time anchor; a classifier rerun that shifts the
-  same walking session's boundary (a corrected/removed first minute, an earlier minute extending it
-  backward, a threshold change, ...) would otherwise silently orphan the override. Every recompute
-  (`StepRepository.reconcileOverrideAnchors`) now looks for a single newly computed bout that
-  overlaps an orphaned override's previous interval by a strong majority (>=50%) in both
-  directions, and re-keys the override to it atomically with the bout replacement. If a session
-  ambiguously splits or merges (no candidate clears that majority, or more than one orphaned
-  override would otherwise claim the same new bout), the override is deliberately left exactly as
-  it was - preserved, never deleted, but inactive - rather than guessing.
 - **No Health Connect / accelerometer fallback.** If the Recording API is unavailable (old Play
   services, no Play services at all, etc.) the app shows an honest "unavailable" state rather than
   inventing a second step-counting mechanism, per the product constraints.
 - Very long gaps between app opens (beyond the Recording API's retention window) mean the steps
   taken during that gap are permanently unrecoverable - this is a platform limitation, documented
   above, not something the app can work around.
-- **Trip Route Recording is intentionally an MVP.** By design, this first version has no real map
-  or map tiles, no Internet permission, no navigation/route planning, no automatic trip
-  start/stop, no `ACCESS_BACKGROUND_LOCATION`, no pause/resume *mid-recording* (Resume only applies
-  to an already-`INTERRUPTED` trip, never a live pause), no waypoints/photos/notes, no cloud
-  sync/accounts/analytics/telemetry, and no network-based
-  elevation correction (altitude, when shown, is whatever the location provider itself supplied).
-  **Estimated steps and GPX export were both cut from this first version too** - a trip currently
-  reads no step data at all and can only be viewed in-app, not exported - to keep trips completely
-  independent of the step pipeline while the recording mechanism itself was hardened; the schema
-  already retains everything (timestamps, route points) either would need to be reintroduced later.
-  None of these are bugs to fix incidentally - they are explicit scope exclusions for this change.
+- **Trip Route Recording remains intentionally scoped.** *Recording* a trip still has no
+  navigation/route planning, no automatic trip start/stop, no `ACCESS_BACKGROUND_LOCATION`, no
+  pause/resume *mid-recording* (Resume only applies to an already-`INTERRUPTED` trip, never a live
+  pause), no waypoints/photos/notes, no cloud sync/accounts/analytics/telemetry, and no
+  network-based elevation correction (altitude, when shown, is whatever the location provider
+  itself supplied) - recording itself is still fully offline. The completed-trip *detail* screen
+  now has a real map and GPX export (see "Trip detail: route map, offline fallback, and delete"
+  above); **estimated steps are still out of scope** - a trip still reads no step data at all, to
+  keep trips completely independent of the step pipeline. None of these are bugs to fix
+  incidentally - they are explicit scope exclusions for this change.
 - **Trip Route Recording has not been exercised on a real device or GPS receiver** in this
   environment - see the device checklist above. It is not considered field-validated - in
   particular for screen-off/backgrounded recording, process-death/restart recovery, and a

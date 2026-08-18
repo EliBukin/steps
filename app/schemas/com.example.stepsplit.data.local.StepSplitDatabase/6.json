@@ -1,0 +1,701 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 6,
+    "identityHash": "9ac70526f1b80fdb0a1566f9721b71a6",
+    "entities": [
+      {
+        "tableName": "step_buckets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source` TEXT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `zoneId` TEXT NOT NULL, `localDate` TEXT NOT NULL, `importedAtEpochSecond` INTEGER NOT NULL, `validationState` TEXT NOT NULL, `acceptedSteps` INTEGER NOT NULL, `rejectionReason` TEXT, `policyVersion` INTEGER, `validatedAtEpochSecond` INTEGER, `observationStartEpochSecond` INTEGER NOT NULL, `observationEndEpochSecond` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zoneId",
+            "columnName": "zoneId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localDate",
+            "columnName": "localDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedAtEpochSecond",
+            "columnName": "importedAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "validationState",
+            "columnName": "validationState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedSteps",
+            "columnName": "acceptedSteps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rejectionReason",
+            "columnName": "rejectionReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "policyVersion",
+            "columnName": "policyVersion",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "validatedAtEpochSecond",
+            "columnName": "validatedAtEpochSecond",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "observationStartEpochSecond",
+            "columnName": "observationStartEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observationEndEpochSecond",
+            "columnName": "observationEndEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_step_buckets_source_startEpochSecond",
+            "unique": true,
+            "columnNames": [
+              "source",
+              "startEpochSecond"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_step_buckets_source_startEpochSecond` ON `${TABLE_NAME}` (`source`, `startEpochSecond`)"
+          },
+          {
+            "name": "index_step_buckets_source_validationState",
+            "unique": false,
+            "columnNames": [
+              "source",
+              "validationState"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_step_buckets_source_validationState` ON `${TABLE_NAME}` (`source`, `validationState`)"
+          }
+        ]
+      },
+      {
+        "tableName": "walk_bouts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER NOT NULL, `steps` INTEGER NOT NULL, `activeMinutes` INTEGER NOT NULL, `elapsedMinutes` INTEGER NOT NULL, `cadence` REAL NOT NULL, `autoClassification` TEXT NOT NULL, `autoConfidence` REAL NOT NULL, `autoReasonCode` TEXT NOT NULL, `classifierVersion` INTEGER NOT NULL, `computedAtEpochSecond` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeMinutes",
+            "columnName": "activeMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedMinutes",
+            "columnName": "elapsedMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cadence",
+            "columnName": "cadence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoClassification",
+            "columnName": "autoClassification",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoConfidence",
+            "columnName": "autoConfidence",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoReasonCode",
+            "columnName": "autoReasonCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "classifierVersion",
+            "columnName": "classifierVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "computedAtEpochSecond",
+            "columnName": "computedAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_walk_bouts_startEpochSecond",
+            "unique": true,
+            "columnNames": [
+              "startEpochSecond"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_walk_bouts_startEpochSecond` ON `${TABLE_NAME}` (`startEpochSecond`)"
+          }
+        ]
+      },
+      {
+        "tableName": "manual_walks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER, `steps` INTEGER, `createdAtEpochSecond` INTEGER NOT NULL, `autoCompleted` INTEGER NOT NULL, `autoCompletionMessageShown` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "steps",
+            "columnName": "steps",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtEpochSecond",
+            "columnName": "createdAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoCompleted",
+            "columnName": "autoCompleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoCompletionMessageShown",
+            "columnName": "autoCompletionMessageShown",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "trips",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `startEpochSecond` INTEGER NOT NULL, `endEpochSecond` INTEGER, `startZoneId` TEXT NOT NULL, `state` TEXT NOT NULL, `distanceMeters` REAL NOT NULL, `lastAcceptedPointEpochSecond` INTEGER, `createdAtEpochSecond` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startEpochSecond",
+            "columnName": "startEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endEpochSecond",
+            "columnName": "endEpochSecond",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "startZoneId",
+            "columnName": "startZoneId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceMeters",
+            "columnName": "distanceMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastAcceptedPointEpochSecond",
+            "columnName": "lastAcceptedPointEpochSecond",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAtEpochSecond",
+            "columnName": "createdAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "trip_points",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `tripId` INTEGER NOT NULL, `capturedAtEpochSecond` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `accuracyMeters` REAL NOT NULL, `altitudeMeters` REAL, `speedMetersPerSecond` REAL, FOREIGN KEY(`tripId`) REFERENCES `trips`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tripId",
+            "columnName": "tripId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "capturedAtEpochSecond",
+            "columnName": "capturedAtEpochSecond",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitude",
+            "columnName": "latitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitude",
+            "columnName": "longitude",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accuracyMeters",
+            "columnName": "accuracyMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "altitudeMeters",
+            "columnName": "altitudeMeters",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedMetersPerSecond",
+            "columnName": "speedMetersPerSecond",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_trip_points_tripId_capturedAtEpochSecond",
+            "unique": false,
+            "columnNames": [
+              "tripId",
+              "capturedAtEpochSecond"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trip_points_tripId_capturedAtEpochSecond` ON `${TABLE_NAME}` (`tripId`, `capturedAtEpochSecond`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "trips",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "tripId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "activity_intervals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `activityType` TEXT NOT NULL, `startWallClockEpochMilli` INTEGER NOT NULL, `endWallClockEpochMilli` INTEGER, `temporalContinuityEpoch` INTEGER NOT NULL, `closedReason` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activityType",
+            "columnName": "activityType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startWallClockEpochMilli",
+            "columnName": "startWallClockEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endWallClockEpochMilli",
+            "columnName": "endWallClockEpochMilli",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "temporalContinuityEpoch",
+            "columnName": "temporalContinuityEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "closedReason",
+            "columnName": "closedReason",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_activity_intervals_activityType_endWallClockEpochMilli",
+            "unique": false,
+            "columnNames": [
+              "activityType",
+              "endWallClockEpochMilli"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_activity_intervals_activityType_endWallClockEpochMilli` ON `${TABLE_NAME}` (`activityType`, `endWallClockEpochMilli`)"
+          },
+          {
+            "name": "index_activity_intervals_activityType_startWallClockEpochMilli",
+            "unique": false,
+            "columnNames": [
+              "activityType",
+              "startWallClockEpochMilli"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_activity_intervals_activityType_startWallClockEpochMilli` ON `${TABLE_NAME}` (`activityType`, `startWallClockEpochMilli`)"
+          }
+        ]
+      },
+      {
+        "tableName": "temporal_continuity_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `bootSessionId` INTEGER NOT NULL, `bootEpochOffsetMillis` INTEGER NOT NULL, `temporalContinuityEpoch` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bootSessionId",
+            "columnName": "bootSessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bootEpochOffsetMillis",
+            "columnName": "bootEpochOffsetMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "temporalContinuityEpoch",
+            "columnName": "temporalContinuityEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "motion_evidence",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `kind` TEXT NOT NULL, `activityType` TEXT NOT NULL, `confidence` INTEGER, `eventElapsedRealtimeMillis` INTEGER NOT NULL, `bootSessionId` INTEGER NOT NULL, `derivedWallClockEpochMilli` INTEGER NOT NULL, `temporalContinuityEpoch` INTEGER NOT NULL, `receivedAtEpochMilli` INTEGER NOT NULL, `dedupeKey` TEXT NOT NULL, `batchId` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activityType",
+            "columnName": "activityType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "eventElapsedRealtimeMillis",
+            "columnName": "eventElapsedRealtimeMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bootSessionId",
+            "columnName": "bootSessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "derivedWallClockEpochMilli",
+            "columnName": "derivedWallClockEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "temporalContinuityEpoch",
+            "columnName": "temporalContinuityEpoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAtEpochMilli",
+            "columnName": "receivedAtEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dedupeKey",
+            "columnName": "dedupeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_motion_evidence_dedupeKey",
+            "unique": true,
+            "columnNames": [
+              "dedupeKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_motion_evidence_dedupeKey` ON `${TABLE_NAME}` (`dedupeKey`)"
+          },
+          {
+            "name": "index_motion_evidence_derivedWallClockEpochMilli",
+            "unique": false,
+            "columnNames": [
+              "derivedWallClockEpochMilli"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_motion_evidence_derivedWallClockEpochMilli` ON `${TABLE_NAME}` (`derivedWallClockEpochMilli`)"
+          },
+          {
+            "name": "index_motion_evidence_bootSessionId",
+            "unique": false,
+            "columnNames": [
+              "bootSessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_motion_evidence_bootSessionId` ON `${TABLE_NAME}` (`bootSessionId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "step_counter_samples",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `cumulativeSteps` INTEGER NOT NULL, `elapsedRealtimeMillisAtSample` INTEGER NOT NULL, `wallClockEpochMilli` INTEGER NOT NULL, `bootSessionId` INTEGER NOT NULL, `receivedAtEpochMilli` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cumulativeSteps",
+            "columnName": "cumulativeSteps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedRealtimeMillisAtSample",
+            "columnName": "elapsedRealtimeMillisAtSample",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wallClockEpochMilli",
+            "columnName": "wallClockEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bootSessionId",
+            "columnName": "bootSessionId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAtEpochMilli",
+            "columnName": "receivedAtEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_step_counter_samples_bootSessionId_elapsedRealtimeMillisAtSample",
+            "unique": true,
+            "columnNames": [
+              "bootSessionId",
+              "elapsedRealtimeMillisAtSample"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_step_counter_samples_bootSessionId_elapsedRealtimeMillisAtSample` ON `${TABLE_NAME}` (`bootSessionId`, `elapsedRealtimeMillisAtSample`)"
+          },
+          {
+            "name": "index_step_counter_samples_wallClockEpochMilli",
+            "unique": false,
+            "columnNames": [
+              "wallClockEpochMilli"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_step_counter_samples_wallClockEpochMilli` ON `${TABLE_NAME}` (`wallClockEpochMilli`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9ac70526f1b80fdb0a1566f9721b71a6')"
+    ]
+  }
+}

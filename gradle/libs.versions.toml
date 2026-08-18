@@ -14,6 +14,7 @@ datastore = "1.2.1"
 coroutines = "1.11.0"
 playServicesLocation = "21.3.0"
 healthConnect = "1.1.0"
+maplibreCompose = "0.14.0"
 junit = "4.13.2"
 robolectric = "4.16.1"
 androidxTestCore = "1.7.0"
@@ -55,6 +56,7 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 androidx-health-connect-client = { group = "androidx.health.connect", name = "connect-client", version.ref = "healthConnect" }
+maplibre-compose-android = { group = "org.maplibre.compose", name = "maplibre-compose-android", version.ref = "maplibreCompose" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

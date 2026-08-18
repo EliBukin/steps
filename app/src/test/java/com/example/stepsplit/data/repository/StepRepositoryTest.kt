@@ -5,7 +5,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
-import com.example.stepsplit.data.local.override.SessionOverrideEntity
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.FakeStepSource
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
@@ -13,7 +12,6 @@ import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.SyncFailureCategory
-import com.example.stepsplit.domain.model.WalkSession
 import com.example.stepsplit.domain.stats.LifetimeStatsCalculator
 import java.time.Clock
 import java.time.Duration
@@ -185,8 +183,18 @@ class StepRepositoryTest {
      */
     private val noOpTimerScope: CoroutineScope = CoroutineScope(StandardTestDispatcher())
 
-    /** Iteration budget for [settle]/[awaitFinalizedSessions] below - see their doc comments. */
+    /** Iteration budget for [settle]/[awaitFinalizedBouts] below - see their doc comments. */
     private val SETTLE_ITERATIONS = 50
+
+    /**
+     * Current-version automatic bouts, standing in for the removed `observeSessions()`/`WalkSession`
+     * (manual reclassification and the Sessions screen were removed - see StepRepository's own
+     * `observeDailyBreakdowns` doc comment). Filters out any row computed by an older
+     * [CLASSIFIER_VERSION], mirroring exactly what production code does at read time, and preserves
+     * [WalkBoutDao.getAll]'s own `startEpochSecond DESC` ordering.
+     */
+    private suspend fun currentAutoBouts(db: StepSplitDatabase = database): List<WalkBoutEntity> =
+        db.walkBoutDao().getAll().filter { it.classifierVersion == CLASSIFIER_VERSION }
 
     @Before
     fun setUp() {
@@ -358,12 +366,12 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `observeSessions never returns a row computed by an older classifier version`() = runTest {
+    fun `a walk_bouts row computed by an older classifier version is never surfaced as current`() = runTest {
         // No sync has run at all - this asserts the read-side filter directly, independent of
         // whether anything has triggered a recompute yet.
         database.walkBoutDao().insertAll(listOf(staleWalkBoutRow()))
 
-        assertTrue(repository.observeSessions().first().isEmpty())
+        assertTrue(currentAutoBouts().isEmpty())
     }
 
     @Test
@@ -375,9 +383,9 @@ class StepRepositoryTest {
         val result = repository.syncNow()
 
         assertTrue("an unavailable source must not block recovering from a stale cache", result is SyncResult.Unavailable)
-        val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        val bouts = currentAutoBouts()
+        assertEquals(1, bouts.size)
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
     }
 
     @Test
@@ -394,9 +402,9 @@ class StepRepositoryTest {
         val result = failingRepository.syncNow()
 
         assertTrue("a failing read must not block recovering from a stale cache", result is SyncResult.Failed)
-        val sessions = failingRepository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+        val bouts = currentAutoBouts()
+        assertEquals(1, bouts.size)
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
     }
 
     @Test
@@ -434,331 +442,6 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `manual reclassification overrides the automatic result and survives a rerun`() = runTest {
-        // 20 minutes at 80 steps/min: a clear automatic WORKOUT, safely finished before "now".
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val autoSession = repository.observeSessions().first().single()
-        assertEquals(BoutClassification.WORKOUT, autoSession.classification)
-
-        repository.reclassify(autoSession.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
-
-        // Rerunning classification (another sync) must not discard the manual override.
-        repository.syncNow()
-        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
-    }
-
-    // ---- Manual override anchor reconciliation (reconcileOverrideAnchors) ----
-
-    @Test
-    fun `an override survives unchanged when a later read appears to omit the first minute of its bout - the bucket is preserved, not deleted`() = runTest {
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-        val original = repository.observeSessions().first().single()
-        repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
-
-        // A later read simply doesn't return the very first minute of the bout again (e.g. it
-        // fell outside a renewed subscription's trailing window) - unlike the old envelope-based
-        // reconciliation, this must NOT be treated as proof that minute is now zero: see
-        // StepRepository.syncNowLocked's own doc comment on why a minute a read doesn't return a
-        // positive value for is never distinguishable from "genuinely zero" versus "simply outside
-        // what this read happened to cover". The originally stored first minute must survive
-        // untouched, so the bout's start never actually shifts and the override needs no
-        // reattachment at all - it is still exactly self-consistent at its original anchor. A
-        // well-separated, isolated minute further back (gap > the default maxGapMinutes=2) is also
-        // included in this same read to prove it forms its own session rather than merging in.
-        fakeSource.clearIntervals()
-        fakeSource.addInterval(baseEpoch - 5 * 60L, baseEpoch - 5 * 60L + 60L, 10)
-        for (i in 1 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val sessions = repository.observeSessions().first()
-        assertEquals("the isolated minute forms its own separate session", 2, sessions.size)
-        val mainSession = sessions.single { it.startEpochSecond == baseEpoch }
-        assertEquals(
-            "the override must still apply - the bout's start never actually moved",
-            BoutClassification.INCIDENTAL,
-            mainSession.classification,
-        )
-        assertEquals(baseEpoch, mainSession.anchorEpochSecond)
-        assertEquals(
-            "the first minute's originally imported value must survive untouched, not be deleted",
-            80L,
-            database.stepBucketDao().getAllActive().single { it.startEpochSecond == baseEpoch }.steps,
-        )
-    }
-
-    @Test
-    fun `an override survives when an earlier active minute extends the same bout backward`() = runTest {
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-        val original = repository.observeSessions().first().single()
-        repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        // A late-arriving correction reveals one more active minute immediately before the bout -
-        // the same walking session, now starting a minute earlier.
-        fakeSource.addInterval(baseEpoch - 60L, baseEpoch, 80)
-        repository.syncNow()
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(BoutClassification.INCIDENTAL, sessions.single().classification)
-        assertEquals(baseEpoch - 60L, sessions.single().anchorEpochSecond)
-    }
-
-    @Test
-    fun `an override does not reattach to either half when a threshold change ambiguously splits its session`() = runTest {
-        // Two 10-minute active stretches separated by an internal 2-minute idle gap (minutes 10
-        // and 11 have no steps at all) - under the DEFAULT maxGapMinutes=2, idleMinutes(=2) <=2
-        // merges them into one 22-minute bout, clearly a workout.
-        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        for (i in 12 until 22) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-        val original = repository.observeSessions().first().single()
-        assertEquals(baseEpoch, original.anchorEpochSecond)
-        repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        // Unlike a source re-sync (which can no longer delete or shrink stored raw data - see
-        // StepRepository.syncNowLocked's own doc comment), a THRESHOLD change reclassifies the
-        // exact same, still fully-intact raw history. Lowering maxGapMinutes to 1 makes the same
-        // 2-minute internal gap exceed tolerance (idleMinutes(=2) <=1 is false), splitting the one
-        // 22-minute bout into two 10-minute fragments. Neither fragment overlaps the original
-        // 22-minute interval by the required strong majority (each covers only 10 of its 22
-        // minutes - under the 50% bar by a full, non-flaky 60-second margin), so neither is
-        // clearly "the same session" as the override's original bout - genuinely ambiguous, not a
-        // coincidental exact-key match.
-        val accepted = repository.applyThresholds(ClassificationThresholds.DEFAULT.copy(maxGapMinutes = 1))
-        assertTrue(accepted)
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(2, sessions.size)
-        assertTrue(
-            "an ambiguous split must not silently reattach the override to either half - both must show their natural auto result",
-            sessions.all { it.classification == BoutClassification.WORKOUT },
-        )
-    }
-
-    @Test
-    fun `two overrides do not both reattach to a single bout formed by merging their sessions`() = runTest {
-        // Two separate 10-minute bouts (idle gap of 3 minutes between them - well past the
-        // default maxGapMinutes=2), each individually reclassified by the user.
-        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val secondBoutStart = baseEpoch + 13 * 60L
-        for (i in 0 until 10) fakeSource.addInterval(secondBoutStart + i * 60L, secondBoutStart + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val firstSessions = repository.observeSessions().first().sortedBy { it.startEpochSecond }
-        assertEquals(2, firstSessions.size)
-        repository.reclassify(firstSessions[0].anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-        repository.reclassify(firstSessions[1].anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        // A correction both fills the gap between the two bouts AND extends the very start
-        // backward by one more minute - merging them into one much longer bout that starts
-        // earlier than EITHER original bout, so neither override's anchor could ever
-        // coincidentally still exact-match the merged bout. It is not clear which of the two
-        // conflicting manual classifications (if either) should apply to the merged result.
-        fakeSource.addInterval(baseEpoch - 60L, baseEpoch, 80)
-        for (i in 10 until 13) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(
-            "a merge must not let either conflicting override silently win - the auto result must show",
-            BoutClassification.WORKOUT,
-            sessions.single().classification,
-        )
-    }
-
-    @Test
-    fun `an override is removed, not silently kept, when a threshold-change split leaves the first fragment at the original start`() = runTest {
-        // Same 22-minute merged bout (two 10-minute active stretches around a 2-minute internal
-        // idle gap) as the ambiguous-split test above.
-        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        for (i in 12 until 22) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-        val original = repository.observeSessions().first().single()
-        repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        // Lowering maxGapMinutes to 1 splits the bout into two 10-minute fragments - the FIRST
-        // fragment coincidentally keeps the EXACT original start (baseEpoch), even though (as
-        // proven in the test above) it now covers only 10 of the original 22 minutes. The old
-        // (pre-fix) code treated an unchanged exact anchor as automatically still valid and kept
-        // applying the override to this fragment; the overlap check must instead recognize this is
-        // NOT the same session and delete the now-stale override row entirely, rather than leaving
-        // it silently attached to an unrelated fragment.
-        val accepted = repository.applyThresholds(ClassificationThresholds.DEFAULT.copy(maxGapMinutes = 1))
-        assertTrue(accepted)
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(2, sessions.size)
-        assertTrue(
-            "the first fragment keeps the original anchor, but must show its natural auto result, not the stale override",
-            sessions.all { it.classification == BoutClassification.WORKOUT },
-        )
-        assertTrue(
-            "the override must be removed rather than left silently attached to an unrelated fragment",
-            database.sessionOverrideDao().getAll().isEmpty(),
-        )
-    }
-
-    @Test
-    fun `an override is removed, not silently kept, when a merge leaves the combined bout at the first bout's start`() = runTest {
-        // Two separate 10-minute bouts (idle gap of 3 minutes - well past the default
-        // maxGapMinutes=2), each individually reclassified by the user.
-        for (i in 0 until 10) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        val secondBoutStart = baseEpoch + 13 * 60L
-        for (i in 0 until 10) fakeSource.addInterval(secondBoutStart + i * 60L, secondBoutStart + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val firstSessions = repository.observeSessions().first().sortedBy { it.startEpochSecond }
-        assertEquals(2, firstSessions.size)
-        repository.reclassify(firstSessions[0].anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-        repository.reclassify(firstSessions[1].anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        // A correction fills ONLY the gap between them - unlike the merge test above, the merged
-        // bout here keeps the FIRST original bout's exact start (no leading extension). The old
-        // (pre-fix) code treated that unchanged exact anchor as automatically still valid and kept
-        // applying the first bout's override to the whole merged session, even though it now spans
-        // more than twice as long and includes the second bout's steps too.
-        for (i in 10 until 13) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(
-            "neither conflicting override may silently win - the merged bout must show its natural auto result",
-            BoutClassification.WORKOUT,
-            sessions.single().classification,
-        )
-
-        val remainingOverrides = database.sessionOverrideDao().getAll()
-        assertEquals(
-            "the first bout's override (whose anchor coincides with the merged bout) must be removed",
-            0,
-            remainingOverrides.count { it.boutStartEpochSecond == baseEpoch },
-        )
-        assertEquals(
-            "the second bout's override is genuinely orphaned (no collision) and must simply be left inactive, not deleted",
-            1,
-            remainingOverrides.count { it.boutStartEpochSecond == secondBoutStart },
-        )
-    }
-
-    @Test
-    fun `a reattachment candidate must not overwrite an existing override already at its target anchor`() = runTest {
-        // A synthetic, adversarial DB state seeded directly (not derived from a real sync) to
-        // exercise reconcileOverrideAnchors's conflict-arbitration path directly: two DIFFERENT
-        // overrides whose previous bouts both plausibly relate to the SAME upcoming new bout -
-        // overrideB legitimately (its previous bout is EXACTLY what the new bout will be, so it is
-        // self-consistent), overrideA only because its own, now-stale bout happens to strongly
-        // overlap the same new bout too.
-        val currentBoutStart = baseEpoch + 60L
-        val currentBoutEnd = baseEpoch + 20 * 60L
-        for (i in 1 until 20) {
-            database.stepBucketDao().upsertAll(
-                listOf(
-                    StepBucketEntity(
-                        source = fakeSource.id,
-                        startEpochSecond = baseEpoch + i * 60L,
-                        endEpochSecond = baseEpoch + i * 60L + 60,
-                        steps = 80,
-                        zoneId = "UTC",
-                        localDate = "2026-03-10",
-                        importedAtEpochSecond = baseEpoch,
-                        // Seeded directly (adversarial override-reconciliation state, not a real
-                        // sync) - raw steps count immediately, no separate acceptance step needed.
-                    ),
-                ),
-            )
-        }
-        database.walkBoutDao().insertAll(
-            listOf(
-                // overrideA's stale previous bout - strongly overlaps the upcoming new bout, but
-                // is not what it actually was computed from.
-                WalkBoutEntity(
-                    startEpochSecond = baseEpoch,
-                    endEpochSecond = currentBoutEnd,
-                    steps = 1600,
-                    activeMinutes = 20,
-                    elapsedMinutes = 20,
-                    cadence = 80.0,
-                    autoClassification = "WORKOUT",
-                    autoConfidence = 1.0,
-                    autoReasonCode = "MEETS_ALL_THRESHOLDS",
-                    classifierVersion = CLASSIFIER_VERSION,
-                    computedAtEpochSecond = baseEpoch,
-                ),
-                // overrideB's previous bout - EXACTLY what the new bout (from the raw data seeded
-                // above) will be, so overrideB is legitimately self-consistent.
-                WalkBoutEntity(
-                    startEpochSecond = currentBoutStart,
-                    endEpochSecond = currentBoutEnd,
-                    steps = 1520,
-                    activeMinutes = 19,
-                    elapsedMinutes = 19,
-                    cadence = 80.0,
-                    autoClassification = "WORKOUT",
-                    autoConfidence = 1.0,
-                    autoReasonCode = "MEETS_ALL_THRESHOLDS",
-                    classifierVersion = CLASSIFIER_VERSION,
-                    computedAtEpochSecond = baseEpoch,
-                ),
-            ),
-        )
-        database.sessionOverrideDao().upsert(SessionOverrideEntity(baseEpoch, BoutClassification.WORKOUT.name, baseEpoch))
-        database.sessionOverrideDao().upsert(SessionOverrideEntity(currentBoutStart, BoutClassification.INCIDENTAL.name, baseEpoch))
-
-        // Triggers recomputeClassification purely from the raw data already in Room (the recovery
-        // path, unconditional on a fresh repository's first call) without going through a real
-        // read - the source is kept unavailable so the sync's own read/reconcile step never runs
-        // and can never touch (or delete) the raw buckets seeded above.
-        fakeSource.setAvailability(StepSourceAvailability.ApiUnavailable)
-        val result = repository.syncNow()
-        assertTrue(result is SyncResult.Unavailable)
-
-        val sessions = repository.observeSessions().first()
-        assertEquals(1, sessions.size)
-        assertEquals(
-            "overrideB is the legitimate, self-consistent match - it must survive and keep applying",
-            BoutClassification.INCIDENTAL,
-            sessions.single().classification,
-        )
-
-        val atTarget = database.sessionOverrideDao().getAll().singleOrNull { it.boutStartEpochSecond == currentBoutStart }
-        assertEquals(
-            "overrideA's conflicting reattachment must never overwrite overrideB's own row at the target anchor",
-            BoutClassification.INCIDENTAL.name,
-            atTarget?.classification,
-        )
-    }
-
-    @Test
-    fun `a reattached override remains applied after another classifier recomputation`() = runTest {
-        for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow()
-        val original = repository.observeSessions().first().single()
-        repository.reclassify(original.anchorEpochSecond!!, BoutClassification.INCIDENTAL)
-
-        fakeSource.clearIntervals()
-        for (i in 1 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
-        repository.syncNow() // triggers reattachment to the new, one-minute-later anchor
-        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
-
-        // Rerunning classification again with no further raw-data changes must not lose the
-        // now-reattached override a second time - it should already be an exact-key match by now.
-        repository.syncNow()
-        assertEquals(
-            "the reattached override must remain stable across a further recompute",
-            BoutClassification.INCIDENTAL,
-            repository.observeSessions().first().single().classification,
-        )
-    }
-
-    @Test
     fun `daily totals maintain the total equals workout plus incidental invariant`() = runTest {
         for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80) // workout bout
         fakeSource.addInterval(baseEpoch - 1800, baseEpoch - 1800 + 60, 30) // isolated incidental minute
@@ -786,7 +469,7 @@ class StepRepositoryTest {
         val soonRepo = StepRepository(database, fakeSource, settingsRepository, soonClock, noOpTimerScope)
         soonRepo.syncNow()
 
-        assertTrue("an un-finalized trailing bout must not appear as a session", soonRepo.observeSessions().first().isEmpty())
+        assertTrue("an un-finalized trailing bout must not be classified yet", currentAutoBouts().isEmpty())
         val earlyBreakdown = soonRepo.observeDailyBreakdowns(listOf(today)).first().getValue(today)
         assertEquals(1600L, earlyBreakdown.totalSteps)
         assertEquals(0L, earlyBreakdown.workoutSteps)
@@ -798,8 +481,8 @@ class StepRepositoryTest {
         val laterRepo = StepRepository(database, fakeSource, settingsRepository, laterClock, noOpTimerScope)
         laterRepo.syncNow()
 
-        val finalizedSession = laterRepo.observeSessions().first().single()
-        assertEquals(BoutClassification.WORKOUT, finalizedSession.classification)
+        val finalizedBout = currentAutoBouts().single()
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(finalizedBout.autoClassification))
         val laterBreakdown = laterRepo.observeDailyBreakdowns(listOf(today)).first().getValue(today)
         assertEquals(1600L, laterBreakdown.totalSteps)
         assertEquals(1600L, laterBreakdown.workoutSteps)
@@ -890,15 +573,15 @@ class StepRepositoryTest {
         harness.scheduler.runCurrent()
     }
 
-    /** Like [settle], but stops as soon as [repo] actually shows a finalized session rather than always spending the full iteration budget. */
-    private suspend fun awaitFinalizedSessions(repo: StepRepository, harness: TimerTestHarness): List<WalkSession> {
+    /** Like [settle], but stops as soon as a finalized bout actually shows up rather than always spending the full iteration budget. */
+    private suspend fun awaitFinalizedBouts(harness: TimerTestHarness): List<WalkBoutEntity> {
         repeat(SETTLE_ITERATIONS) {
             harness.scheduler.runCurrent()
             awaitRoomQuiescence(harness.roomExecutor)
-            val sessions = repo.observeSessions().first()
-            if (sessions.isNotEmpty()) return sessions
+            val bouts = currentAutoBouts(harness.database)
+            if (bouts.isNotEmpty()) return bouts
         }
-        return repo.observeSessions().first()
+        return currentAutoBouts(harness.database)
     }
 
     @Test
@@ -923,7 +606,7 @@ class StepRepositoryTest {
 
             timedRepository.syncNow()
             assertEquals(1, readCount)
-            assertTrue("must not appear as a session yet", timedRepository.observeSessions().first().isEmpty())
+            assertTrue("must not be classified yet", currentAutoBouts(harness.database).isEmpty())
             val earlyBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
             assertEquals(0L, earlyBreakdown.workoutSteps)
             assertEquals(1600L, earlyBreakdown.incidentalSteps)
@@ -935,10 +618,10 @@ class StepRepositoryTest {
             harness.scheduler.advanceTimeBy(2 * 60_000L)
             settle(harness)
 
-            val sessions = awaitFinalizedSessions(timedRepository, harness)
+            val bouts = awaitFinalizedBouts(harness)
             assertEquals("the local timer must never read from the step source", 1, readCount)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
             val laterBreakdown = timedRepository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
             assertEquals(1600L, laterBreakdown.workoutSteps)
             assertEquals(0L, laterBreakdown.incidentalSteps)
@@ -973,7 +656,7 @@ class StepRepositoryTest {
             settle(harness)
             assertTrue(
                 "finalization must wait for the rescheduled deadline, not the original one",
-                timedRepository.observeSessions().first().isEmpty(),
+                currentAutoBouts(harness.database).isEmpty(),
             )
 
             // Advance the rest of the way to the actual (rescheduled) deadline: idleFinalizeMinutes
@@ -982,13 +665,13 @@ class StepRepositoryTest {
             val remainingSeconds = target - clock.instant().epochSecond
             harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
 
-            val sessions = awaitFinalizedSessions(timedRepository, harness)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            val bouts = awaitFinalizedBouts(harness)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
             // The original 20 minutes (1600 steps) plus the one extra minute that arrived before
             // the original deadline (80 steps) - proof the newest data, not a stale snapshot, was
             // used.
-            assertEquals(1680L, sessions.single().steps)
+            assertEquals(1680L, bouts.single().steps)
         }
     }
 
@@ -1015,7 +698,7 @@ class StepRepositoryTest {
             // at this superseded time any more.
             harness.scheduler.advanceTimeBy(60_000)
             settle(harness)
-            assertTrue(timedRepository.observeSessions().first().isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
 
             // Advance the rest of the way to the actual new deadline: 10 minutes after the last
             // active minute.
@@ -1023,9 +706,9 @@ class StepRepositoryTest {
             val remainingSeconds = target - clock.instant().epochSecond
             harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
 
-            val sessions = awaitFinalizedSessions(timedRepository, harness)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            val bouts = awaitFinalizedBouts(harness)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
         }
     }
 
@@ -1048,7 +731,7 @@ class StepRepositoryTest {
             val firstProcessScope = harness.newScope()
             val firstRepository = StepRepository(harness.database, fakeSource, settingsRepository, clock, firstProcessScope)
             firstRepository.syncNow()
-            assertTrue(firstRepository.observeSessions().first().isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
 
             // Simulate the process being killed: cancel its scope (and whatever timer it
             // scheduled) and drive the scheduler so the cancellation is fully observed BEFORE the
@@ -1076,19 +759,19 @@ class StepRepositoryTest {
             assertEquals("recovery must never read from the step source", 0, readCount)
             assertTrue(
                 "the deadline has not passed yet - recovery must not finalize early",
-                secondRepository.observeSessions().first().isEmpty(),
+                currentAutoBouts(harness.database).isEmpty(),
             )
 
             // Advance to the ORIGINAL deadline (2 minutes remaining: 3 minutes total minus the 1
             // already elapsed before the simulated restart) - restored by the new process's own
             // recovery, not by anything left over from the killed one.
             harness.scheduler.advanceTimeBy(2 * 60_000L)
-            val sessions = awaitFinalizedSessions(secondRepository, harness)
+            val bouts = awaitFinalizedBouts(harness)
 
             assertEquals("the restored timer must never read from the step source either", 0, readCount)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-            assertEquals(1600L, sessions.single().steps)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
+            assertEquals(1600L, bouts.single().steps)
         }
     }
 
@@ -1118,9 +801,9 @@ class StepRepositoryTest {
             assertTrue(result is SyncResult.Unavailable)
             // No further time advance needed - the deadline was already in the past the moment
             // recovery ran, so the classifier must finalize it as part of that very recompute.
-            val sessions = secondRepository.observeSessions().first()
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            val bouts = currentAutoBouts(harness.database)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
         }
     }
 
@@ -1161,14 +844,14 @@ class StepRepositoryTest {
                 SyncFailureCategory.READ_FAILED,
                 settingsRepository.settings.first().lastSyncFailure?.category,
             )
-            assertTrue(secondRepository.observeSessions().first().isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
 
             harness.scheduler.advanceTimeBy(2 * 60_000L)
-            val sessions = awaitFinalizedSessions(secondRepository, harness)
+            val bouts = awaitFinalizedBouts(harness)
 
             assertEquals("the restored timer must never read from the step source", 1, readCount)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
             // The recorded failure is orthogonal to local classification recovery - the timer's
             // purely-local recompute must not have silently cleared or altered it.
             assertEquals(
@@ -1220,7 +903,7 @@ class StepRepositoryTest {
             settle(harness)
             assertTrue(
                 "finalization must wait for the rescheduled deadline, not the recovered-but-now-stale one",
-                secondRepository.observeSessions().first().isEmpty(),
+                currentAutoBouts(harness.database).isEmpty(),
             )
 
             // Advance the rest of the way to the actual rescheduled deadline: idleFinalizeMinutes
@@ -1228,11 +911,11 @@ class StepRepositoryTest {
             val target = lastActiveMinuteEnd + 120 + 180
             val remainingSeconds = target - clock.instant().epochSecond
             harness.scheduler.advanceTimeBy(remainingSeconds * 1000)
-            val sessions = awaitFinalizedSessions(secondRepository, harness)
+            val bouts = awaitFinalizedBouts(harness)
 
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
-            assertEquals(1680L, sessions.single().steps)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
+            assertEquals(1680L, bouts.single().steps)
         }
     }
 
@@ -1295,15 +978,15 @@ class StepRepositoryTest {
             // schedules the timer here instead.
             val secondResult = repo.syncNow()
             assertTrue("still unavailable, but recovery must have retried and succeeded", secondResult is SyncResult.Unavailable)
-            assertTrue(repo.observeSessions().first().isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
             assertEquals(0, readCount)
 
             harness.scheduler.advanceTimeBy(2 * 60_000L)
-            val sessions = awaitFinalizedSessions(repo, harness)
+            val bouts = awaitFinalizedBouts(harness)
 
             assertEquals("the restored timer must never read from the step source either", 0, readCount)
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
         }
     }
 
@@ -1312,12 +995,12 @@ class StepRepositoryTest {
     @Test
     fun `a failure between raw reconciliation and classification finishing rolls back atomically, leaving nothing stale`() = runTest {
         // Baseline: a real successful sync establishes a consistent (raw buckets, walk_bouts)
-        // pair - a single finalized WORKOUT session, well before "now" so it isn't the still-open
+        // pair - a single finalized WORKOUT bout, well before "now" so it isn't the still-open
         // trailing bout.
         for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         assertTrue(repository.syncNow() is SyncResult.Success)
-        val baseline = repository.observeSessions().first().single()
-        assertEquals(BoutClassification.WORKOUT, baseline.classification)
+        val baseline = currentAutoBouts().single()
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(baseline.autoClassification))
         assertEquals(1600L, baseline.steps)
         val syncTimeAfterBaseline = settingsRepository.settings.first().lastSuccessfulSync
         assertEquals(20, database.stepBucketDao().count())
@@ -1347,12 +1030,12 @@ class StepRepositoryTest {
         assertEquals(1600L, database.stepBucketDao().getAllActive().sumOf { it.steps })
         assertEquals(syncTimeAfterBaseline, settingsRepository.settings.first().lastSuccessfulSync)
 
-        val sessionsAfterFailure = flakyRepository.observeSessions().first()
-        assertEquals(1, sessionsAfterFailure.size)
+        val boutsAfterFailure = currentAutoBouts()
+        assertEquals(1, boutsAfterFailure.size)
         assertEquals(
-            "the original, still-consistent session must be exactly as it was",
+            "the original, still-consistent bout must be exactly as it was",
             1600L,
-            sessionsAfterFailure.single().steps,
+            boutsAfterFailure.single().steps,
         )
 
         // A later sync, with the source now unavailable, must not need to repair anything (nothing
@@ -1370,16 +1053,16 @@ class StepRepositoryTest {
 
         assertTrue(recoveryResult is SyncResult.Unavailable)
         assertEquals("no source read was needed to stay consistent - nothing was ever corrupted", 0, readCount)
-        val sessionsAfterRecovery = recoveryRepository.observeSessions().first()
-        assertEquals("no stale session must be exposed", 1, sessionsAfterRecovery.size)
-        assertEquals(1600L, sessionsAfterRecovery.single().steps)
+        val boutsAfterRecovery = currentAutoBouts()
+        assertEquals("no stale bout must be exposed", 1, boutsAfterRecovery.size)
+        assertEquals(1600L, boutsAfterRecovery.single().steps)
     }
 
     @Test
     fun `a cancellation between raw reconciliation and classification finishing rolls back atomically and propagates`() = runTest {
         for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         assertTrue(repository.syncNow() is SyncResult.Success)
-        assertEquals(1600L, repository.observeSessions().first().single().steps)
+        assertEquals(1600L, currentAutoBouts().single().steps)
         val syncTimeAfterBaseline = settingsRepository.settings.first().lastSuccessfulSync
         assertEquals(20, database.stepBucketDao().count())
 
@@ -1406,7 +1089,7 @@ class StepRepositoryTest {
         )
         assertEquals(1600L, database.stepBucketDao().getAllActive().sumOf { it.steps })
         assertEquals(syncTimeAfterBaseline, settingsRepository.settings.first().lastSuccessfulSync)
-        assertEquals(1600L, flakyRepository.observeSessions().first().single().steps)
+        assertEquals(1600L, currentAutoBouts().single().steps)
     }
 
     @Test
@@ -1421,7 +1104,7 @@ class StepRepositoryTest {
             // (idleFinalizeMinutes=3 minus the 1 minute "now" already sits past the last active
             // minute) - this is the ONLY thing that must ever schedule/mutate the timer below.
             repo.syncNow()
-            assertTrue(repo.observeSessions().first().isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
 
             // New activity arrives that would push the trailing bout's last active minute a
             // full minute later - and, if a sync committed it and (incorrectly) rescheduled the
@@ -1447,14 +1130,14 @@ class StepRepositoryTest {
             // the original schedule instead, using only the 20 minutes that were actually, durably
             // committed - proof the failed attempt never touched the timer at all.
             harness.scheduler.advanceTimeBy(2 * 60_000L)
-            val sessions = awaitFinalizedSessions(repo, harness)
+            val bouts = awaitFinalizedBouts(harness)
 
-            assertEquals(1, sessions.size)
-            assertEquals(BoutClassification.WORKOUT, sessions.single().classification)
+            assertEquals(1, bouts.size)
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bouts.single().autoClassification))
             assertEquals(
                 "only the durably committed 20 minutes - the new minute from the failed sync must never have counted",
                 1600L,
-                sessions.single().steps,
+                bouts.single().steps,
             )
         }
     }
@@ -1478,9 +1161,6 @@ class StepRepositoryTest {
 
         fakeSource.addInterval(baseEpoch, baseEpoch + 60, 50)
         repository.syncNow()
-
-        val sessions = repository.observeSessions().first()
-        assertTrue("no session may originate from the deprecated manual_walks table", sessions.none { it.id.startsWith("manual:") })
 
         val today = fixedNow.atZone(ZoneOffset.UTC).toLocalDate()
         val breakdown = repository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
@@ -1697,19 +1377,19 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `changing thresholds immediately reclassifies existing sessions without waiting for a sync`() = runTest {
+    fun `changing thresholds immediately reclassifies existing bouts without waiting for a sync`() = runTest {
         // 12 minutes at 80 steps per minute is a WORKOUT under the default thresholds
         // (minBoutDurationMinutes = 10).
         for (i in 0 until 12) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
         repository.syncNow()
-        assertEquals(BoutClassification.WORKOUT, repository.observeSessions().first().single().classification)
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(currentAutoBouts().single().autoClassification))
 
         val stricterThresholds = ClassificationThresholds.DEFAULT.copy(minBoutDurationMinutes = 30)
         val accepted = repository.applyThresholds(stricterThresholds)
 
         assertTrue(accepted)
         // No repository.syncNow() here - the reclassification must already be reflected.
-        assertEquals(BoutClassification.INCIDENTAL, repository.observeSessions().first().single().classification)
+        assertEquals(BoutClassification.INCIDENTAL, BoutClassification.valueOf(currentAutoBouts().single().autoClassification))
     }
 
     @Test
@@ -1721,7 +1401,7 @@ class StepRepositoryTest {
         val accepted = repository.applyThresholds(invalidThresholds)
 
         assertFalse(accepted)
-        assertEquals(BoutClassification.WORKOUT, repository.observeSessions().first().single().classification)
+        assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(currentAutoBouts().single().autoClassification))
     }
 
     @Test
@@ -1950,5 +1630,57 @@ class StepRepositoryTest {
         repository.syncNow()
 
         assertEquals(75L, repository.observeLifetimeStats().first().lifetimeSteps)
+    }
+
+    // ---- observeDailyBreakdowns derives workout intervals directly from current walk_bouts
+    // (regression coverage for the removed observeSessions()/SessionMerger indirection) ----
+
+    @Test
+    fun `observeDailyBreakdowns derives workout intervals only from current-version WORKOUT bouts`() = runTest {
+        // Raw buckets and a matching current-version WORKOUT bout are seeded directly, bypassing
+        // sync entirely, to exercise observeDailyBreakdowns' own bout-filtering logic in isolation.
+        seedRawWorkoutBuckets()
+        database.walkBoutDao().insertAll(
+            listOf(staleWalkBoutRow().copy(classifierVersion = CLASSIFIER_VERSION, autoClassification = "WORKOUT")),
+        )
+
+        val today = fixedNow.atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+
+        assertEquals(1600L, breakdown.totalSteps)
+        assertEquals(1600L, breakdown.workoutSteps)
+        assertEquals(0L, breakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `observeDailyBreakdowns never attributes steps to workout from a stale-version bout, even one marked WORKOUT`() = runTest {
+        seedRawWorkoutBuckets()
+        // classifierVersion 1 (stale) but autoClassification WORKOUT - proves the version gate
+        // itself is what excludes it, not a coincidentally non-workout stale row.
+        database.walkBoutDao().insertAll(listOf(staleWalkBoutRow().copy(autoClassification = "WORKOUT")))
+
+        val today = fixedNow.atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+
+        assertEquals(1600L, breakdown.totalSteps)
+        assertEquals(0L, breakdown.workoutSteps)
+        assertEquals(1600L, breakdown.incidentalSteps)
+    }
+
+    @Test
+    fun `total steps always equal workout plus incidental steps, derived directly from raw buckets and current walk_bouts`() = runTest {
+        seedRawWorkoutBuckets()
+        database.stepBucketDao().upsertAll(listOf(testBucket(baseEpoch - 1800, 30)))
+        database.walkBoutDao().insertAll(
+            listOf(staleWalkBoutRow().copy(classifierVersion = CLASSIFIER_VERSION, autoClassification = "WORKOUT")),
+        )
+
+        val today = fixedNow.atZone(ZoneOffset.UTC).toLocalDate()
+        val breakdown = repository.observeDailyBreakdowns(listOf(today)).first().getValue(today)
+
+        assertEquals(1630L, breakdown.totalSteps)
+        assertEquals(1600L, breakdown.workoutSteps)
+        assertEquals(30L, breakdown.incidentalSteps)
+        assertEquals(breakdown.totalSteps, breakdown.workoutSteps + breakdown.incidentalSteps)
     }
 }

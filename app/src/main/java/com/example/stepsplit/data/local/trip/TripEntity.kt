@@ -11,7 +11,7 @@ import androidx.room.PrimaryKey
  *
  * [state] is [com.example.stepsplit.domain.model.TripState.name] - stored as a string, matching
  * this codebase's existing convention for enum columns (see
- * [com.example.stepsplit.data.local.override.SessionOverrideEntity.classification]).
+ * [com.example.stepsplit.data.local.bout.WalkBoutEntity.autoClassification]).
  * [distanceMeters] and [lastAcceptedPointEpochSecond] are updated atomically together with each
  * newly accepted [TripPointEntity] insert - see [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch].
  */

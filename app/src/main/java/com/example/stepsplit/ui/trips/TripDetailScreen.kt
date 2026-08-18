@@ -1,5 +1,8 @@
 package com.example.stepsplit.ui.trips
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,16 +26,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
-import com.example.stepsplit.domain.trip.RoutePoint
 import com.example.stepsplit.ui.common.formatClockTimeInZone
 import com.example.stepsplit.ui.common.formatDateLabel
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun TripDetailScreen(
@@ -42,6 +49,10 @@ fun TripDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val gpxExportSuccessMessage = stringResource(R.string.trip_gpx_export_success)
+    val gpxExportFailureMessage = stringResource(R.string.trip_gpx_export_failure)
 
     // A one-shot navigation side effect must never run directly during composition - LaunchedEffect
     // defers it to just after this composable enters composition/recomposes with deleted == true.
@@ -50,6 +61,31 @@ fun TripDetailScreen(
     }
     if (uiState.deleted) return
     val trip = uiState.trip ?: return
+
+    // Neither requests storage permission nor needs a FileProvider - the system document picker
+    // hands back a content:// Uri this app can write to directly via ContentResolver. The points are
+    // snapshotted from uiState right here (on the main thread, synchronously) before the coroutine
+    // starts, so a recomposition racing the background work can never change what gets serialized;
+    // serialization and the ContentResolver write both then run on Dispatchers.Default/IO, off the
+    // main thread, with the coroutine scoped to this composable so leaving the screen cancels it
+    // safely instead of touching a torn-down Toast/Context.
+    val gpxExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val points = uiState.points
+        coroutineScope.launch {
+            val succeeded = withContext(Dispatchers.Default) {
+                runCatching {
+                    val gpx = GpxExport.toGpx(points)
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { stream ->
+                            stream.write(gpx.toByteArray(Charsets.UTF_8))
+                        } ?: error("Unable to open an output stream for $uri")
+                    }
+                }.isSuccess
+            }
+            Toast.makeText(context, if (succeeded) gpxExportSuccessMessage else gpxExportFailureMessage, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -81,17 +117,24 @@ fun TripDetailScreen(
         }
 
         item {
-            val routePoints = uiState.points.map { RoutePoint(it.latitude, it.longitude) }
-            if (routePoints.isEmpty()) {
+            if (uiState.points.isEmpty()) {
                 Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
             } else {
-                RouteTraceCanvas(points = routePoints, modifier = Modifier.fillMaxWidth())
+                TripRouteMapCard(points = uiState.points, modifier = Modifier.fillMaxWidth())
             }
         }
 
         item {
-            OutlinedButton(onClick = { showDeleteConfirm = true }) {
-                Text(stringResource(R.string.trip_detail_delete_action))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { gpxExportLauncher.launch(GpxExport.suggestedFileName(tripDate(trip.startEpochSecond, trip.startZoneId))) },
+                    enabled = uiState.points.isNotEmpty(),
+                ) {
+                    Text(stringResource(R.string.trip_detail_export_gpx_action))
+                }
+                OutlinedButton(onClick = { showDeleteConfirm = true }) {
+                    Text(stringResource(R.string.trip_detail_delete_action))
+                }
             }
         }
     }
