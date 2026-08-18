@@ -36,8 +36,12 @@ class TripRepositoryTest {
 
     private val fixedNow = Instant.parse("2026-03-10T10:00:00Z")
 
-    private fun sample(lat: Double, lon: Double, capturedAt: Long, accuracy: Float = 10f) =
-        RawLocationSample(lat, lon, accuracy, capturedAt)
+    private fun sample(lat: Double, lon: Double, capturedAt: Long, accuracy: Float = 10f, speed: Float? = null) =
+        RawLocationSample(lat, lon, accuracy, capturedAt, speedMetersPerSecond = speed)
+
+    private companion object {
+        const val EARTH_RADIUS_METERS = 6_371_000.0
+    }
 
     @Before
     fun setUp() {
@@ -125,12 +129,15 @@ class TripRepositoryTest {
     fun `distance accumulates only between consecutive accepted points`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
+        // 30s gaps (not 10s): each ~111m segment implies ~3.7 m/s, safely under the plausibility
+        // ceiling - this test is about distance bookkeeping, not speed, so the timing here is
+        // deliberately generous rather than coupled to that threshold.
         repository.recordAcceptedBatch(
             tripId,
             listOf(
                 sample(32.0000, 34.0000, t0 + 10),
-                sample(32.0010, 34.0000, t0 + 20),
-                sample(32.0020, 34.0000, t0 + 30),
+                sample(32.0010, 34.0000, t0 + 40),
+                sample(32.0020, 34.0000, t0 + 70),
             ),
         )
 
@@ -143,7 +150,7 @@ class TripRepositoryTest {
 
         val trip = repository.getTrip(tripId)!!
         assertEquals(expectedDistance, trip.distanceMeters, 1e-6)
-        assertEquals(t0 + 30, trip.lastAcceptedPointEpochSecond)
+        assertEquals(t0 + 70, trip.lastAcceptedPointEpochSecond)
     }
 
     @Test
@@ -168,22 +175,59 @@ class TripRepositoryTest {
         assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
     }
 
+    /**
+     * Ties the strengthened [RoutePointAcceptancePolicy] directly to persisted distance, using the
+     * confirmed A55 field-defect's own implied/reported speed shape: a jump implying ~9 m/s (within
+     * the defect's observed 8-11 m/s range) while Android itself reports ~1.5 m/s (within the
+     * defect's observed 1.3-1.8 m/s range) for that exact fix. Must never be accepted or persisted,
+     * and must never inflate the trip's stored distance - see [com.example.stepsplit.domain.trip.RouteSanitizerTest]
+     * for the equivalent proof at the pure route-cleaning layer.
+     */
     @Test
-    fun `a batch delivered out of order is still processed chronologically`() = runTest {
+    fun `a jump matching the confirmed A55 defect pattern is rejected live and never inflates persisted distance`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
-        // Delivered latest-first; must be accepted/stored in capture-time order regardless.
         repository.recordAcceptedBatch(
             tripId,
             listOf(
-                sample(32.0020, 34.0000, t0 + 30),
-                sample(32.0000, 34.0000, t0 + 10),
-                sample(32.0010, 34.0000, t0 + 20),
+                sample(32.0000, 34.0000, t0 + 10, speed = 1.4f),
+                // ~90m over 10s = 9.0 m/s implied, but Android itself reports only 1.5 m/s for
+                // this exact fix - the defect's own contradiction pattern.
+                sample(32.0000 + Math.toDegrees(90.0 / EARTH_RADIUS_METERS), 34.0000, t0 + 20, speed = 1.5f),
+                sample(32.0000 + Math.toDegrees(14.0 / EARTH_RADIUS_METERS), 34.0000, t0 + 30, speed = 1.4f),
             ),
         )
 
         val points = repository.getTripPoints(tripId)
-        assertEquals(listOf(t0 + 10, t0 + 20, t0 + 30), points.map { it.capturedAtEpochSecond })
+        assertEquals(2, points.size)
+
+        val expectedGoodDistance = RouteMath.haversineMeters(
+            32.0000,
+            34.0000,
+            32.0000 + Math.toDegrees(14.0 / EARTH_RADIUS_METERS),
+            34.0000,
+        )
+        assertEquals(expectedGoodDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+    }
+
+    @Test
+    fun `a batch delivered out of order is still processed chronologically`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        // Delivered latest-first; must be accepted/stored in capture-time order regardless. 30s
+        // gaps (not 10s) keep implied speed (~3.7 m/s) safely under the plausibility ceiling - this
+        // test is about ordering, not speed.
+        repository.recordAcceptedBatch(
+            tripId,
+            listOf(
+                sample(32.0020, 34.0000, t0 + 70),
+                sample(32.0000, 34.0000, t0 + 10),
+                sample(32.0010, 34.0000, t0 + 40),
+            ),
+        )
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(listOf(t0 + 10, t0 + 40, t0 + 70), points.map { it.capturedAtEpochSecond })
 
         val expectedDistance =
             RouteMath.haversineMeters(32.0000, 34.0000, 32.0010, 34.0000) +
@@ -213,7 +257,10 @@ class TripRepositoryTest {
         val t0 = fixedNow.epochSecond
         var expectedDistance = 0.0
         var previous: RawLocationSample? = null
-        val samples = (0 until 5).map { sample(32.0 + it * 0.0005, 34.0, t0 + 10 + it * 10L) }
+        // 30s spacing (not 10s): each ~55m segment implies ~1.9 m/s, safely under the plausibility
+        // ceiling with margin - this test is about distance/last-point bookkeeping staying
+        // consistent across repeated single-sample batches, not about speed.
+        val samples = (0 until 5).map { sample(32.0 + it * 0.0005, 34.0, t0 + 10 + it * 30L) }
         for (s in samples) {
             repository.recordAcceptedBatch(tripId, listOf(s))
             previous?.let { expectedDistance += RouteMath.haversineMeters(it.latitude, it.longitude, s.latitude, s.longitude) }
@@ -311,7 +358,8 @@ class TripRepositoryTest {
         val tripId = repository.startTrip()
         repository.recordAcceptedBatch(
             tripId,
-            listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10), sample(32.001, 34.0, fixedNow.epochSecond + 20)),
+            // ~11m over 10s = ~1.1 m/s - this test is about cascade-delete behavior, not speed.
+            listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10), sample(32.0001, 34.0, fixedNow.epochSecond + 20)),
         )
         assertEquals(2, repository.getTripPoints(tripId).size)
 
@@ -495,8 +543,10 @@ class TripRepositoryTest {
         repository.recordAcceptedBatch(tripId, listOf(sample(32.001, 34.0, t0 + 20)))
         assertEquals(1, repository.getTripPoints(tripId).size)
 
-        // A fix captured before the cutoff but only delivered now (exactly what flush() is for) is unaffected.
-        repository.recordAcceptedBatch(tripId, listOf(sample(32.0001, 34.0000, t0 + 12)))
+        // A fix captured before the cutoff but only delivered now (exactly what flush() is for) is
+        // unaffected. A small lat delta (~1m over 2s, well under the plausibility ceiling) keeps
+        // this focused on cutoff-timing behavior rather than coupling it to the speed threshold.
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.00001, 34.0000, t0 + 12)))
         assertEquals(2, repository.getTripPoints(tripId).size)
     }
 

@@ -11,7 +11,8 @@ class RoutePointAcceptancePolicyTest {
         lon: Double = 34.0,
         accuracy: Float = 10f,
         capturedAt: Long = 1_000L,
-    ) = RawLocationSample(lat, lon, accuracy, capturedAt)
+        speed: Float? = null,
+    ) = RawLocationSample(lat, lon, accuracy, capturedAt, speedMetersPerSecond = speed)
 
     private fun decide(candidate: RawLocationSample, last: RawLocationSample? = null, now: Long = candidate.capturedAtEpochSecond) =
         RoutePointAcceptancePolicy.evaluate(candidate, last, now)
@@ -99,7 +100,7 @@ class RoutePointAcceptancePolicyTest {
         val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L)
         val elapsedSeconds = 10L
 
-        val justUnderSpeed = RoutePointAcceptancePolicy.MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND - 0.5
+        val justUnderSpeed = RouteMovementPlausibility.MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND - 0.5
         val justUnder = sample(
             lat = last.latitude + degreesLatFor(justUnderSpeed * elapsedSeconds),
             lon = last.longitude,
@@ -107,7 +108,7 @@ class RoutePointAcceptancePolicyTest {
         )
         assertTrue(decide(justUnder, last) is RouteSampleDecision.Accepted)
 
-        val justOverSpeed = RoutePointAcceptancePolicy.MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND + 0.5
+        val justOverSpeed = RouteMovementPlausibility.MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND + 0.5
         val justOver = sample(
             lat = last.latitude + degreesLatFor(justOverSpeed * elapsedSeconds),
             lon = last.longitude,
@@ -127,6 +128,114 @@ class RoutePointAcceptancePolicyTest {
         val next = sample(lat = 0.0000001, lon = 179.9999999, capturedAt = 1_010L)
         val decision = decide(next, last)
         assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decision as RouteSampleDecision.Rejected).reason)
+    }
+
+    @Test
+    fun `reasonable running movement is accepted`() {
+        val last = sample(lat = 32.0000, lon = 34.0000, capturedAt = 1_000L)
+        // ~35m over 10s = 3.5 m/s - a comfortable jog, well under the plausibility ceiling.
+        val next = sample(lat = last.latitude + degreesLatFor(35.0), lon = last.longitude, capturedAt = 1_010L)
+        assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
+    }
+
+    @Test
+    fun `a plausible jump with no reported speed at all is still accepted safely`() {
+        val last = sample(lat = 32.0000, lon = 34.0000, capturedAt = 1_000L)
+        val next = sample(lat = last.latitude + degreesLatFor(14.0), lon = last.longitude, capturedAt = 1_010L, speed = null)
+        assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
+    }
+
+    @Test
+    fun `an implied speed under the raw cap is still rejected when it materially contradicts a low reported speed`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L)
+        val elapsedSeconds = 10L
+        val impliedSpeed = 5.0 // under MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND (6.0) on its own
+        // Reported 0.5 m/s gives a contradiction ceiling of 0.5*2+3=4.0 - well under the 5.0
+        // implied speed, so only the reported-speed check (not the raw cap) rejects this.
+        val next = sample(
+            lat = last.latitude + degreesLatFor(impliedSpeed * elapsedSeconds),
+            lon = last.longitude,
+            capturedAt = last.capturedAtEpochSecond + elapsedSeconds,
+            speed = 0.5f,
+        )
+        assertEquals(
+            RouteSampleRejectionReason.SPEED_CONTRADICTION,
+            (decide(next, last) as RouteSampleDecision.Rejected).reason,
+        )
+    }
+
+    @Test
+    fun `the confirmed A55 defect pattern - implied 8-11 mps against reported 1_3-1_8 mps - is rejected`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L)
+        val elapsedSeconds = 10L
+        for ((impliedSpeed, reportedSpeed) in listOf(8.0 to 1.3f, 11.0 to 1.8f)) {
+            val next = sample(
+                lat = last.latitude + degreesLatFor(impliedSpeed * elapsedSeconds),
+                lon = last.longitude,
+                capturedAt = last.capturedAtEpochSecond + elapsedSeconds,
+                speed = reportedSpeed,
+            )
+            assertTrue(
+                "implied $impliedSpeed m/s vs reported $reportedSpeed m/s must be rejected",
+                decide(next, last) is RouteSampleDecision.Rejected,
+            )
+        }
+    }
+
+    @Test
+    fun `non-finite accuracy is rejected`() {
+        assertEquals(
+            RouteSampleRejectionReason.NON_FINITE_MEASUREMENT,
+            (decide(sample(accuracy = Float.NaN)) as RouteSampleDecision.Rejected).reason,
+        )
+        assertEquals(
+            RouteSampleRejectionReason.NON_FINITE_MEASUREMENT,
+            (decide(sample(accuracy = Float.POSITIVE_INFINITY)) as RouteSampleDecision.Rejected).reason,
+        )
+    }
+
+    @Test
+    fun `non-finite reported speed is rejected even with otherwise-valid coordinates and accuracy`() {
+        val last = sample(lat = 32.0000, lon = 34.0000, capturedAt = 1_000L)
+        val next = sample(lat = last.latitude + degreesLatFor(14.0), lon = last.longitude, capturedAt = 1_010L, speed = Float.NaN)
+        assertEquals(
+            RouteSampleRejectionReason.NON_FINITE_MEASUREMENT,
+            (decide(next, last) as RouteSampleDecision.Rejected).reason,
+        )
+    }
+
+    @Test
+    fun `obvious stationary wobble - tiny displacement within combined accuracy, near-zero reported speed - is rejected`() {
+        val last = sample(lat = 32.00000, lon = 34.00000, accuracy = 10f, capturedAt = 1_000L)
+        // ~1m of drift over 10s (0.1 m/s implied) with tight accuracy on both ends and a near-zero
+        // reported speed - textbook GPS noise while stationary, not real movement.
+        val next = sample(
+            lat = last.latitude + degreesLatFor(1.0),
+            lon = last.longitude,
+            accuracy = 10f,
+            capturedAt = 1_010L,
+            speed = 0.1f,
+        )
+        assertEquals(
+            RouteSampleRejectionReason.STATIONARY_WOBBLE,
+            (decide(next, last) as RouteSampleDecision.Rejected).reason,
+        )
+    }
+
+    @Test
+    fun `a small displacement is not treated as wobble when reported speed shows genuine movement`() {
+        val last = sample(lat = 32.00000, lon = 34.00000, accuracy = 10f, capturedAt = 1_000L)
+        // Same tiny displacement/timing as the wobble case above, but Android itself reports real
+        // movement - must not be suppressed, since this is exactly the "stop/start movement" case
+        // the wobble veto exists to preserve.
+        val next = sample(
+            lat = last.latitude + degreesLatFor(1.0),
+            lon = last.longitude,
+            accuracy = 10f,
+            capturedAt = 1_010L,
+            speed = 1.2f,
+        )
+        assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
     }
 
     private fun degreesLatFor(distanceMeters: Double): Double =

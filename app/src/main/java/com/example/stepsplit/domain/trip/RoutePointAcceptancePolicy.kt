@@ -12,10 +12,13 @@ data class RawLocationSample(
 
 enum class RouteSampleRejectionReason {
     INVALID_COORDINATES,
+    NON_FINITE_MEASUREMENT,
     POOR_ACCURACY,
     NON_MONOTONIC_OR_DUPLICATE,
     STALE_SAMPLE,
+    STATIONARY_WOBBLE,
     IMPLAUSIBLE_JUMP,
+    SPEED_CONTRADICTION,
 }
 
 sealed interface RouteSampleDecision {
@@ -30,22 +33,44 @@ sealed interface RouteSampleDecision {
  * (moderate accuracy, a slightly wobbly but plausible walking-speed jump) must still be accepted -
  * only fixes with a concrete, specific problem are rejected.
  *
- * Thresholds (tunable after real-device testing on an actual hike - see [MAX_ACCURACY_METERS] etc.):
- * - [MAX_ACCURACY_METERS]: Android's accuracy is a 68% confidence radius in metres; hiking trail
- *   GPS commonly reports 5-30m under open sky, degrading further under tree canopy or between
- *   buildings. 50m rejects fixes bad enough to be dominated by their own error margin while still
- *   accepting normal outdoor noise.
- * - [MAX_SAMPLE_AGE_SECONDS]: a fix time-stamped further in the past than this relative to when it
- *   was actually processed is stale - most plausibly a delayed/batched delivery of an old cached
- *   fix, not a live position update.
- * - [MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND]: ~43 km/h - generously above any realistic hiking or
- *   trail-running pace (even trail running rarely exceeds 5 m/s), so it only ever rejects a clear
- *   GPS teleport artifact, never a human's actual movement.
+ * ## Background: the A55 field defect this hardens against
+ *
+ * A real ~21-minute recorded walk stored ~3,514.3m of distance, while integrating Android's own
+ * reported instantaneous speed over the same points gives only ~2,134.8m - a ~1,380m (65%)
+ * overstatement. Twelve accepted segments implied over 5 m/s and six implied over 8-11 m/s, while
+ * Android reported only ~1.3-1.8 m/s during those exact segments - a clear, consistent ~6x
+ * contradiction between "how far the coordinates jumped" and "how fast the device says it was
+ * actually moving." The previous thresholds here (50m accuracy, 12 m/s speed cap, no reported-speed
+ * cross-check at all, no stationary-wobble suppression) were far too permissive to catch this.
+ *
+ * Fixing this is deliberately two-layered: this policy stops *future* bad points from ever being
+ * accepted/stored/added to distance - see [MAX_ACCURACY_METERS] and
+ * [RouteMovementPlausibility]'s own doc comments for the evidence-based per-point and per-pair
+ * thresholds, which [RouteSanitizer] references directly rather than duplicating, so a fix that
+ * would be rejected live is rejected the same way when read back later too. [RouteSanitizer]
+ * separately cleans *already-stored* points (including this exact historical trip)
+ * non-destructively at read time, and - because it can see the whole recorded sequence rather than
+ * one incoming fix at a time - also performs a contextual look-ahead reconsideration this policy
+ * structurally cannot; see [RouteSanitizer]'s own doc comment for what is genuinely shared between
+ * the two layers versus unique to read-time cleanup, and `RouteSanitizerTest` for the end-to-end
+ * proof.
  */
 object RoutePointAcceptancePolicy {
-    const val MAX_ACCURACY_METERS = 50f
+    /**
+     * Android's accuracy is a 68% confidence radius in metres. The previous 50m limit accepted
+     * fixes bad enough to be dominated by their own error margin - a poor fix combined with
+     * completely ordinary movement can *by itself* imply an extra several-metres-per-second jump
+     * purely from position uncertainty, without the device having moved that fast at all. Hiking
+     * trail GPS commonly reports 5-30m under open sky (degrading further under tree canopy or
+     * between buildings); 30m is the upper edge of that normal-open-sky range, so it still accepts
+     * ordinary outdoor noise and brief, moderately degraded conditions (a short tree-canopy patch, a
+     * turn near a building) while rejecting fixes bad enough that their *own* uncertainty could
+     * account for a walking-scale "jump."
+     */
+    const val MAX_ACCURACY_METERS = 30f
+
+    /** A fix time-stamped further in the past than this relative to when it was actually processed is stale - most plausibly a delayed/batched delivery of an old cached fix, not a live position update. */
     const val MAX_SAMPLE_AGE_SECONDS = 120L
-    const val MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND = 12.0
 
     fun evaluate(
         candidate: RawLocationSample,
@@ -54,6 +79,9 @@ object RoutePointAcceptancePolicy {
     ): RouteSampleDecision {
         if (!isValidCoordinate(candidate.latitude, candidate.longitude)) {
             return RouteSampleDecision.Rejected(RouteSampleRejectionReason.INVALID_COORDINATES)
+        }
+        if (!candidate.accuracyMeters.isFinite() || candidate.speedMetersPerSecond?.isFinite() == false) {
+            return RouteSampleDecision.Rejected(RouteSampleRejectionReason.NON_FINITE_MEASUREMENT)
         }
         if (candidate.accuracyMeters <= 0f || candidate.accuracyMeters > MAX_ACCURACY_METERS) {
             return RouteSampleDecision.Rejected(RouteSampleRejectionReason.POOR_ACCURACY)
@@ -72,9 +100,19 @@ object RoutePointAcceptancePolicy {
                 candidate.latitude,
                 candidate.longitude,
             )
-            val impliedSpeed = distanceMeters / elapsedSeconds
-            if (impliedSpeed > MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND) {
-                return RouteSampleDecision.Rejected(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
+            when (
+                RouteMovementPlausibility.evaluate(
+                    distanceMeters = distanceMeters,
+                    elapsedSeconds = elapsedSeconds,
+                    fromAccuracyMeters = lastAccepted.accuracyMeters,
+                    toAccuracyMeters = candidate.accuracyMeters,
+                    reportedSpeedMetersPerSecond = candidate.speedMetersPerSecond,
+                )
+            ) {
+                MovementPlausibility.STATIONARY_WOBBLE -> return RouteSampleDecision.Rejected(RouteSampleRejectionReason.STATIONARY_WOBBLE)
+                MovementPlausibility.IMPLAUSIBLE_JUMP -> return RouteSampleDecision.Rejected(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
+                MovementPlausibility.SPEED_CONTRADICTION -> return RouteSampleDecision.Rejected(RouteSampleRejectionReason.SPEED_CONTRADICTION)
+                MovementPlausibility.PLAUSIBLE -> Unit
             }
         }
         return RouteSampleDecision.Accepted(candidate)

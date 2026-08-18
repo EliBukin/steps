@@ -419,7 +419,7 @@ since; Resume re-checks rather than assuming.
    requires.
 2. **Precise (`ACCESS_FINE_LOCATION`) granted** → the trip starts/resumes.
 3. **Only approximate granted, or denied entirely** → **there is no "start anyway" path.**
-   `RoutePointAcceptancePolicy` rejects any fix whose reported accuracy is worse than 50m, and
+   `RoutePointAcceptancePolicy` rejects any fix whose reported accuracy is worse than 30m, and
    Android's approximate location is normally far coarser than that - a coarse-only trip could
    silently record zero points and zero distance while still looking like it was "recording."
    Instead, a dialog explains that precise location is required to record a useful route, with a
@@ -688,15 +688,32 @@ displacement, up to 15s of platform batching) - tunable after real-device trail 
 touching any other layer.
 
 `RoutePointAcceptancePolicy.evaluate()` is a pure function (no clock/IO of its own) deciding
-accept/reject for each raw fix, documented and boundary-tested for every threshold:
+accept/reject for each raw fix, documented and boundary-tested for every threshold. Both the
+accuracy and speed limits were hardened after a real recorded walk showed the previous ones were
+too permissive - a ~21-minute trip stored ~3,514m of distance, while integrating Android's own
+reported speed over the same points gave only ~2,135m; several accepted segments implied 8-11 m/s
+while Android reported only ~1.3-1.8 m/s for those same fixes. See `RoutePointAcceptancePolicy`'s
+and `RouteMovementPlausibility`'s own doc comments for the full evidence and per-threshold
+rationale:
 
 - Invalid coordinates (out of range, or the `(0,0)` "no fix" sentinel).
-- Accuracy worse than 50m, or non-positive.
+- Non-finite accuracy or reported speed.
+- Accuracy worse than 30m, or non-positive (tightened from an earlier 50m - hiking-trail GPS
+  commonly reports 5-30m under open sky, so 30m is the upper edge of that normal range rather than
+  accepting fixes bad enough to be dominated by their own error margin).
 - Non-monotonic/duplicate capture timestamps relative to the last *accepted* point.
 - Samples older than 120s relative to when they were actually processed (stale/delayed delivery).
-- An implied speed above ~12 m/s (43 km/h) between consecutive accepted points - well above any
-  realistic hiking/trail-running pace, so it only ever rejects a clear GPS-teleport artifact, never
-  ordinary imperfect GPS noise.
+- Obvious stationary GPS wobble - a tiny displacement, within the two fixes' own combined accuracy
+  radii, at a near-zero implied speed - unless a reported speed shows the device is actually moving
+  (this is what preserves genuine stop/start movement).
+- An implied speed above 6.0 m/s between consecutive accepted points (tightened from an earlier
+  ~12 m/s/43 km/h, which let the confirmed 8-11 m/s artifacts straight through) - just above elite
+  marathon pace, generous enough for brisk walking, jogging, and occasional running, while catching
+  every one of the confirmed defect's segments with margin.
+- An implied speed that materially contradicts a present, finite, non-negative reported speed (more
+  than double it, plus a small margin for ordinary noise) - catches contradictory jumps even when
+  they land under the raw speed cap above; this is specifically what the confirmed defect's
+  8-11-m/s-implied-vs-1.3-1.8-m/s-reported pattern demonstrates.
 
 A batch of fixes (which the platform may deliver out of order when batching) is always processed
 in ascending capture-time order. Distance accumulates only between *consecutive accepted* points
@@ -722,14 +739,107 @@ implausible-jump check above compares `impliedSpeed > MAX_PLAUSIBLE_SPEED...`, a
 against `NaN` is `false` in IEEE 754 - an unclamped `NaN` would have silently defeated that
 rejection and let a GPS-teleport artifact through with a poisoned, non-finite persisted distance.
 
+### Route cleanup for display/export (`RouteSanitizer`)
+
+The live acceptance policy above only ever protects *future* recordings - it cannot retroactively
+fix points a trip already stored under an older, more permissive policy (exactly the confirmed
+defect's own trip, which had points recorded under an earlier 50m accuracy limit). `domain/trip/
+RouteSanitizer.kt` is a second, pure, read-time layer that non-destructively cleans an
+already-recorded point sequence for display/export: it never mutates, reorders, or deletes the
+underlying stored rows, and never fabricates or interpolates a point.
+
+What is genuinely shared between the two layers, not merely similar: the accuracy bound
+(`RoutePointAcceptancePolicy.MAX_ACCURACY_METERS` is referenced directly, not duplicated as a
+separate constant, so a historical point between the old 50m limit and the current 30m one is
+rejected here exactly as it would be live) and every per-pair movement threshold in
+`domain/trip/RouteMovementPlausibility.kt`. What is *not* shared, because it structurally cannot be:
+the sanitizer's contextual look-ahead reconsideration below. Live acceptance sees one incoming fix
+at a time and can never look ahead to a point that has not arrived yet.
+
+That reconsideration exists because a point can individually clear every pairwise check - the raw
+speed cap, the reported-speed contradiction ceiling - and still be the middle of a moderate
+out-and-back excursion that neither leg alone is extreme enough to fail (e.g. a ~55m jump then a
+~41m jump back, ten seconds apart). A plain single-pass scan that permanently accepts a point the
+moment the jump into it passes can never catch this, since it never revisits that point once the
+next one arrives. `RouteSanitizer` instead holds a plausible point as `pending` rather than keeping
+it immediately, then - once the next point arrives - reconsiders it using the last-kept point (A),
+the pending point (B), and the new point (C) together: A → C's own plausibility, the *absolute* size
+of the detour `AB + BC − AC` against a floor sized from the three points' combined accuracy radii
+(not a ratio alone, which cannot tell a real short hairpin apart from a longer one), and reported
+speed on the AB/BC legs *when present* - if neither leg has any reported speed at all, there is no
+way to distinguish a real U-turn from GPS noise from geometry alone, so the point is kept rather than
+speculatively removed. A jump extreme enough to fail the raw pairwise check outright (e.g. the
+confirmed defect's 8-11 m/s segments) is still rejected immediately, without ever needing this
+reconsideration - this is what makes the three-point isolated-spike case (A → B implausible, B → C
+implausible, A → C plausible ⇒ B alone is removed) and a whole run of consecutive bad samples both
+still work exactly as before. Only the moderate, individually-passing case needed the extra
+mechanism. See `domain/trip/RouteSanitizer.kt`'s own doc comment for the full algorithm and
+`RouteSanitizerTest.kt` for both the hard-rejection and look-ahead-reconsideration regression cases.
+
+### Wobble reduction after cleanup (`RouteSmoother`)
+
+`RouteSanitizer` removes points with concrete evidence against them; it does nothing about a route
+where *every* point is individually plausible but the sequence still drifts a few metres side to
+side around the true path - ordinary receiver noise, at walking speed, within accuracy tolerance,
+that no single-point or single-pair rule can flag as "wrong" because there is nothing evidenced
+wrong with any one of them. A second real-world walk confirmed this is a real, separate failure
+mode: 526 stored points, zero removed by the sanitizer (no segment exceeded 5 m/s; the worst
+coordinate-implied speed was 3.5 m/s against an Android-reported ~1.28 m/s), yet the stored distance
+(4,795.37 m) still ran ahead of Android's own reported-speed integration (4,210.34 m) and a
+step-count-based estimate (4,327.73 m) by a margin the sanitizer alone could never close.
+
+`domain/trip/RouteSmoother.kt` is a second, independent, pure read-time stage, applied *after* the
+sanitizer: `stored points -> RouteSanitizer -> RouteSmoother -> map/distance/GPX`. For each point, in
+a local metre-based tangent plane centered on that point's own raw position, every other point
+within a 20-second window in the same segment votes on where the "true" position likely is, weighted
+by **accuracy** (inverse-variance weighting, `1 / accuracy²` - the standard way to combine several
+independent position estimates of differing precision) and by **time** (a Gaussian kernel on elapsed
+time, not a flat window, so the result changes smoothly as points enter/leave the window rather than
+jumping at a hard cutoff). A centered weighted local average was chosen over a Kalman filter or
+spline fit specifically because every output point stays a convex combination of nearby *real,
+recorded* positions - never an extrapolation - and the core safeguard can be expressed directly in
+one physical quantity Android already reports:
+
+- **Displacement bound** - a point is never moved further than its own reported accuracy radius.
+  This is what keeps a real corner, U-turn, or tight loop from being smoothed away: the evidence for
+  a large, deliberate direction change (the recorded positions on both sides of it) cannot be
+  overridden by more than one fix-width of averaging.
+- **Segmentation** - consecutive points more than 60 seconds apart (six times the nominal 10s
+  sampling interval, well beyond ordinary platform-batching delays) start a new independent
+  smoothing segment; a window never reaches across that boundary, so a real pause/lost-fix/tunnel
+  gap is never treated as if it were ordinary jitter.
+- **Endpoints** - the first and last point of the whole route are always returned completely
+  unchanged, so the map's start/finish markers and the trip's displayed start/end never move.
+- Routes/segments under 3 points, and every non-coordinate field (timestamp, accuracy, reported
+  speed, altitude), pass through untouched; nothing is fabricated, dropped, or reordered.
+
+On a synthetic route with ~4m alternating lateral noise around a straight walking line (mirroring the
+shape of the real defect, not its actual coordinates), this reduced the zig-zag distance overage by
+over 95% while leaving a clean straight route, a gradual curve, a genuine right-angle corner, a real
+U-turn, and a closed loop all clearly intact - see `domain/trip/RouteSmootherTest.kt` for the full
+regression suite and exact before/after figures.
+
+**One processed result drives everything a completed trip shows or exports** - `TripDetailViewModel`
+runs `RouteSanitizer.sanitize().points -> RouteSmoother.smooth()` exactly once per points update and
+uses that single result for the map polyline, camera bounds, start/finish markers, GPX export, and
+the displayed distance, so none of them can ever disagree by having separately re-processed the raw
+points. `TripsViewModel` applies the same pipeline to the finished-trip history list and the active
+trip's live distance (the latter derived only from the point-list flow, not the once-a-second
+elapsed-time ticker, so it isn't reprocessed on every tick) - so a trip's distance always agrees
+wherever it's shown. See `domain/trip/RouteSanitizerTest.kt` and `RouteSmootherTest.kt` for the pure
+component tests, and `ui/trips/TripDetailViewModelTest.kt` / `TripsViewModelTest.kt` for the
+end-to-end proof that detail, list, map, and GPX export are never fed differently-processed data.
+
 ### Trip detail: route map, offline fallback, and delete
 
 The detail screen shows: date, start/end times (in the trip's own stored `startZoneId`, consistent
 with its date - see "Schema" below - not the device's *current* zone), duration, distance, the
-route on a real map, an "Export GPX" action (see "GPX export" below), and delete. Estimated steps
-are still out of scope (see "Known limitations") to keep trips independent of the step pipeline;
-GPX export and a real map were reintroduced in this redesign, since `trips`/`trip_points` already
-retained everything (timestamps, points) either needed.
+route on a real map, an "Export GPX" action (see "GPX export" below), and delete. The route (map,
+markers, GPX export) and the displayed distance are all derived from the same sanitized-then-smoothed
+point sequence - see "Wobble reduction after cleanup" above - never the raw stored points or the raw
+persisted distance directly. Estimated steps are still out of scope (see "Known limitations") to keep
+trips independent of the step pipeline; GPX export and a real map were reintroduced in this redesign,
+since `trips`/`trip_points` already retained everything (timestamps, points) either needed.
 
 - **Map** (`ui/trips/TripRouteMap.kt`, `TripRouteMapCard`) - the official
   [MapLibre Compose](https://maplibre.org/maplibre-compose/) library

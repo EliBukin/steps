@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
+import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.trip.RouteSanitizer
+import com.example.stepsplit.domain.trip.RouteSmoother
 import com.example.stepsplit.trip.service.TripRecordingService
 import java.time.Clock
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -57,6 +60,49 @@ class TripsViewModel(
         .distinctUntilChanged()
         .flatMapLatest { activeId -> if (activeId == null) flowOf(emptyList()) else repository.observeTripPoints(activeId) }
 
+    /**
+     * The active trip's displayed distance, from the same `RouteSanitizer -> RouteSmoother`
+     * pipeline every other route display/export uses (see [TripDetailViewModel]'s own doc comment) -
+     * not [TripSummary.distanceMeters] as persisted, which is accumulated live at accept-time and
+     * can still include outlier-inflated segments an in-progress
+     * [com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy] pass didn't catch, or ordinary
+     * wobble the live policy has no way to reduce (see [RouteSmoother]'s own doc comment). Once a
+     * trip is active this recomputes as it grows: the smoother's endpoint safeguard keeps the most
+     * recent point exact, while earlier points are progressively properly-centered as later points
+     * arrive - no special-casing needed for "still recording" vs. "finished". Deliberately its own
+     * [Flow], derived only from [activeTripPoints] - never from [ticker] - so reprocessing the whole
+     * route only happens when the point list actually changes (a new fix arrives), not on every
+     * one-second tick that exists purely to refresh [TripsUiState.elapsedSeconds].
+     */
+    private val activeTripSanitizedDistance: Flow<Double> =
+        activeTripPoints.map { RouteSmoother.smooth(RouteSanitizer.sanitize(it).points).distanceMeters }
+
+    /**
+     * Finished trips with [TripSummary.distanceMeters] replaced by the same
+     * `RouteSanitizer -> RouteSmoother` output the trip's own detail screen shows - see
+     * [TripDetailViewModel]'s doc comment for why this must never disagree with what tapping into a
+     * trip's detail then displays. Re-derived only when the finished-trip set itself changes or one
+     * of their point lists does, not on every recomposition/tick.
+     */
+    private val finishedTripHistory: Flow<List<TripSummary>> = repository.observeTrips()
+        .map { trips -> trips.filter { it.state == TripState.FINISHED } }
+        .distinctUntilChanged()
+        .flatMapLatest { finished ->
+            if (finished.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                combine(
+                    finished.map { trip ->
+                        repository.observeTripPoints(trip.id)
+                            .map { points ->
+                                val smoothed = RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
+                                trip.copy(distanceMeters = smoothed.distanceMeters)
+                            }
+                    },
+                ) { it.toList() }
+            }
+        }
+
     private val ticker: Flow<Long> = flow {
         while (true) {
             emit(clock.instant().epochSecond)
@@ -67,11 +113,12 @@ class TripsViewModel(
     val uiState: StateFlow<TripsUiState> = combine(
         repository.observeTrips(),
         activeTripPoints,
+        activeTripSanitizedDistance,
+        finishedTripHistory,
         ticker,
-    ) { trips, points, nowEpochSecond ->
-        val active = trips.firstOrNull { it.state == TripState.ACTIVE }
+    ) { trips, points, sanitizedActiveDistance, history, nowEpochSecond ->
+        val active = trips.firstOrNull { it.state == TripState.ACTIVE }?.copy(distanceMeters = sanitizedActiveDistance)
         val interrupted = trips.firstOrNull { it.state == TripState.INTERRUPTED }
-        val history = trips.filter { it.state == TripState.FINISHED }
         val lastPoint = points.lastOrNull()
         TripsUiState(
             isLoading = false,

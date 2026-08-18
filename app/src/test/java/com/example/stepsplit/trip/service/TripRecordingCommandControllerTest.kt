@@ -250,7 +250,10 @@ class TripRecordingCommandControllerTest {
 
         locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
         withTimeout(5_000) { database.tripPointDao().observeForTrip(tripId).first { it.isNotEmpty() } }
-        locationClient.emit(listOf(RawLocationSample(32.001, 34.0, 10f, fixedNow.epochSecond + 20)))
+        // ~11m over 10s = ~1.1 m/s - this test is about Resume preserving distance/points across an
+        // interruption, not about speed, so the movement here is deliberately well under the
+        // plausibility ceiling rather than coupled to it.
+        locationClient.emit(listOf(RawLocationSample(32.0001, 34.0, 10f, fixedNow.epochSecond + 20)))
         withTimeout(5_000) { repository.observeTrip(tripId).first { (it?.distanceMeters ?: 0.0) > 0.0 } }
 
         val distanceBeforeInterruption = repository.getTrip(tripId)!!.distanceMeters
