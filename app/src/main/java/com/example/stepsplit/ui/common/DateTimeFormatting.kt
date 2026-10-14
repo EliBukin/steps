@@ -8,26 +8,31 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.time.format.TextStyle
+import java.util.Locale
 
-/** Uses the device's current locale and timezone, as required for all date/time display. */
+/**
+ * Every calendar date in the app is shown as day/month/year with a four-digit year, e.g.
+ * "13/09/2026", whatever the phone's region - a US-region phone's own short format would otherwise
+ * put the month first ("9/13/26"). Times of day still follow the phone's locale.
+ */
+private val DayMonthYear: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ROOT)
+
+/** A date as DD/MM/YYYY - see [DayMonthYear]. */
+fun formatDateLabel(date: LocalDate): String = date.format(DayMonthYear)
+
+/** The date as DD/MM/YYYY, then the time of day in the device's locale, both in the device's current timezone. */
 @Composable
 fun formatSyncTime(instant: Instant): String {
     val locale = LocalConfiguration.current.locales[0]
-    val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT).withLocale(locale)
-    return instant.atZone(ZoneId.systemDefault()).format(formatter)
+    val dateTime = instant.atZone(ZoneId.systemDefault())
+    val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).format(dateTime)
+    return "${formatDateLabel(dateTime.toLocalDate())}, $time"
 }
 
 @Composable
 fun formatDayLabel(date: LocalDate): String {
     val locale = LocalConfiguration.current.locales[0]
     return date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale)
-}
-
-@Composable
-fun formatDateLabel(date: LocalDate): String {
-    val locale = LocalConfiguration.current.locales[0]
-    val formatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT).withLocale(locale)
-    return date.format(formatter)
 }
 
 @Composable
