@@ -424,17 +424,58 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `an interval roughly nine days old is still recovered on a first-ever sync`() = runTest {
-        // The Local Recording API documents a 10-day retention window - a first-ever (or
-        // long-overdue) sync must reach back that far, not just 7 days, or it permanently misses
-        // data the API still actually has.
-        val nineDaysAgo = fixedNow.epochSecond - Duration.ofDays(9).seconds
-        fakeSource.addInterval(nineDaysAgo, nineDaysAgo + 60, 40)
+    fun `an interval 29 days old is still recovered on a first-ever sync`() = runTest {
+        // A first-ever (or long-overdue) sync reaches back the full 30-day RETENTION_WINDOW - the
+        // old 10-day window permanently missed older data Health Connect still had.
+        val twentyNineDaysAgo = fixedNow.epochSecond - Duration.ofDays(29).seconds
+        fakeSource.addInterval(twentyNineDaysAgo, twentyNineDaysAgo + 60, 40)
 
         val result = repository.syncNow()
 
         assertTrue(result is SyncResult.Success)
         assertEquals(40L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
+    @Test
+    fun `an interval older than the retention window is not requested on a first-ever sync`() = runTest {
+        val thirtyOneDaysAgo = fixedNow.epochSecond - Duration.ofDays(31).seconds
+        fakeSource.addInterval(thirtyOneDaysAgo, thirtyOneDaysAgo + 60, 40)
+        val oneDayAgo = fixedNow.epochSecond - Duration.ofDays(1).seconds
+        fakeSource.addInterval(oneDayAgo, oneDayAgo + 60, 25)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals(25L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
+    @Test
+    fun `after a gap longer than the retention window, a sync catches up exactly 30 days`() = runTest {
+        // Last imported minute 45 days ago - the overlap start (that minus 6 hours) is clamped to
+        // the 30-day floor, so day 31-44 data is out of reach while day 29 data is recovered.
+        val fortyFiveDaysAgo = fixedNow.epochSecond - Duration.ofDays(45).seconds
+        database.stepBucketDao().upsertAll(
+            listOf(
+                StepBucketEntity(
+                    source = fakeSource.id,
+                    startEpochSecond = fortyFiveDaysAgo,
+                    endEpochSecond = fortyFiveDaysAgo + 60,
+                    steps = 10,
+                    zoneId = "UTC",
+                    localDate = "2026-01-24",
+                    importedAtEpochSecond = fortyFiveDaysAgo,
+                ),
+            ),
+        )
+        val thirtyFiveDaysAgo = fixedNow.epochSecond - Duration.ofDays(35).seconds
+        fakeSource.addInterval(thirtyFiveDaysAgo, thirtyFiveDaysAgo + 60, 40)
+        val twentyNineDaysAgo = fixedNow.epochSecond - Duration.ofDays(29).seconds
+        fakeSource.addInterval(twentyNineDaysAgo, twentyNineDaysAgo + 60, 25)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals("the stored minute plus only the in-window one", 35L, database.stepBucketDao().getAllActive().sumOf { it.steps })
     }
 
     @Test

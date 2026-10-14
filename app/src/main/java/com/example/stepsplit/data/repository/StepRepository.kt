@@ -530,9 +530,13 @@ class StepRepository(
         /**
          * How far back a first-ever (or long-overdue) sync's read request reaches. This only
          * bounds the read *request* window - it has no effect on how long data already imported
-         * into Room is kept; that's permanent.
+         * into Room is kept; that's permanent. 30 days matches how far back Health Connect lets an
+         * app read by default from before its permission was first granted (older history needs
+         * a separate permission this app does not request); data recorded after the grant stays
+         * readable, so this is purely how far back the app looks after a long gap without opening
+         * it. (The old 10 days came from the removed Local Recording API's own retention.)
          */
-        val RETENTION_WINDOW: Duration = Duration.ofDays(10)
+        val RETENTION_WINDOW: Duration = Duration.ofDays(30)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
 
         /** A recompute start that covers every stored minute - see [incrementalRecomputeStart]. */

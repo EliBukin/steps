@@ -84,17 +84,22 @@ account-based Google Fit API (`Fitness.getRecordingClient`, Google Sign-In, Hist
   `FakeStepSource` is the interface's other implementation, used by unit tests and the debug-only
   sample data seeder.
 
-### Recording API retention limitation
+### Catch-up window after a long gap (30 days)
 
-The Local Recording API only retains a limited rolling history on-device - documented as **10
-days** for successfully subscribed local data. `StepRepository` treats it as a *feed*, not
-storage: every successful read is immediately imported into Room, which is the durable source of
-truth. On first subscription (or after a long gap with no successful sync) the repository reads
-back up to that full 10-day retention floor; ordinary syncs instead re-read a 6-hour rolling
-overlap window ending at the last known bucket, so late/corrected buckets reconcile without
-re-requesting the full history every time. Data older than what the API still retains at first
-launch can never be recovered - this is an inherent, documented limitation of the platform API,
-not a bug.
+Health Connect, not this app, is what keeps counting while the app is closed; `StepRepository`
+treats it as a *feed*, not storage: every successful read is immediately imported into Room, which
+is the durable source of truth. On the first-ever sync (or after a long gap with no successful sync)
+the repository reads back up to a **30-day** floor (`StepRepository.RETENTION_WINDOW`); ordinary
+syncs instead re-read a 6-hour rolling overlap window ending at the last known bucket, so
+late/corrected buckets reconcile without re-requesting the full history every time.
+
+30 days matches how far back Health Connect lets an app read by default from before its
+permission was first granted (older history needs a separate permission this app does not
+request). Data recorded after the grant stays readable, so the window only matters when the app
+goes unopened for longer than 30 days: steps from before that floor are then never imported. A
+30-day read is 61 chunked Health Connect requests (12 hours each - see
+`HealthConnectGateway.CHUNK_DURATION`), only on such catch-up syncs. The window was 10 days while
+the app used the Local Recording API, which itself only retained 10 days.
 
 ### Sync never deletes raw buckets - only upserts
 
@@ -1105,9 +1110,8 @@ physical device with the screen off and the app backgrounded, not merely compile
 - **No Health Connect / accelerometer fallback.** If the Recording API is unavailable (old Play
   services, no Play services at all, etc.) the app shows an honest "unavailable" state rather than
   inventing a second step-counting mechanism, per the product constraints.
-- Very long gaps between app opens (beyond the Recording API's retention window) mean the steps
-  taken during that gap are permanently unrecoverable - this is a platform limitation, documented
-  above, not something the app can work around.
+- Going more than 30 days without opening the app means steps from before the 30-day catch-up
+  window are never imported (see "Catch-up window after a long gap" above).
 - **Trip Route Recording remains intentionally scoped.** *Recording* a trip still has no
   navigation/route planning, no automatic trip start/stop, no `ACCESS_BACKGROUND_LOCATION`, no
   pause/resume *mid-recording* (Resume only applies to an already-`INTERRUPTED` trip, never a live

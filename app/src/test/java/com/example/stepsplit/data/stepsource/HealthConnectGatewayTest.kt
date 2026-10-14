@@ -1,5 +1,6 @@
 package com.example.stepsplit.data.stepsource
 
+import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.domain.aggregation.BucketNormalizer
 import com.example.stepsplit.domain.aggregation.RawInterval
 import java.time.Duration
@@ -24,10 +25,10 @@ class HealthConnectGatewayTest {
     // shape of value `Clock.systemUTC().instant()` would realistically produce.
     private val unalignedNow: Instant = Instant.parse("2026-08-15T12:34:37.123456789Z")
 
-    // Mirrors StepRepository.RETENTION_WINDOW - a fresh/empty database's first-ever sync reads
-    // this far back from `now`, so this exercises exactly that "first import on an empty
-    // database" scenario the alignment contract must also hold for.
-    private val retentionWindow: Duration = Duration.ofDays(10)
+    // StepRepository.RETENTION_WINDOW itself, not a copy - a fresh/empty database's first-ever
+    // sync reads this far back from `now`, so this exercises exactly that "first import on an
+    // empty database" scenario the alignment contract must also hold for.
+    private val retentionWindow: Duration = StepRepository.RETENTION_WINDOW
 
     @Test
     fun `alignDownToMinute floors nonzero seconds and nanoseconds down to the minute`() {
@@ -55,14 +56,14 @@ class HealthConnectGatewayTest {
     }
 
     @Test
-    fun `a ten-day window is split into multiple exactly-12-hour chunks plus one final partial chunk`() {
+    fun `the retention window is split into multiple exactly-12-hour chunks plus one final partial chunk`() {
         val fromInclusive = unalignedNow.minus(retentionWindow)
         val windows = alignedStepIntervalRequestWindows(fromInclusive, unalignedNow)
 
-        // 10 days / 12h = 20 chunks exactly, plus the alignment floor pushes the aligned start
+        // 30 days / 12h = 60 chunks exactly, plus the alignment floor pushes the aligned start
         // ~37 seconds earlier than fromInclusive - just enough leftover span to require one more,
         // shorter, final chunk ending at toExclusive.
-        assertEquals(21, windows.size)
+        assertEquals(61, windows.size)
         for (window in windows.dropLast(1)) {
             assertEquals(HealthConnectGateway.CHUNK_DURATION, Duration.between(window.start, window.endExclusive))
         }
