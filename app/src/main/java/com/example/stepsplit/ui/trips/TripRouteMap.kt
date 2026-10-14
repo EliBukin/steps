@@ -1,9 +1,9 @@
 package com.example.stepsplit.ui.trips
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -28,11 +29,15 @@ import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.trip.RoutePoint
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.map.GestureOptions
+import org.maplibre.compose.map.MapOptions
 import org.maplibre.compose.map.MaplibreMap
+import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
@@ -60,9 +65,11 @@ private const val START_LAYER_ID = "trip-route-start"
 private const val FINISH_LAYER_ID = "trip-route-finish"
 
 /**
- * The completed-trip route on a real geographic basemap, in a rounded Material 3 card: fits the
- * camera to the full route with padding, draws the route as a polyline, and marks the start and
- * finish distinctly. Reads only the already-recorded [points] (must be non-empty - the caller
+ * The completed-trip route on a real geographic basemap, in a rounded Material 3 card that fills
+ * whatever size [modifier] gives it: fits the camera to the full route with padding, draws the
+ * route as a polyline, and marks the start and finish distinctly. Each change of
+ * [showWholeRouteRequests] (the caller's "Show whole route" button) re-frames the route, north up,
+ * after the user pans, zooms or rotates away. Must not be placed inside a vertically scrollable container - see `TripDetailScreen` for why that breaks the map's gestures. Reads only the already-recorded [points] (must be non-empty - the caller
  * shows its own empty state instead, as before) - never requests a new location fix, never shows
  * the user's live position, and never associates the route with step data.
  *
@@ -77,7 +84,7 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
  * stale failure from a different trip or a theme switch never blocks an otherwise-healthy load.
  */
 @Composable
-fun TripRouteMapCard(points: List<TripPoint>, modifier: Modifier = Modifier) {
+fun TripRouteMapCard(points: List<TripPoint>, showWholeRouteRequests: Int, modifier: Modifier = Modifier) {
     require(points.isNotEmpty()) { "TripRouteMapCard requires at least one point; callers show their own empty state." }
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         var mapLoadFailed by remember { mutableStateOf(false) }
@@ -88,15 +95,13 @@ fun TripRouteMapCard(points: List<TripPoint>, modifier: Modifier = Modifier) {
         if (mapLoadFailed) {
             OfflineFallback(points = points, onRetry = { mapLoadFailed = false })
         } else {
-            Box(modifier = Modifier.fillMaxWidth().aspectRatio(1f)) {
-                LiveMap(points = points, isDark = isDark, onLoadFailed = { mapLoadFailed = true })
-            }
+            LiveMap(points = points, isDark = isDark, showWholeRouteRequests = showWholeRouteRequests, onLoadFailed = { mapLoadFailed = true })
         }
     }
 }
 
 @Composable
-private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -> Unit) {
+private fun LiveMap(points: List<TripPoint>, isDark: Boolean, showWholeRouteRequests: Int, onLoadFailed: () -> Unit) {
     val styleUrl = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
     val first = points.first()
     val cameraState = rememberCameraState(
@@ -105,49 +110,95 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -
     val fit = remember(points) { RouteCameraBounds.compute(points) }
     val mapDescription = stringResource(R.string.cd_trip_map_with_markers)
 
-    LaunchedEffect(fit) {
-        when (fit) {
-            is RouteCameraBounds.Fit.Bounded -> cameraState.jumpTo(boundingBox = fit.boundingBox, padding = PaddingValues(28.dp))
-            is RouteCameraBounds.Fit.Centered -> cameraState.position = CameraPosition(target = fit.target, zoom = fit.zoom)
-            null -> {}
-        }
+    // The value this map was composed with - only a later change is an actual request, so a freshly
+    // composed map (e.g. after "Retry map") isn't re-framed twice.
+    val initialShowWholeRouteRequests = remember { showWholeRouteRequests }
+
+    LaunchedEffect(fit) { cameraState.showWholeRoute(fit, animate = false) }
+    LaunchedEffect(showWholeRouteRequests) {
+        if (showWholeRouteRequests != initialShowWholeRouteRequests) cameraState.showWholeRoute(fit, animate = true)
     }
 
-    MaplibreMap(
-        modifier = Modifier.fillMaxSize().semantics { contentDescription = mapDescription },
-        baseStyle = BaseStyle.Uri(styleUrl),
-        cameraState = cameraState,
-        onMapLoadFailed = { onLoadFailed() },
-    ) {
-        if (points.size >= 2) {
-            val routeSource = rememberGeoJsonSource(
-                data = GeoJsonData.Features(LineString(points.map { Position(longitude = it.longitude, latitude = it.latitude) })),
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        MaplibreMap(
+            modifier = Modifier.fillMaxSize().semantics { contentDescription = mapDescription },
+            baseStyle = BaseStyle.Uri(styleUrl),
+            cameraState = cameraState,
+            options = MapOptions(
+                // Pan, zoom, double-tap and two-finger rotate stay on; MapLibre's compass appears once
+                // the map is rotated, and tapping it (or "Show whole route") turns it back to north.
+                // Only tilt is locked: in a map this small it mostly fires by accident while zooming.
+                gestureOptions = GestureOptions(isTiltEnabled = false),
+                // MapLibre's own scale bar shows feet on a US-region phone; MetricScaleBar below
+                // replaces it. Logo, attribution and compass stay on.
+                ornamentOptions = OrnamentOptions(isScaleBarEnabled = false),
+            ),
+            onMapLoadFailed = { onLoadFailed() },
+        ) {
+            if (points.size >= 2) {
+                val routeSource = rememberGeoJsonSource(
+                    data = GeoJsonData.Features(LineString(points.map { Position(longitude = it.longitude, latitude = it.latitude) })),
+                )
+                LineLayer(
+                    id = ROUTE_LAYER_ID,
+                    source = routeSource,
+                    color = const(MaterialTheme.colorScheme.primary),
+                    width = const(4.dp),
+                )
+            }
+
+            val last = points.last()
+            val startSource = rememberGeoJsonSource(
+                data = GeoJsonData.Features(Point(longitude = first.longitude, latitude = first.latitude)),
             )
-            LineLayer(
-                id = ROUTE_LAYER_ID,
-                source = routeSource,
-                color = const(MaterialTheme.colorScheme.primary),
-                width = const(4.dp),
+            CircleLayer(id = START_LAYER_ID, source = startSource, color = const(StartMarkerColor), radius = const(7.dp))
+
+            val finishSource = rememberGeoJsonSource(
+                data = GeoJsonData.Features(Point(longitude = last.longitude, latitude = last.latitude)),
             )
+            CircleLayer(id = FINISH_LAYER_ID, source = finishSource, color = const(MaterialTheme.colorScheme.error), radius = const(7.dp))
         }
 
-        val last = points.last()
-        val startSource = rememberGeoJsonSource(
-            data = GeoJsonData.Features(Point(longitude = first.longitude, latitude = first.latitude)),
+        MetricScaleBar(
+            metersPerDp = cameraState.metersPerDpAtTarget,
+            // Same maximum width (half the map), corner and margin as MapLibre's own scale bar; the
+            // compass takes the opposite corner.
+            maxWidth = maxWidth * 0.5f,
+            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
         )
-        CircleLayer(id = START_LAYER_ID, source = startSource, color = const(StartMarkerColor), radius = const(7.dp))
-
-        val finishSource = rememberGeoJsonSource(
-            data = GeoJsonData.Features(Point(longitude = last.longitude, latitude = last.latitude)),
-        )
-        CircleLayer(id = FINISH_LAYER_ID, source = finishSource, color = const(MaterialTheme.colorScheme.error), radius = const(7.dp))
     }
 }
 
+/**
+ * Frames the whole route, north up - on first display, and again whenever the user taps "Show
+ * whole route" after panning, zooming or rotating away.
+ */
+private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?, animate: Boolean) {
+    when (fit) {
+        is RouteCameraBounds.Fit.Bounded ->
+            if (animate) {
+                animateTo(boundingBox = fit.boundingBox, padding = ROUTE_PADDING)
+            } else {
+                jumpTo(boundingBox = fit.boundingBox, padding = ROUTE_PADDING)
+            }
+        is RouteCameraBounds.Fit.Centered -> {
+            val target = CameraPosition(target = fit.target, zoom = fit.zoom)
+            if (animate) animateTo(target) else position = target
+        }
+        null -> {}
+    }
+}
+
+private val ROUTE_PADDING = PaddingValues(28.dp)
+
 @Composable
-private fun OfflineFallback(points: List<TripPoint>, onRetry: () -> Unit) {
-    // RouteTraceCanvas imposes its own square aspect ratio, so it isn't wrapped further here.
-    RouteTraceCanvas(points = points.map { RoutePoint(latitude = it.latitude, longitude = it.longitude) })
+private fun ColumnScope.OfflineFallback(points: List<TripPoint>, onRetry: () -> Unit) {
+    // Weighted without filling, so the message and Retry below always stay visible however little
+    // height the card is given. RouteTraceCanvas keeps its own square aspect ratio within that.
+    RouteTraceCanvas(
+        points = points.map { RoutePoint(latitude = it.latitude, longitude = it.longitude) },
+        modifier = Modifier.weight(1f, fill = false),
+    )
     Text(
         text = stringResource(R.string.trip_detail_map_unavailable_message),
         style = MaterialTheme.typography.bodySmall,

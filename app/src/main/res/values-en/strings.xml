@@ -160,6 +160,9 @@
     <string name="cd_navigate_back">Back</string>
     <string name="trip_detail_map_unavailable_message">The map couldn\'t be loaded (you may be offline). Showing an offline route trace instead.</string>
     <string name="trip_detail_map_retry_action">Retry map</string>
+    <string name="trip_detail_map_show_route_action">Show whole route</string>
+    <string name="trip_map_scale_meters_format">%1$s m</string>
+    <string name="trip_map_scale_kilometers_format">%1$s km</string>
 
     <string name="stats_title">Lifetime Stats</string>
     <string name="stats_lifetime_steps_label">Total steps ever</string>

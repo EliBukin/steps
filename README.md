@@ -869,7 +869,22 @@ since `trips`/`trip_points` already retained everything (timestamps, points) eit
   - The camera automatically fits the complete route on load, via a pure, unit-tested bounding-box
     calculation (`ui/trips/RouteCameraBounds.kt`) that pads a single point or a cluster of
     identical/near-identical points to a sensible minimum span, so the camera never lands on an
-    extreme or undefined zoom.
+    extreme or undefined zoom. A "Show whole route" button, in the button row below the map next to
+    Export GPX and Delete trip, re-frames it (north up) after the user pans, zooms or rotates away.
+  - The detail screen is a fixed, non-scrolling layout: the map fills the height left between the
+    trip details and the buttons. It must not sit inside a vertically scrollable container - the
+    map is a native view, and a scrolling parent claims any drag with a vertical component after a
+    few pixels and cancels it for the map, so upward/diagonal pans and pinches stall (confirmed on
+    the A55). Pan, pinch zoom, double-tap zoom and two-finger rotate are on; MapLibre's compass
+    (top-end) appears once the map is rotated and resets it to north when tapped, as does "Show
+    whole route". Only tilt is locked, since in a map this small it mostly fires by
+    accident while zooming.
+  - The scale bar is always metric (meters, then whole kilometers): MapLibre's built-in one picks
+    feet from the device's region on a US-English phone and offers no setting, so it is turned
+    off (`OrnamentOptions(isScaleBarEnabled = false)`) and replaced by `ui/trips/MetricScaleBar.kt`,
+    a metric copy of the same black-and-white design (half-black, half-white bar with "0", midpoint
+    and total labels, up to half the map's width). Its 1-2-5 step choice and label formatting are
+    pure, unit-tested functions (`MetricScaleTest`).
   - Start and finish are marked with distinctly colored circle layers.
   - If the basemap fails to load (e.g. no network), the card falls back to the original
     fully-offline, non-geographic route trace (`ui/trips/RouteTraceCanvas.kt` - a plain Compose

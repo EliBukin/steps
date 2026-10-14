@@ -5,12 +5,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -24,6 +25,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,6 +51,8 @@ fun TripDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // Bumped by the "Show whole route" button; TripRouteMapCard re-frames the route on each change.
+    var showWholeRouteRequests by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val gpxExportSuccessMessage = stringResource(R.string.trip_gpx_export_success)
@@ -87,54 +91,66 @@ fun TripDetailScreen(
         }
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
+    // A plain, non-scrolling Column on purpose. The route map is a native view: inside a vertically
+    // scrollable container, any drag with a vertical component (an upward pan, a diagonal drag, a
+    // pinch) is claimed by the container after a few pixels and cancelled for the map, so the map
+    // stalls mid-gesture. Here nothing competes for touches on the map, and it takes whatever
+    // height the details above and the buttons below leave free.
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_navigate_back))
-                }
-                Text(text = formatDateLabel(tripDate(trip.startEpochSecond, trip.startZoneId)), style = MaterialTheme.typography.titleLarge)
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_navigate_back))
+            }
+            Text(text = formatDateLabel(tripDate(trip.startEpochSecond, trip.startZoneId)), style = MaterialTheme.typography.titleLarge)
+        }
+
+        val zoneId = ZoneId.of(trip.startZoneId)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                DetailRow(stringResource(R.string.trip_detail_start_label), formatClockTimeInZone(trip.startEpochSecond, zoneId))
+                DetailRow(
+                    stringResource(R.string.trip_detail_end_label),
+                    trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
+                )
+                DetailRow(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
+                DetailRow(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
             }
         }
 
-        item {
-            val zoneId = ZoneId.of(trip.startZoneId)
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DetailRow(stringResource(R.string.trip_detail_start_label), formatClockTimeInZone(trip.startEpochSecond, zoneId))
-                    DetailRow(
-                        stringResource(R.string.trip_detail_end_label),
-                        trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
-                    )
-                    DetailRow(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
-                    DetailRow(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
-                }
-            }
+        if (uiState.points.isEmpty()) {
+            Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.weight(1f))
+        } else {
+            TripRouteMapCard(
+                points = uiState.points,
+                showWholeRouteRequests = showWholeRouteRequests,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
         }
 
-        item {
-            if (uiState.points.isEmpty()) {
-                Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
-            } else {
-                TripRouteMapCard(points = uiState.points, modifier = Modifier.fillMaxWidth())
+        // Half the default side padding, so all three buttons fit on one line on a typical phone;
+        // the row still wraps onto a second line rather than clipping on narrow screens, with large
+        // font sizes, or with longer translations.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { showWholeRouteRequests++ },
+                enabled = uiState.points.isNotEmpty(),
+                contentPadding = CompactButtonPadding,
+            ) {
+                Text(stringResource(R.string.trip_detail_map_show_route_action))
             }
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { gpxExportLauncher.launch(GpxExport.suggestedFileName(tripDate(trip.startEpochSecond, trip.startZoneId))) },
-                    enabled = uiState.points.isNotEmpty(),
-                ) {
-                    Text(stringResource(R.string.trip_detail_export_gpx_action))
-                }
-                OutlinedButton(onClick = { showDeleteConfirm = true }) {
-                    Text(stringResource(R.string.trip_detail_delete_action))
-                }
+            OutlinedButton(
+                onClick = { gpxExportLauncher.launch(GpxExport.suggestedFileName(tripDate(trip.startEpochSecond, trip.startZoneId))) },
+                enabled = uiState.points.isNotEmpty(),
+                contentPadding = CompactButtonPadding,
+            ) {
+                Text(stringResource(R.string.trip_detail_export_gpx_action))
+            }
+            OutlinedButton(onClick = { showDeleteConfirm = true }, contentPadding = CompactButtonPadding) {
+                Text(stringResource(R.string.trip_detail_delete_action))
             }
         }
     }
@@ -154,6 +170,8 @@ fun TripDetailScreen(
         )
     }
 }
+
+private val CompactButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
 
 @Composable
 private fun DetailRow(label: String, value: String) {

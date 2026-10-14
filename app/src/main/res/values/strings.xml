@@ -160,6 +160,9 @@
     <string name="cd_navigate_back">חזרה</string>
     <string name="trip_detail_map_unavailable_message">לא ניתן היה לטעון את המפה (ייתכן שאין חיבור לאינטרנט). מוצג קו מסלול לא מקוון במקום.</string>
     <string name="trip_detail_map_retry_action">נסה לטעון את המפה שוב</string>
+    <string name="trip_detail_map_show_route_action">הצג את כל המסלול</string>
+    <string name="trip_map_scale_meters_format">%1$s מ׳</string>
+    <string name="trip_map_scale_kilometers_format">%1$s ק״מ</string>
 
     <string name="stats_title">סטטיסטיקה לכל הזמנים</string>
     <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
