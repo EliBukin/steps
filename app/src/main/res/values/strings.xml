@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Steps GPS Route</string>
 
     <string name="nav_today">היום</string>
@@ -86,7 +86,6 @@
     <string name="settings_debug_label_health_connect_status">Health Connect זמין</string>
     <string name="settings_debug_label_step_counting_supported">ספירת צעדים במכשיר נתמכת</string>
 
-    <string name="unit_steps">צעדים</string>
     <string name="percent_of_goal_format">%1$d%% מהיעד</string>
 
     <string name="cd_daily_progress">התקדמות יעד יומי, %1$d אחוז</string>
@@ -168,7 +167,6 @@
     <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
     <string name="stats_distance_label">מרחק הליכה משוער</string>
     <string name="stats_distance_km_format">%1$,.1f ק״מ</string>
-    <string name="stats_distance_assumption">האומדן מבוסס על ממוצע של 0.75 מטר לצעד, ואינו נמדד באמצעות GPS</string>
     <string name="stats_earth_progress_label">התקדמות מסביב לכדור הארץ</string>
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
@@ -186,6 +184,25 @@
     <string name="stats_best_day_none">אין עדיין ימים פעילים</string>
     <string name="stats_zero_state_title">המסע שלך מתחיל כאן</string>
     <string name="stats_zero_state_message">עדיין אין נתוני צעדים. התחילו ללכת כדי לראות כאן את הסטטיסטיקה לכל הזמנים שלכם.</string>
-    <string name="stats_encouragement_label">כל הכבוד, המשיכו כך!</string>
-    <string name="stats_next_marathon_format">עוד %1$,.1f ק״מ ותשלימו מרתון נוסף</string>
+    <string name="stats_section_steps">צעדים</string>
+    <string name="stats_section_trips">טיולי GPS</string>
+    <string name="stats_number_format">%1$,d</string>
+    <string name="stats_workouts_label">אימונים</string>
+    <string name="stats_workout_time_label">זמן אימונים</string>
+    <string name="stats_best_day_value_format">%1$s · %2$,d</string>
+    <string name="stats_next_marathon_label">עד המרתון הבא</string>
+    <string name="stats_next_marathon_value_format">%1$,.1f ק״מ</string>
+    <string name="stats_calories_label">קלוריות שנשרפו (הערכה)</string>
+    <string name="stats_calories_format" tools:ignore="PluralsCandidate">%1$,d קק״ל</string>
+    <string name="stats_burgers_label">המבורגרים שנשרפו</string>
+    <string name="stats_estimates_note">המרחק והקלוריות מוערכים לפי הצעדים שלך (0.75 מטר ו-0.04 קק״ל לצעד), ואינם נמדדים ב-GPS.</string>
+    <string name="stats_trips_count_label">סך הכול טיולים</string>
+    <string name="stats_trips_time_label">זמן כולל</string>
+    <string name="stats_trips_distance_label">מרחק כולל</string>
+    <string name="stats_trips_speed_label">מהירות ממוצעת</string>
+    <string name="stats_speed_format">%1$.1f קמ״ש</string>
+    <string name="stats_trips_pace_label">קצב ממוצע</string>
+    <string name="stats_pace_format">%1$d:%2$02d לק״מ</string>
+    <string name="stats_trips_note">נמדד ב-GPS בטיולים שהקלטת.</string>
+    <string name="stats_value_unavailable">–</string>
 </resources>

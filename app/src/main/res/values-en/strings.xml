@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Steps GPS Route</string>
 
     <string name="nav_today">Today</string>
@@ -86,7 +86,6 @@
     <string name="settings_debug_label_health_connect_status">Health Connect available</string>
     <string name="settings_debug_label_step_counting_supported">On-device step counting supported</string>
 
-    <string name="unit_steps">steps</string>
     <string name="percent_of_goal_format">%1$d%% of goal</string>
 
     <string name="cd_daily_progress">Daily goal progress, %1$d percent</string>
@@ -168,7 +167,6 @@
     <string name="stats_lifetime_steps_label">Total steps ever</string>
     <string name="stats_distance_label">Estimated walking distance</string>
     <string name="stats_distance_km_format">%1$,.1f km</string>
-    <string name="stats_distance_assumption">Estimated using an average of 0.75 meters per step, not measured by GPS</string>
     <string name="stats_earth_progress_label">Progress around Earth</string>
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
@@ -186,6 +184,25 @@
     <string name="stats_best_day_none">No active days yet</string>
     <string name="stats_zero_state_title">Your journey starts here</string>
     <string name="stats_zero_state_message">No step data yet. Start walking to see your lifetime stats here.</string>
-    <string name="stats_encouragement_label">Great job, keep it up!</string>
-    <string name="stats_next_marathon_format">%1$,.1f more km to complete another marathon</string>
+    <string name="stats_section_steps">Steps</string>
+    <string name="stats_section_trips">GPS trips</string>
+    <string name="stats_number_format">%1$,d</string>
+    <string name="stats_workouts_label">Workouts</string>
+    <string name="stats_workout_time_label">Workout time</string>
+    <string name="stats_best_day_value_format">%1$s · %2$,d</string>
+    <string name="stats_next_marathon_label">Next marathon in</string>
+    <string name="stats_next_marathon_value_format">%1$,.1f km</string>
+    <string name="stats_calories_label">Calories burned (estimate)</string>
+    <string name="stats_calories_format" tools:ignore="PluralsCandidate">%1$,d kcal</string>
+    <string name="stats_burgers_label">Burgers burned</string>
+    <string name="stats_estimates_note">Distance and calories are estimated from your steps (0.75 m and 0.04 kcal per step), not measured by GPS.</string>
+    <string name="stats_trips_count_label">Total trips</string>
+    <string name="stats_trips_time_label">Total time</string>
+    <string name="stats_trips_distance_label">Total distance</string>
+    <string name="stats_trips_speed_label">Average speed</string>
+    <string name="stats_speed_format">%1$.1f km/h</string>
+    <string name="stats_trips_pace_label">Average pace</string>
+    <string name="stats_pace_format">%1$d:%2$02d /km</string>
+    <string name="stats_trips_note">Measured by GPS on your recorded trips.</string>
+    <string name="stats_value_unavailable">–</string>
 </resources>

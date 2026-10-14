@@ -15,6 +15,9 @@ data class LifetimeStepTotals(
     val activeDays: Int,
     val bestDayDate: LocalDate?,
     val bestDaySteps: Long,
+    /** Walks currently labelled as workouts, and their total elapsed minutes - see StepRepository.observeLifetimeStats. */
+    val workoutCount: Int = 0,
+    val workoutMinutes: Long = 0L,
 ) {
     companion object {
         val EMPTY = LifetimeStepTotals(lifetimeSteps = 0L, activeDays = 0, bestDayDate = null, bestDaySteps = 0L)

@@ -20,7 +20,7 @@ left).
 |---|---|
 | **Today** | Today's total, workout and incidental steps. Progress toward the daily goal, this week's total and the weekly goal (daily goal × 7; weeks start on Sunday). The time of the last sync, plus a banner when step data isn't available or a sync failed. |
 | **History** | The last 7 days as a stacked bar chart (workout + incidental) with the daily goal line, plus an estimated distance per day. |
-| **Stats** | Lifetime totals: all steps ever, estimated distance (0.75 m per step, not GPS), progress around the Earth and to the Moon, marathon equivalents, active days, average per active day, and best day. |
+| **Stats** | A summary list in two sections. **Steps:** all steps ever, estimated distance (0.75 m per step, not GPS), workouts and workout time, active days, average per active day, best day, marathon equivalents and the next marathon, progress around the Earth and to the Moon (with progress bars), and estimated calories (0.04 kcal per step) and burgers burned (250 kcal each). **GPS trips:** total trips, time and distance, average speed and average pace. |
 | **Trips** | Start, finish or resume a GPS trip, with live time, distance and GPS signal while recording. Below that, the list of finished trips. |
 | **Trip detail** | Start/end time, duration and distance, the route on a map, and the buttons *Show whole route*, *Export GPX* and *Delete trip*. |
 | **Settings** | Daily step goal, the workout-detection thresholds (advanced), and the permission and data-collection status. Debug builds also show debug tools (see below). |

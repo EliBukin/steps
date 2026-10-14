@@ -21,6 +21,10 @@ data class LifetimeWalkingStats(
     val bestDayDate: LocalDate?,
     val bestDaySteps: Long,
     val kilometersToNextMarathon: Double,
+    val workoutCount: Int,
+    val workoutMinutes: Long,
+    val estimatedKilocalories: Long,
+    val burgersBurned: Long,
 ) {
     val hasData: Boolean get() = lifetimeSteps > 0
 }
@@ -42,6 +46,15 @@ object LifetimeStatsCalculator {
     const val EARTH_CIRCUMFERENCE_KM: Double = 40_075.0
     const val MARATHON_KM: Double = 42.195
 
+    /**
+     * Walking energy per step for a typical ~70 kg adult. A fixed estimate - the app knows neither
+     * body weight nor pace - so the Stats screen labels calories as an estimate.
+     */
+    const val KILOCALORIES_PER_STEP: Double = 0.04
+
+    /** One plain hamburger, for the "burgers burned" comparison. */
+    const val KILOCALORIES_PER_BURGER: Double = 250.0
+
     fun calculate(totals: LifetimeStepTotals): LifetimeWalkingStats {
         val estimatedKilometers = totals.lifetimeSteps * METERS_PER_STEP / 1000.0
         val earthProgressPercent = estimatedKilometers / EARTH_CIRCUMFERENCE_KM * 100.0
@@ -51,6 +64,7 @@ object LifetimeStatsCalculator {
         // The next whole marathon still ahead - e.g. 1.2 completed -> the 2nd marathon is next.
         val nextMarathonCount = floor(marathonEquivalents).toLong() + 1
         val kilometersToNextMarathon = (nextMarathonCount * MARATHON_KM - estimatedKilometers).coerceAtLeast(0.0)
+        val estimatedKilocalories = totals.lifetimeSteps * KILOCALORIES_PER_STEP
 
         return LifetimeWalkingStats(
             lifetimeSteps = totals.lifetimeSteps,
@@ -62,6 +76,11 @@ object LifetimeStatsCalculator {
             bestDayDate = totals.bestDayDate,
             bestDaySteps = totals.bestDaySteps,
             kilometersToNextMarathon = kilometersToNextMarathon,
+            workoutCount = totals.workoutCount,
+            workoutMinutes = totals.workoutMinutes,
+            estimatedKilocalories = estimatedKilocalories.toLong(),
+            // Whole burgers only - a partly burned burger doesn't count yet.
+            burgersBurned = floor(estimatedKilocalories / KILOCALORIES_PER_BURGER).toLong(),
         )
     }
 }

@@ -26,7 +26,7 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
             container.clock,
         )
 
-        StatsViewModel::class.java -> StatsViewModel(container.stepRepository)
+        StatsViewModel::class.java -> StatsViewModel(container.stepRepository, container.tripRepository)
 
         SettingsViewModel::class.java -> SettingsViewModel(
             container.settingsRepository,

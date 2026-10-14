@@ -135,4 +135,53 @@ class LifetimeStatsCalculatorTest {
         assertTrue(stats.marathonEquivalents.isFinite() && stats.marathonEquivalents > 0.0)
         assertTrue(stats.kilometersToNextMarathon.isFinite() && stats.kilometersToNextMarathon >= 0.0)
     }
+
+    @Test
+    fun `calories are estimated at 0,04 kcal per step`() {
+        val stats = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(lifetimeSteps = 84_161, activeDays = 31, bestDayDate = null, bestDaySteps = 0),
+        )
+
+        // 84,161 x 0.04 = 3,366.44 - shown as whole kilocalories.
+        assertEquals(3_366L, stats.estimatedKilocalories)
+    }
+
+    @Test
+    fun `burgers burned counts only whole 250 kcal burgers`() {
+        fun burgersFor(steps: Long) = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(lifetimeSteps = steps, activeDays = 1, bestDayDate = null, bestDaySteps = 0),
+        ).burgersBurned
+
+        assertEquals(0L, burgersFor(0))
+        assertEquals(0L, burgersFor(6_249)) // 249.96 kcal - not a whole burger yet
+        assertEquals(1L, burgersFor(6_250)) // exactly 250 kcal
+        assertEquals(13L, burgersFor(84_161)) // 3,366 kcal
+    }
+
+    @Test
+    fun `workout count and minutes are carried through unchanged`() {
+        val stats = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(
+                lifetimeSteps = 20_000,
+                activeDays = 3,
+                bestDayDate = null,
+                bestDaySteps = 0,
+                workoutCount = 12,
+                workoutMinutes = 245,
+            ),
+        )
+
+        assertEquals(12, stats.workoutCount)
+        assertEquals(245L, stats.workoutMinutes)
+    }
+
+    @Test
+    fun `a very large step count keeps calories and burgers non-negative`() {
+        val stats = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(lifetimeSteps = Long.MAX_VALUE, activeDays = 1, bestDayDate = null, bestDaySteps = 0),
+        )
+
+        assertTrue(stats.estimatedKilocalories > 0L)
+        assertTrue(stats.burgersBurned > 0L)
+    }
 }

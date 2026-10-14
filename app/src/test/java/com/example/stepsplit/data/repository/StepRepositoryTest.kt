@@ -1652,6 +1652,37 @@ class StepRepositoryTest {
     }
 
     @Test
+    fun `lifetime stats count only current-version workout walks, with their elapsed minutes`() = runTest {
+        fun bout(start: Long, minutes: Int, classification: String, version: Int) = WalkBoutEntity(
+            startEpochSecond = start,
+            endEpochSecond = start + minutes * 60L,
+            steps = minutes * 80L,
+            activeMinutes = minutes,
+            elapsedMinutes = minutes,
+            cadence = 80.0,
+            autoClassification = classification,
+            autoConfidence = 0.9,
+            autoReasonCode = "MEETS_ALL_THRESHOLDS",
+            classifierVersion = version,
+            computedAtEpochSecond = start,
+        )
+        database.walkBoutDao().insertAll(
+            listOf(
+                bout(baseEpoch, 20, "WORKOUT", CLASSIFIER_VERSION),
+                bout(baseEpoch + 3_600, 15, "WORKOUT", CLASSIFIER_VERSION),
+                bout(baseEpoch + 7_200, 5, "INCIDENTAL", CLASSIFIER_VERSION),
+                // Computed by an older classifier version - never counted, like everywhere else.
+                bout(baseEpoch + 10_800, 30, "WORKOUT", CLASSIFIER_VERSION - 1),
+            ),
+        )
+
+        val totals = repository.observeLifetimeStats().first()
+
+        assertEquals(2, totals.workoutCount)
+        assertEquals(35L, totals.workoutMinutes)
+    }
+
+    @Test
     fun `lifetime stats are a valid, non-crashing zero state with no stored buckets`() = runTest {
         val stats = LifetimeStatsCalculator.calculate(repository.observeLifetimeStats().first())
 

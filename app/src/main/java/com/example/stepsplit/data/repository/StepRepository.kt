@@ -517,12 +517,18 @@ class StepRepository(
     fun observeLifetimeStats(): Flow<LifetimeStepTotals> = combine(
         database.stepBucketDao().observeLifetimeAggregate(stepSource.id),
         database.stepBucketDao().observeBestDay(stepSource.id),
-    ) { aggregate, bestDay ->
+        // Walks are classified across every source's minutes and stored without a source, so in a
+        // debug build with sample data seeded, sample workouts count here too. Release builds have
+        // only the production source.
+        database.walkBoutDao().observeWorkoutTotals(BoutClassification.WORKOUT.name, CLASSIFIER_VERSION),
+    ) { aggregate, bestDay, workouts ->
         LifetimeStepTotals(
             lifetimeSteps = aggregate.totalSteps,
             activeDays = aggregate.activeDays,
             bestDayDate = bestDay?.localDate?.let(LocalDate::parse),
             bestDaySteps = bestDay?.totalSteps ?: 0L,
+            workoutCount = workouts.count,
+            workoutMinutes = workouts.minutes,
         )
     }
 

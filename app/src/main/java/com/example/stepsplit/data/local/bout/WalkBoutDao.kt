@@ -5,6 +5,12 @@ import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+/** How many walks are labelled workouts, and their total elapsed minutes - see [WalkBoutDao.observeWorkoutTotals]. */
+data class WorkoutTotals(
+    val count: Int,
+    val minutes: Long,
+)
+
 @Dao
 interface WalkBoutDao {
 
@@ -23,6 +29,13 @@ interface WalkBoutDao {
 
     @Query("SELECT MAX(endEpochSecond) FROM walk_bouts")
     suspend fun latestEnd(): Long?
+
+    /** Only rows computed by [classifierVersion] count - a stale row is never treated as current (see CLASSIFIER_VERSION). */
+    @Query(
+        "SELECT COUNT(*) AS count, COALESCE(SUM(elapsedMinutes), 0) AS minutes FROM walk_bouts " +
+            "WHERE autoClassification = :classification AND classifierVersion = :classifierVersion",
+    )
+    fun observeWorkoutTotals(classification: String, classifierVersion: Int): Flow<WorkoutTotals>
 
     @Query("SELECT * FROM walk_bouts ORDER BY startEpochSecond DESC")
     fun observeAll(): Flow<List<WalkBoutEntity>>

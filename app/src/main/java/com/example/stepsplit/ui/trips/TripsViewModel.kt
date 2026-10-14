@@ -6,11 +6,8 @@ import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
-import com.example.stepsplit.domain.trip.RouteSanitizer
-import com.example.stepsplit.domain.trip.RouteSmoother
 import com.example.stepsplit.trip.service.TripRecordingService
 import java.time.Clock
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -23,7 +20,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -83,32 +79,8 @@ class TripsViewModel(
     private val activeTripSanitizedDistance: Flow<Double> =
         activeTripPoints.map { routeDistanceMeters(it) }.flowOn(Dispatchers.Default)
 
-    /** Smoothed distance per finished trip id - see [finishedTripHistory]. */
-    private val finishedTripDistances = ConcurrentHashMap<Long, Double>()
-
-    /**
-     * Finished trips with [TripSummary.distanceMeters] replaced by the same
-     * `RouteSanitizer -> RouteSmoother` output the trip's own detail screen shows - see
-     * [TripDetailViewModel]'s doc comment for why this must never disagree with what tapping into a
-     * trip's detail then displays.
-     *
-     * A finished trip's points never change again ([TripRepository.recordAcceptedBatch] only
-     * records into an ACTIVE trip, and FINISHED is terminal), so each trip's distance is computed
-     * once from a one-shot read and cached in [finishedTripDistances]. Observing every finished
-     * trip's points live instead re-read and re-smoothed the entire history on every GPS fix the
-     * active trip recorded: Room invalidates observers per table, not per trip.
-     */
-    private val finishedTripHistory: Flow<List<TripSummary>> = repository.observeTrips()
-        .map { trips -> trips.filter { it.state == TripState.FINISHED } }
-        .distinctUntilChanged()
-        .mapLatest { finished ->
-            finishedTripDistances.keys.retainAll(finished.map { it.id }.toSet())
-            finished.map { trip ->
-                val distance = finishedTripDistances.getOrPut(trip.id) { routeDistanceMeters(repository.getTripPoints(trip.id)) }
-                trip.copy(distanceMeters = distance)
-            }
-        }
-        .flowOn(Dispatchers.Default)
+    /** Finished trips with their displayed (cleaned-up and smoothed) distances - see [FinishedTripHistory]. */
+    private val finishedTripHistory: Flow<List<TripSummary>> = FinishedTripHistory(repository, routeDistanceMeters).trips
 
     private val ticker: Flow<Long> = flow {
         while (true) {
@@ -150,10 +122,6 @@ class TripsViewModel(
         const val TICK_INTERVAL_MILLIS = 1_000L
     }
 }
-
-/** The same `RouteSanitizer -> RouteSmoother` pipeline the detail screen and GPX export use. */
-private fun smoothedRouteDistanceMeters(points: List<TripPoint>): Double =
-    RouteSmoother.smooth(RouteSanitizer.sanitize(points).points).distanceMeters
 
 private fun gpsStatusFor(lastPoint: TripPoint?, nowEpochSecond: Long): GpsStatus {
     if (lastPoint == null) return GpsStatus.SEARCHING

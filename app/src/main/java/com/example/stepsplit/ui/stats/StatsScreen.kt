@@ -1,43 +1,45 @@
 package com.example.stepsplit.ui.stats
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.stats.LifetimeWalkingStats
+import com.example.stepsplit.domain.trip.TripTotals
 import com.example.stepsplit.ui.common.formatDateLabel
+import com.example.stepsplit.ui.trips.formatDistance
+import com.example.stepsplit.ui.trips.formatElapsed
 
 /** Below this, a progress percentage would round to a misleading "0%" - see [formatTieredPercent]. */
 private const val PERCENT_DISPLAY_FLOOR = 0.01
 
-/** The grid needs at least this much content width to keep two columns of tile text readable. */
-private val TwoColumnMinContentWidth = 320.dp
+private const val EARTH_ICON = "🌍"
+private const val MOON_ICON = "🚀"
+private const val BURGER_ICON = "🍔"
 
-/** Above this font scale, even a wide screen falls back to one column so tile text has room to wrap. */
-private const val TwoColumnMaxFontScale = 1.3f
-
+/**
+ * Lifetime stats as a summary list: one row per stat (label on one side, value on the other) in two
+ * sections, steps and GPS trips. Percentage rows keep a progress bar under them.
+ */
 @Composable
 fun StatsScreen(
     uiState: StatsUiState,
@@ -49,8 +51,6 @@ fun StatsScreen(
         onPauseOrDispose { }
     }
 
-    val stats = uiState.stats
-
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -58,186 +58,163 @@ fun StatsScreen(
     ) {
         item { Text(text = stringResource(R.string.stats_title), style = MaterialTheme.typography.titleLarge) }
 
-        if (!stats.hasData) {
+        if (!uiState.stats.hasData) {
             item { ZeroDataCard() }
         }
 
-        item {
-            StatsTilesGrid(
-                tiles = listOf(
-                    { TotalStepsTile(stats) },
-                    { DistanceTile(stats) },
-                    { MarathonTile(stats) },
-                    { ActiveDaysTile(stats) },
-                    { AverageTile(stats) },
-                    { BestDayTile(stats) },
-                    { EarthProgressTile(stats) },
-                    { MoonProgressTile(stats) },
-                ),
-            )
-        }
+        item { StepsSection(uiState.stats) }
+        item { TripsSection(uiState.trips) }
+    }
+}
 
-        if (stats.hasData) {
-            item { EncouragementCard(stats.kilometersToNextMarathon) }
+@Composable
+private fun StepsSection(stats: LifetimeWalkingStats) {
+    val moonPercent = MoonProgress.percent(stats.estimatedKilometers)
+    StatsSection(
+        title = stringResource(R.string.stats_section_steps),
+        footnote = stringResource(R.string.stats_estimates_note),
+        rows = listOf(
+            { StatRow(stringResource(R.string.stats_lifetime_steps_label), number(stats.lifetimeSteps)) },
+            { StatRow(stringResource(R.string.stats_distance_label), stringResource(R.string.stats_distance_km_format, stats.estimatedKilometers)) },
+            { StatRow(stringResource(R.string.stats_workouts_label), number(stats.workoutCount.toLong())) },
+            { StatRow(stringResource(R.string.stats_workout_time_label), formatElapsed(stats.workoutMinutes * 60)) },
+            { StatRow(stringResource(R.string.stats_active_days_label), number(stats.activeDays.toLong())) },
+            { StatRow(stringResource(R.string.stats_average_label), number(stats.averageStepsPerActiveDay)) },
+            {
+                StatRow(
+                    stringResource(R.string.stats_best_day_label),
+                    stats.bestDayDate?.let { date ->
+                        stringResource(R.string.stats_best_day_value_format, formatDateLabel(date), stats.bestDaySteps)
+                    } ?: stringResource(R.string.stats_best_day_none),
+                )
+            },
+            { StatRow(stringResource(R.string.stats_marathon_label), stringResource(R.string.stats_marathon_format, stats.marathonEquivalents)) },
+            {
+                StatRow(
+                    stringResource(R.string.stats_next_marathon_label),
+                    stringResource(R.string.stats_next_marathon_value_format, stats.kilometersToNextMarathon),
+                )
+            },
+            {
+                StatRow(
+                    label = stringResource(R.string.stats_earth_progress_label),
+                    value = formatTieredPercent(
+                        percent = stats.earthProgressPercent,
+                        zero = R.string.stats_earth_percent_zero,
+                        belowMin = R.string.stats_earth_percent_below_min,
+                        format = R.string.stats_earth_percent_format,
+                    ),
+                    icon = EARTH_ICON,
+                    progress = (stats.earthProgressPercent / 100.0).toFloat(),
+                )
+            },
+            {
+                StatRow(
+                    label = stringResource(R.string.stats_moon_progress_label),
+                    value = formatTieredPercent(
+                        percent = moonPercent,
+                        zero = R.string.stats_moon_percent_zero,
+                        belowMin = R.string.stats_moon_percent_below_min,
+                        format = R.string.stats_moon_percent_format,
+                    ),
+                    icon = MOON_ICON,
+                    progress = (moonPercent / 100.0).toFloat(),
+                    caption = stringResource(
+                        R.string.stats_moon_progress_context_format,
+                        stats.estimatedKilometers,
+                        MoonProgress.EARTH_MOON_DISTANCE_KM,
+                    ),
+                )
+            },
+            { StatRow(stringResource(R.string.stats_calories_label), stringResource(R.string.stats_calories_format, stats.estimatedKilocalories)) },
+            { StatRow(stringResource(R.string.stats_burgers_label), number(stats.burgersBurned), icon = BURGER_ICON) },
+        ),
+    )
+}
+
+@Composable
+private fun TripsSection(trips: TripTotals) {
+    val unavailable = stringResource(R.string.stats_value_unavailable)
+    StatsSection(
+        title = stringResource(R.string.stats_section_trips),
+        footnote = stringResource(R.string.stats_trips_note),
+        rows = if (!trips.hasTrips) {
+            listOf({ EmptyRow(stringResource(R.string.trips_history_empty)) })
+        } else {
+            listOf(
+                { StatRow(stringResource(R.string.stats_trips_count_label), number(trips.tripCount.toLong())) },
+                { StatRow(stringResource(R.string.stats_trips_time_label), formatElapsed(trips.totalDurationSeconds)) },
+                { StatRow(stringResource(R.string.stats_trips_distance_label), formatDistance(trips.totalDistanceMeters)) },
+                {
+                    StatRow(
+                        stringResource(R.string.stats_trips_speed_label),
+                        trips.averageSpeedKmh?.let { stringResource(R.string.stats_speed_format, it) } ?: unavailable,
+                    )
+                },
+                {
+                    StatRow(
+                        stringResource(R.string.stats_trips_pace_label),
+                        trips.averagePaceSecondsPerKm?.let {
+                            stringResource(R.string.stats_pace_format, (it / 60).toInt(), (it % 60).toInt())
+                        } ?: unavailable,
+                    )
+                },
+            )
+        },
+    )
+}
+
+/** A section title, then its rows in one card with thin dividers between them, then a small note. */
+@Composable
+private fun StatsSection(title: String, footnote: String, rows: List<@Composable () -> Unit>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                rows.forEachIndexed { index, row ->
+                    if (index > 0) HorizontalDivider()
+                    row()
+                }
+            }
         }
+        Text(text = footnote, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 /**
- * Adaptive layout for the eight stat tiles: two equal-height columns (each row stretched to its
- * tallest tile via [IntrinsicSize.Max]) when there's enough width and the font scale is small
- * enough to keep tile text readable without truncation, otherwise a single column.
+ * One stat: [label] (after an optional emoji [icon]) on the start side, [value] on the end side.
+ * [progress] (0..1, clamped) adds a bar underneath, and [caption] a line of small text below that.
+ * Merged into a single node so a screen reader reads the row as one item.
  */
 @Composable
-private fun StatsTilesGrid(tiles: List<@Composable () -> Unit>, modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val fontScale = LocalDensity.current.fontScale
-        val useTwoColumns = maxWidth >= TwoColumnMinContentWidth && fontScale <= TwoColumnMaxFontScale
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (useTwoColumns) {
-                tiles.chunked(2).forEach { row ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        row.forEach { tile ->
-                            Box(modifier = Modifier.weight(1f).fillMaxHeight()) { tile() }
-                        }
-                        if (row.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-            } else {
-                tiles.forEach { tile -> tile() }
+private fun StatRow(label: String, value: String, icon: String? = null, progress: Float? = null, caption: String? = null) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp).semantics(mergeDescendants = true) {}) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Text(text = icon, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(end = 8.dp))
             }
+            Text(text = label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(end = 12.dp))
+            Text(text = value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+        }
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(6.dp),
+            )
+        }
+        if (caption != null) {
+            Text(text = caption, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }
 
 @Composable
-private fun TotalStepsTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_lifetime_steps_label)
-    val value = "${stats.lifetimeSteps}"
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-    }
+private fun EmptyRow(text: String) {
+    Text(text = text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(vertical = 12.dp))
 }
 
 @Composable
-private fun DistanceTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_distance_label)
-    val value = stringResource(R.string.stats_distance_km_format, stats.estimatedKilometers)
-    val assumption = stringResource(R.string.stats_distance_assumption)
-    StatsTile(contentDescription = "$label $value. $assumption", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-        TileCaption(assumption)
-    }
-}
-
-@Composable
-private fun MarathonTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_marathon_label)
-    val value = stringResource(R.string.stats_marathon_format, stats.marathonEquivalents)
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-    }
-}
-
-@Composable
-private fun ActiveDaysTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_active_days_label)
-    val value = "${stats.activeDays}"
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-    }
-}
-
-@Composable
-private fun AverageTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_average_label)
-    val value = "${stats.averageStepsPerActiveDay}"
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-    }
-}
-
-@Composable
-private fun BestDayTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_best_day_label)
-    val value = stats.bestDayDate?.let { date ->
-        "${formatDateLabel(date)} – ${stats.bestDaySteps} ${stringResource(R.string.unit_steps)}"
-    } ?: stringResource(R.string.stats_best_day_none)
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-    }
-}
-
-@Composable
-private fun EarthProgressTile(stats: LifetimeWalkingStats) {
-    val label = stringResource(R.string.stats_earth_progress_label)
-    val value = formatTieredPercent(
-        percent = stats.earthProgressPercent,
-        zero = R.string.stats_earth_percent_zero,
-        belowMin = R.string.stats_earth_percent_below_min,
-        format = R.string.stats_earth_percent_format,
-    )
-    StatsTile(contentDescription = "$label $value", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-        LinearProgressIndicator(
-            progress = { (stats.earthProgressPercent / 100.0).toFloat().coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(6.dp),
-        )
-    }
-}
-
-@Composable
-private fun MoonProgressTile(stats: LifetimeWalkingStats) {
-    val moonPercent = MoonProgress.percent(stats.estimatedKilometers)
-    val label = stringResource(R.string.stats_moon_progress_label)
-    val value = formatTieredPercent(
-        percent = moonPercent,
-        zero = R.string.stats_moon_percent_zero,
-        belowMin = R.string.stats_moon_percent_below_min,
-        format = R.string.stats_moon_percent_format,
-    )
-    val context = stringResource(
-        R.string.stats_moon_progress_context_format,
-        stats.estimatedKilometers,
-        MoonProgress.EARTH_MOON_DISTANCE_KM,
-    )
-    StatsTile(contentDescription = "$label $value. $context", modifier = Modifier.fillMaxWidth()) {
-        TileLabel(label)
-        TileValue(value)
-        LinearProgressIndicator(
-            progress = { (moonPercent / 100.0).toFloat().coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(6.dp),
-        )
-        TileCaption(context)
-    }
-}
-
-@Composable
-private fun TileLabel(text: String) {
-    Text(text = text, style = MaterialTheme.typography.labelLarge)
-}
-
-@Composable
-private fun TileValue(text: String) {
-    Text(text = text, style = MaterialTheme.typography.headlineSmall)
-}
-
-@Composable
-private fun TileCaption(text: String) {
-    Text(text = text, style = MaterialTheme.typography.bodySmall)
-}
+private fun number(value: Long): String = stringResource(R.string.stats_number_format, value)
 
 @Composable
 private fun formatTieredPercent(percent: Double, zero: Int, belowMin: Int, format: Int): String = when {
@@ -252,22 +229,6 @@ private fun ZeroDataCard() {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(text = stringResource(R.string.stats_zero_state_title), style = MaterialTheme.typography.titleMedium)
             Text(text = stringResource(R.string.stats_zero_state_message), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun EncouragementCard(kilometersToNextMarathon: Double) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text = stringResource(R.string.stats_encouragement_label), style = MaterialTheme.typography.labelLarge)
-            Text(
-                text = stringResource(R.string.stats_next_marathon_format, kilometersToNextMarathon),
-                style = MaterialTheme.typography.bodyLarge,
-            )
         }
     }
 }
