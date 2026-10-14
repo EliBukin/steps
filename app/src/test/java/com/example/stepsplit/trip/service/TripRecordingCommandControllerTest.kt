@@ -13,8 +13,12 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -1162,5 +1166,58 @@ class TripRecordingCommandControllerTest {
         assertEquals(2, allTrips.size)
         assertEquals(1, allTrips.count { it.state == TripState.ACTIVE.name })
         assertTrue(stoppedStartIds.isEmpty())
+    }
+
+    // ---- Crash safety when the trip's Room write itself fails ----
+
+    /** Forwards everything to the real repository except [markTripInterruptedIfStillOwned], which fails like a broken Room write. */
+    private fun failingInterruptRepository(): TripRecordingRepository = object : TripRecordingRepository by repository {
+        override suspend fun markTripInterruptedIfStillOwned(token: Long, isCurrent: () -> Boolean): Boolean =
+            throw IllegalStateException("simulated Room failure")
+    }
+
+    /** A scope like AppContainer's tripRecordingScope, except that anything escaping it is recorded instead of crashing the app. */
+    private fun recordingScope(uncaught: MutableList<Throwable>) =
+        CoroutineScope(Dispatchers.Default + SupervisorJob() + CoroutineExceptionHandler { _, e -> uncaught += e })
+
+    private suspend fun CoroutineScope.awaitChildren() {
+        val children = coroutineContext[Job]!!.children.toList()
+        withTimeout(5_000) { children.joinAll() }
+    }
+
+    @Test
+    fun `a collector failure whose INTERRUPTED write fails still stops the service, and nothing escapes`() = runBlocking {
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val scope = recordingScope(uncaught)
+        val failingCoordinator = TripRecordingCoordinator(repository, locationClient, scope)
+        val failingController = buildController(failingInterruptRepository(), failingCoordinator, locationClient, reconciliationScope = scope)
+        val startGen = failingController.beginCommand()
+        failingController.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+
+        locationClient.failActiveCollection(IllegalStateException("registration lost"))
+        withTimeout(5_000) { while (stoppedStartIds.isEmpty()) yield() }
+        scope.awaitChildren()
+
+        assertEquals("the service must not stay up with nothing recording", listOf(1), stoppedStartIds)
+        assertTrue("a failed write must not escape: $uncaught", uncaught.isEmpty())
+        scope.cancel()
+    }
+
+    @Test
+    fun `a shutdown reconciliation whose Room write fails never escapes its scope`() = runBlocking {
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val scope = recordingScope(uncaught)
+        val failingController = buildController(failingInterruptRepository(), coordinator, locationClient, reconciliationScope = scope)
+        val startGen = failingController.beginCommand()
+        failingController.handleStart(startGen, startId = 1)
+        awaitSubscriptionCount(1)
+
+        failingController.shutdown()
+        scope.awaitChildren()
+
+        assertTrue("a failed reconciliation must not escape: $uncaught", uncaught.isEmpty())
+        awaitSubscriptionCount(0)
+        scope.cancel()
     }
 }

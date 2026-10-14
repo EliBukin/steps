@@ -14,6 +14,16 @@ interface WalkBoutDao {
     @Query("DELETE FROM walk_bouts")
     suspend fun clearAll()
 
+    @Query("DELETE FROM walk_bouts WHERE startEpochSecond >= :fromInclusive")
+    suspend fun deleteStartingFrom(fromInclusive: Long)
+
+    /** The earliest start among bouts ending after [epochSecond], or null if none does - see StepRepository's `incrementalRecomputeStart`. */
+    @Query("SELECT MIN(startEpochSecond) FROM walk_bouts WHERE endEpochSecond > :epochSecond")
+    suspend fun earliestStartOfBoutEndingAfter(epochSecond: Long): Long?
+
+    @Query("SELECT MAX(endEpochSecond) FROM walk_bouts")
+    suspend fun latestEnd(): Long?
+
     @Query("SELECT * FROM walk_bouts ORDER BY startEpochSecond DESC")
     fun observeAll(): Flow<List<WalkBoutEntity>>
 

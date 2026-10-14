@@ -33,6 +33,10 @@ interface StepBucketDao {
     @Query("SELECT * FROM step_buckets WHERE steps > 0 ORDER BY startEpochSecond")
     suspend fun getAllActive(): List<StepBucketEntity>
 
+    /** [getAllActive] limited to minutes starting at or after [fromInclusive] - see StepRepository's `incrementalRecomputeStart`. */
+    @Query("SELECT * FROM step_buckets WHERE steps > 0 AND startEpochSecond >= :fromInclusive ORDER BY startEpochSecond")
+    suspend fun getActiveFrom(fromInclusive: Long): List<StepBucketEntity>
+
     @Query("SELECT * FROM step_buckets WHERE localDate IN (:localDates) ORDER BY startEpochSecond")
     fun observeForDates(localDates: List<String>): Flow<List<StepBucketEntity>>
 

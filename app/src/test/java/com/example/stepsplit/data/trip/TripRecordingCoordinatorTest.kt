@@ -7,17 +7,31 @@ import com.example.stepsplit.domain.trip.RawLocationSample
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -219,5 +233,82 @@ class TripRecordingCoordinatorTest {
         // Give any spurious onFailure invocation a chance to land before asserting its absence.
         withTimeout(1_000) { delay(100) }
         assertEquals(null, observedFailure)
+    }
+
+    /**
+     * A [TripLocationClient] whose first collection fails on demand - after it has already been
+     * stopped - and whose later collections stay open, counting live subscriptions. The failure is
+     * resumed through a plain (non-cancellable) [suspendCoroutine], so the stopped collector still
+     * runs its `catch` block: deterministically reproducing a failure that was already in flight on
+     * another thread when the caller's stop() and newer start() happened.
+     */
+    private class LateFailingLocationClient : TripLocationClient {
+        var liveSubscriptions = 0
+            private set
+        private var calls = 0
+        private var pendingFailure: Continuation<Unit>? = null
+
+        fun releaseFailure() {
+            pendingFailure?.resume(Unit)
+        }
+
+        override fun locationUpdates(): Flow<List<RawLocationSample>> = if (calls++ == 0) {
+            flow {
+                suspendCoroutine<Unit> { pendingFailure = it }
+                throw IllegalStateException("simulated location provider failure")
+            }
+        } else {
+            callbackFlow {
+                liveSubscriptions++
+                awaitClose { liveSubscriptions-- }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a superseded collector failing late cannot orphan the newer collector - stop still ends its subscription`() = runBlocking {
+        val scheduler = TestCoroutineScheduler()
+        val scope = CoroutineScope(StandardTestDispatcher(scheduler) + SupervisorJob())
+        val client = LateFailingLocationClient()
+        val coordinator = TripRecordingCoordinator(repository, client, scope)
+
+        coordinator.start(tripId = 1)
+        scheduler.runCurrent()
+        client.releaseFailure()
+        // Exactly what TripRecordingCommandController.startCollecting does for a newer command.
+        coordinator.stop()
+        coordinator.start(tripId = 1)
+        scheduler.runCurrent()
+
+        assertEquals(1, client.liveSubscriptions)
+        assertTrue("the newer collector must still be tracked", coordinator.isActive)
+
+        coordinator.stop()
+        scheduler.runCurrent()
+        assertEquals("stop() must end the newer collector's location subscription", 0, client.liveSubscriptions)
+        scope.cancel()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `an onFailure handler that throws never escapes the collecting scope`() = runBlocking {
+        val scheduler = TestCoroutineScheduler()
+        // The production scope (AppContainer's tripRecordingScope) has no handler, so anything
+        // reaching this one would have crashed the app.
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val scope = CoroutineScope(StandardTestDispatcher(scheduler) + SupervisorJob() + CoroutineExceptionHandler { _, e -> uncaught += e })
+        val coordinator = TripRecordingCoordinator(repository, FakeTripLocationClient(registrationFailure = SecurityException("simulated")), scope)
+        var handlerRan = false
+
+        coordinator.start(tripId = 1) {
+            handlerRan = true
+            throw IllegalStateException("simulated failure inside the failure handler")
+        }
+        scheduler.runCurrent()
+
+        assertTrue(handlerRan)
+        assertTrue("a failing onFailure handler must not escape: $uncaught", uncaught.isEmpty())
+        scope.cancel()
     }
 }

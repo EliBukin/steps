@@ -180,9 +180,16 @@ caching details.
   Re-importing an interval **replaces** the existing row (`OnConflictStrategy.REPLACE`), so
   repeated or overlapping reads can never duplicate steps. Each row also stores the `zoneId` and
   precomputed `localDate` captured at import time, so a later device timezone change never
-  retroactively changes which calendar day a past step belongs to.
-- `walk_bouts`: the cached classification result. Fully regenerated inside a transaction
-  every time the classifier reruns (see below) - it is a derived cache, never a source of truth.
+  retroactively changes which calendar day a past step belongs to. Indexed on `startEpochSecond`
+  and `localDate` (**added in schema v7**, `MIGRATION_6_7`, index-only) so incremental
+  classification and daily totals don't scan the whole, ever-growing table on every sync.
+- `walk_bouts`: the cached classification result - a derived cache, never a source of truth,
+  replaced inside a transaction every time the classifier reruns (see below). A routine sync (and
+  the finalization timer) only replaces the bouts its newly read minutes could affect: a bout
+  that ended more than `maxGapMinutes` before the sync's read window cannot absorb any of them,
+  so it keeps its stored row (see `StepRepository.incrementalRecomputeStart`). Threshold changes,
+  stale-version recomputes, and the once-per-process recovery below still regenerate the whole
+  table.
   Every row is stamped with the `CLASSIFIER_VERSION` (`domain/classification/Classification.kt`)
   that produced it. If the algorithm changes, `CLASSIFIER_VERSION` is bumped and any row stamped
   with an older version is treated as stale: `StepRepository` recomputes it from the raw
@@ -826,7 +833,10 @@ the displayed distance, so none of them can ever disagree by having separately r
 points. `TripsViewModel` applies the same pipeline to the finished-trip history list and the active
 trip's live distance (the latter derived only from the point-list flow, not the once-a-second
 elapsed-time ticker, so it isn't reprocessed on every tick) - so a trip's distance always agrees
-wherever it's shown. See `domain/trip/RouteSanitizerTest.kt` and `RouteSmootherTest.kt` for the pure
+wherever it's shown. A finished trip's points never change, so the history list computes each
+finished trip's distance once from a one-shot read and caches it, rather than observing every
+finished trip's points (Room invalidates per table, so that re-smoothed the whole history on every
+GPS fix recorded for the active trip). Both computations run off the main thread. See `domain/trip/RouteSanitizerTest.kt` and `RouteSmootherTest.kt` for the pure
 component tests, and `ui/trips/TripDetailViewModelTest.kt` / `TripsViewModelTest.kt` for the
 end-to-end proof that detail, list, map, and GPX export are never fed differently-processed data.
 

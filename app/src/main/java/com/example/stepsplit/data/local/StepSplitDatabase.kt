@@ -55,7 +55,7 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         MotionEvidenceEntity::class,
         StepCounterSampleEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -252,7 +252,15 @@ abstract class StepSplitDatabase : RoomDatabase() {
         }
 
         /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+        /** Index-only: see [StepBucketEntity]'s own indices for why these two exist. No data changes. */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_step_buckets_startEpochSecond` ON `step_buckets` (`startEpochSecond`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_step_buckets_localDate` ON `step_buckets` (`localDate`)")
+            }
+        }
+
+        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

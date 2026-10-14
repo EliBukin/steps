@@ -17,6 +17,7 @@ private class FakeHealthConnectGateway(
     private var permissionGranted: Boolean = true,
     private var readException: Throwable? = null,
     private var intervals: List<RawStepInterval> = emptyList(),
+    private var permissionCheckException: Throwable? = null,
 ) : HealthConnectGateway {
     var readCalls = 0
         private set
@@ -29,7 +30,10 @@ private class FakeHealthConnectGateway(
 
     override fun isOnDeviceStepCountingSupported(): Boolean = supported
     override fun sdkStatus(): HealthConnectSdkStatus = status
-    override suspend fun isReadStepsPermissionGranted(): Boolean = permissionGranted
+    override suspend fun isReadStepsPermissionGranted(): Boolean {
+        permissionCheckException?.let { throw it }
+        return permissionGranted
+    }
 
     override suspend fun readStepIntervals(fromInclusive: Instant, toExclusive: Instant): List<RawStepInterval> {
         readCalls++
@@ -116,6 +120,26 @@ class HealthConnectStepSourceTest {
     fun `supported device, available provider, granted permission reports Available`() = runTest {
         val gateway = FakeHealthConnectGateway(supported = true, status = HealthConnectSdkStatus.AVAILABLE, permissionGranted = true)
         assertEquals(StepSourceAvailability.Available, source(gateway).checkAvailability())
+    }
+
+    @Test
+    fun `a permission check that throws reports Error instead of escaping`() = runTest {
+        val gateway = FakeHealthConnectGateway(permissionCheckException = IllegalStateException("simulated Health Connect IPC failure"))
+        assertTrue(source(gateway).checkAvailability() is StepSourceAvailability.Error)
+    }
+
+    @Test
+    fun `a permission check that throws makes ensureSubscribed fail and readSteps report unavailability, never the raw exception`() = runTest {
+        val healthStore = RecordingHealthSink()
+        val gateway = FakeHealthConnectGateway(permissionCheckException = IllegalStateException("simulated Health Connect IPC failure"))
+        val stepSource = source(gateway, healthStore)
+
+        assertEquals(false, stepSource.ensureSubscribed())
+        assertEquals(1, healthStore.subscriptionFailures)
+        assertThrows(StepSourceUnavailableException::class.java) {
+            kotlinx.coroutines.runBlocking { stepSource.readSteps(Instant.EPOCH, fixedClock.instant()) }
+        }
+        assertEquals(0, gateway.readCalls)
     }
 
     @Test

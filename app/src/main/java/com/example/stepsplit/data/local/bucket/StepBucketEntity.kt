@@ -30,6 +30,11 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["source", "startEpochSecond"], unique = true),
         Index(value = ["source", "validationState"]),
+        // Incremental classification reads (StepBucketDao.getActiveFrom) filter on start time
+        // across every source, and daily totals (observeForDates) on localDate - without these,
+        // both scan the whole, ever-growing table on every sync. Added in schema version 7.
+        Index(value = ["startEpochSecond"]),
+        Index(value = ["localDate"]),
     ],
 )
 data class StepBucketEntity(

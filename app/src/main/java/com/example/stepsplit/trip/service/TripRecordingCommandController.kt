@@ -1,5 +1,7 @@
 package com.example.stepsplit.trip.service
 
+import android.util.Log
+import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.data.trip.TripLocationClient
 import com.example.stepsplit.data.trip.TripRecordingCoordinator
 import com.example.stepsplit.data.trip.TripRecordingRepository
@@ -243,8 +245,14 @@ class TripRecordingCommandController(
      * between the failure occurring and this function actually running.
      */
     private suspend fun handleRecordingFailure(generation: Long, startId: Int, @Suppress("UNUSED_PARAMETER") throwable: Throwable) {
-        repository.markTripInterruptedIfStillOwned(generation) { isCurrent(generation) }
-        stopIfCurrent(generation, startId)
+        // The stop must happen even if the Room write fails: otherwise the service would keep its
+        // notification up with nothing recording behind it. A trip left ACTIVE by such a failure
+        // is still reconciled later, by shutdown() and by the next launch's reconciliation.
+        try {
+            repository.markTripInterruptedIfStillOwned(generation) { isCurrent(generation) }
+        } finally {
+            stopIfCurrent(generation, startId)
+        }
     }
 
     private fun stopIfCurrent(generation: Long, startId: Int) {
@@ -286,11 +294,22 @@ class TripRecordingCommandController(
             // getActiveTripId() read first - the same atomicity a `claim*` call's own trip
             // resolution+ownership registration gets, so there is no gap in which a trip a newer
             // controller has just claimed could be read here before that claim's ownership is visible.
-            repository.markTripInterruptedIfStillOwned(closedAtGeneration) { true }
+            // reconciliationScope has no handler above it, so a failed Room write must not escape
+            // and crash the app. Nothing is lost: TripRepository.reconcileActiveTripOnLaunch
+            // still marks a trip left ACTIVE without a running service INTERRUPTED on next launch.
+            try {
+                repository.markTripInterruptedIfStillOwned(closedAtGeneration) { true }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "shutdown reconciliation failed (next launch retries): ${e.message}")
+            }
         }
     }
 
     companion object {
+        private const val TAG = "TripCommandController"
+
         /** Documented, bounded cap on the flush Task itself - see [handleFinish]'s doc comment. */
         const val FLUSH_TIMEOUT_MILLIS = 3_000L
         const val FINISH_GRACE_PERIOD_MILLIS = 2_000L

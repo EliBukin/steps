@@ -1,7 +1,12 @@
 package com.example.stepsplit.data.trip
 
+import android.util.Log
+import com.example.stepsplit.BuildConfig
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -24,9 +29,13 @@ class TripRecordingCoordinator(
     private val locationClient: TripLocationClient,
     private val scope: CoroutineScope,
 ) {
-    private var collectingJob: Job? = null
+    /**
+     * Atomic because a failing collector clears it from its own coroutine, concurrently with
+     * [start]/[stop] on the caller's thread - see the compare-and-set in [start].
+     */
+    private val collectingJob = AtomicReference<Job?>(null)
 
-    val isActive: Boolean get() = collectingJob?.isActive == true
+    val isActive: Boolean get() = collectingJob.get()?.isActive == true
 
     /**
      * [onFailure] runs at most once if [locationClient]'s flow itself terminates with a
@@ -37,21 +46,36 @@ class TripRecordingCoordinator(
      * normal stop never spuriously invokes this callback - only a genuine, unexpected failure does.
      * Collection is stopped before [onFailure] runs; the caller (see
      * [com.example.stepsplit.trip.service.TripRecordingService]) is responsible for marking the
-     * affected trip interrupted and tearing down the foreground service/notification.
+     * affected trip interrupted and tearing down the foreground service/notification. An exception
+     * thrown by [onFailure] itself is contained here: [scope] has no handler above it, so letting it
+     * escape would crash the app.
      */
     fun start(tripId: Long, onFailure: suspend (Throwable) -> Unit = {}) {
         if (isActive) return
-        collectingJob = locationClient.locationUpdates()
+        val job = locationClient.locationUpdates()
             .onEach { batch -> repository.recordAcceptedBatch(tripId, batch) }
             .catch { throwable ->
-                collectingJob = null
-                onFailure(throwable)
+                // Clear only this collector's own reference. By the time a failure lands here, a
+                // newer start() may already have replaced it; clearing that one would orphan a live
+                // location subscription that stop() could then never cancel.
+                collectingJob.compareAndSet(currentCoroutineContext()[Job], null)
+                try {
+                    onFailure(throwable)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) Log.w(TAG, "recording failure handler failed: ${e.message}")
+                }
             }
             .launchIn(scope)
+        collectingJob.set(job)
     }
 
     fun stop() {
-        collectingJob?.cancel()
-        collectingJob = null
+        collectingJob.getAndSet(null)?.cancel()
+    }
+
+    private companion object {
+        const val TAG = "TripRecordingCoord"
     }
 }

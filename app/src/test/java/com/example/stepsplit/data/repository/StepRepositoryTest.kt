@@ -11,6 +11,8 @@ import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.domain.classification.BoutClassification
 import com.example.stepsplit.domain.classification.CLASSIFIER_VERSION
 import com.example.stepsplit.domain.classification.ClassificationThresholds
+import com.example.stepsplit.domain.classification.MinuteBucket
+import com.example.stepsplit.domain.classification.WalkClassifier
 import com.example.stepsplit.domain.model.SyncFailureCategory
 import com.example.stepsplit.domain.stats.LifetimeStatsCalculator
 import java.time.Clock
@@ -19,12 +21,17 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -532,7 +539,8 @@ class StepRepositoryTest {
          * this test's own explicit [TestCoroutineScheduler.advanceTimeBy] /
          * [TestCoroutineScheduler.runCurrent] calls.
          */
-        fun newScope(): CoroutineScope = CoroutineScope(StandardTestDispatcher(scheduler)).also { scopes += it }
+        fun newScope(context: CoroutineContext = EmptyCoroutineContext): CoroutineScope =
+            CoroutineScope(StandardTestDispatcher(scheduler) + context).also { scopes += it }
 
         override fun close() {
             scopes.forEach { it.cancel() }
@@ -1682,5 +1690,141 @@ class StepRepositoryTest {
         assertEquals(1600L, breakdown.workoutSteps)
         assertEquals(30L, breakdown.incidentalSteps)
         assertEquals(breakdown.totalSteps, breakdown.workoutSteps + breakdown.incidentalSteps)
+    }
+
+    // ---- Crash safety: availability checks and the finalization timer ----
+
+    @Test
+    fun `an availability check that throws is reported as a failed sync and an Error state, never thrown`() = runTest {
+        val throwingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun checkAvailability(): StepSourceAvailability =
+                throw IllegalStateException("simulated Health Connect IPC failure")
+        }
+        val throwingRepository = StepRepository(database, throwingSource, settingsRepository, clock, noOpTimerScope)
+
+        val result = throwingRepository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        assertEquals(SyncFailureCategory.UNKNOWN, (result as SyncResult.Failed).category)
+        assertEquals(SyncFailureCategory.UNKNOWN, settingsRepository.settings.first().lastSyncFailure?.category)
+        assertTrue(throwingRepository.checkAvailability() is StepSourceAvailability.Error)
+    }
+
+    @Test
+    fun `a subscription check that throws is reported as a failed sync, never thrown`() = runTest {
+        val throwingSource = object : com.example.stepsplit.data.stepsource.StepSource by fakeSource {
+            override suspend fun ensureSubscribed(): Boolean = throw IllegalStateException("simulated Health Connect IPC failure")
+        }
+        val throwingRepository = StepRepository(database, throwingSource, settingsRepository, clock, noOpTimerScope)
+
+        val result = throwingRepository.syncNow()
+
+        assertTrue(result is SyncResult.Failed)
+        assertEquals(0, database.stepBucketDao().count())
+    }
+
+    @Test
+    fun `a finalization timer whose recompute fails never escapes its scope, and the next sync still finalizes the bout`() = runTest {
+        TimerTestHarness().use { harness ->
+            for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
+            val lastActiveMinuteEnd = baseEpoch + 20 * 60L
+            val clock = ArmableThrowOnceClock(harness.scheduler, Instant.ofEpochSecond(lastActiveMinuteEnd + 60))
+            // The production scope (AppContainer's repositoryScope) has no handler, so anything
+            // reaching this one would have crashed the app.
+            val uncaught = CopyOnWriteArrayList<Throwable>()
+            val timerScope = harness.newScope(SupervisorJob() + CoroutineExceptionHandler { _, e -> uncaught += e })
+            val repo = StepRepository(harness.database, fakeSource, settingsRepository, clock, timerScope)
+
+            repo.syncNow()
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
+
+            // The timer's recompute reads the clock exactly once - make that read fail.
+            clock.armToThrowOnCall(1)
+            harness.scheduler.advanceTimeBy(2 * 60_000L)
+            settle(harness)
+
+            assertTrue("a failed timer recompute must not escape: $uncaught", uncaught.isEmpty())
+            assertTrue(currentAutoBouts(harness.database).isEmpty())
+
+            assertTrue(repo.syncNow() is SyncResult.Success)
+            val bout = currentAutoBouts(harness.database).single()
+            assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bout.autoClassification))
+        }
+    }
+
+    // ---- Incremental classification ----
+
+    private fun addWalk(startEpochSecond: Long, minutes: Int) {
+        for (i in 0 until minutes) fakeSource.addInterval(startEpochSecond + i * 60L, startEpochSecond + i * 60L + 60L, 80)
+    }
+
+    /** The bouts a from-scratch classification of every stored minute gives - what an incremental recompute must always match. */
+    private suspend fun fullRecomputeOf(nowEpochSecond: Long) = WalkClassifier.classify(
+        database.stepBucketDao().getAllActive().map { MinuteBucket(it.startEpochSecond, it.steps) },
+        ClassificationThresholds.DEFAULT,
+        nowEpochSecond,
+    )
+
+    private fun List<WalkBoutEntity>.shape() = sortedBy { it.startEpochSecond }.map { listOf(it.startEpochSecond, it.endEpochSecond, it.steps, it.autoClassification) }
+
+    private fun List<com.example.stepsplit.domain.classification.ClassifiedBout>.classifiedShape() =
+        sortedBy { it.startEpochSecond }.map { listOf(it.startEpochSecond, it.endEpochSecond, it.steps, it.classification.name) }
+
+    @Test
+    fun `a routine sync re-classifies only recent bouts, leaves settled ones untouched, and matches a full recompute`() = runTest {
+        val midnight = Instant.parse("2026-03-10T00:00:00Z").epochSecond
+        val morningStart = midnight + 8 * 3600L
+        val afternoonStart = midnight + 16 * 3600L
+        addWalk(morningStart, 20)
+        addWalk(afternoonStart, 15)
+        val firstSyncAt = midnight + 19 * 3600L
+        val mutableClock = MutableClock(Instant.ofEpochSecond(firstSyncAt), ZoneOffset.UTC)
+        val repo = StepRepository(database, fakeSource, settingsRepository, mutableClock, noOpTimerScope)
+        assertTrue(repo.syncNow() is SyncResult.Success)
+        assertEquals(2, currentAutoBouts().size)
+
+        // Late data continuing the afternoon walk after a one-minute pause (within
+        // maxGapMinutes): it must merge into that bout. The morning bout ended hours before this
+        // sync's read window (latest stored minute minus SYNC_OVERLAP) and must not be rewritten.
+        addWalk(afternoonStart + 16 * 60L, 10)
+        val secondSyncAt = firstSyncAt + 1800
+        mutableClock.instant = Instant.ofEpochSecond(secondSyncAt)
+        assertTrue(repo.syncNow() is SyncResult.Success)
+
+        val bouts = currentAutoBouts().sortedBy { it.startEpochSecond }
+        assertEquals(2, bouts.size)
+        val (morning, afternoon) = bouts
+        assertEquals("a settled bout must keep its original row", firstSyncAt, morning.computedAtEpochSecond)
+        assertEquals(secondSyncAt, afternoon.computedAtEpochSecond)
+        assertEquals(afternoonStart, afternoon.startEpochSecond)
+        assertEquals(afternoonStart + 26 * 60L, afternoon.endEpochSecond)
+        assertEquals(25 * 80L, afternoon.steps)
+        assertEquals(fullRecomputeOf(secondSyncAt).classifiedShape(), bouts.shape())
+    }
+
+    @Test
+    fun `a withheld trailing bout that started before the sync window is still classified whole`() = runTest {
+        val midnight = Instant.parse("2026-03-10T00:00:00Z").epochSecond
+        addWalk(midnight + 6 * 3600L, 15)
+        // A seven-hour walk with no long pause, still going at the first sync - so it is withheld
+        // there, and its start lies before the second sync's read window (latest stored minute
+        // minus six hours). Re-classifying only from the window start would cut it in two.
+        val longWalkStart = midnight + 7 * 3600L
+        addWalk(longWalkStart, 7 * 60)
+        val mutableClock = MutableClock(Instant.ofEpochSecond(longWalkStart + 7 * 3600L + 60), ZoneOffset.UTC)
+        val repo = StepRepository(database, fakeSource, settingsRepository, mutableClock, noOpTimerScope)
+        assertTrue(repo.syncNow() is SyncResult.Success)
+        assertEquals("only the morning bout is finalized yet", 1, currentAutoBouts().size)
+
+        addWalk(longWalkStart + 7 * 3600L, 30)
+        val secondSyncAt = longWalkStart + 7 * 3600L + 35 * 60L
+        mutableClock.instant = Instant.ofEpochSecond(secondSyncAt)
+        assertTrue(repo.syncNow() is SyncResult.Success)
+
+        val bouts = currentAutoBouts().sortedBy { it.startEpochSecond }
+        assertEquals(2, bouts.size)
+        assertEquals(longWalkStart, bouts[1].startEpochSecond)
+        assertEquals((7 * 60 + 30) * 80L, bouts[1].steps)
+        assertEquals(fullRecomputeOf(secondSyncAt).classifiedShape(), bouts.shape())
     }
 }

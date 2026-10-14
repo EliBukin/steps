@@ -14,6 +14,7 @@ import com.example.stepsplit.domain.trip.RouteSmoother
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -117,5 +118,52 @@ class TripsViewModelTest {
             "the list distance (${listedTrip.distanceMeters}) must reflect the same wobble reduction as detail, not the raw zig-zag distance ($rawDistance)",
             listedTrip.distanceMeters < rawDistance,
         )
+    }
+
+    private fun tripEntity(startEpochSecond: Long, state: TripState) = TripEntity(
+        startEpochSecond = startEpochSecond,
+        endEpochSecond = if (state == TripState.FINISHED) startEpochSecond + 600 else null,
+        startZoneId = "UTC",
+        state = state.name,
+        distanceMeters = 0.0,
+        lastAcceptedPointEpochSecond = null,
+        createdAtEpochSecond = startEpochSecond,
+    )
+
+    private fun pointEntity(tripId: Long, capturedAtEpochSecond: Long, index: Int) = TripPointEntity(
+        tripId = tripId,
+        capturedAtEpochSecond = capturedAtEpochSecond,
+        latitude = 10.0 + index * 0.0001,
+        longitude = 20.0,
+        accuracyMeters = 10f,
+        altitudeMeters = null,
+        speedMetersPerSecond = 1.4f,
+    )
+
+    @Test
+    fun `point writes for another trip never recompute an already-finished trip's distance`() = runTest {
+        val finishedStart = fixedNow.epochSecond - 7200
+        val finishedId = database.tripDao().insert(tripEntity(finishedStart, TripState.FINISHED))
+        (0 until 5).forEach { database.tripPointDao().insert(pointEntity(finishedId, finishedStart + it * 10L, it)) }
+        // Recording into this trip is what used to re-smooth every finished trip on each fix:
+        // Room invalidates observers per table, so any trip_points write reached all of them.
+        val recordingStart = fixedNow.epochSecond - 600
+        val recordingId = database.tripDao().insert(tripEntity(recordingStart, TripState.ACTIVE))
+
+        val finishedTripComputations = AtomicInteger()
+        val repository = TripRepository(database, clock)
+        val viewModel = TripsViewModel(repository, clock) { points ->
+            if (points.firstOrNull()?.capturedAtEpochSecond == finishedStart) finishedTripComputations.incrementAndGet()
+            RouteSmoother.smooth(RouteSanitizer.sanitize(points).points).distanceMeters
+        }
+        viewModel.uiState.first { it.history.size == 1 }
+
+        (0 until 5).forEach { database.tripPointDao().insert(pointEntity(recordingId, recordingStart + it * 10L, it)) }
+        // A second trip finishing is a positive signal that the history has been re-derived since.
+        val laterStart = fixedNow.epochSecond - 3600
+        database.tripDao().insert(tripEntity(laterStart, TripState.FINISHED))
+        viewModel.uiState.first { it.history.size == 2 }
+
+        assertEquals(1, finishedTripComputations.get())
     }
 }

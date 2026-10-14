@@ -1,6 +1,8 @@
 package com.example.stepsplit.data.repository
 
+import android.util.Log
 import androidx.room.withTransaction
+import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
@@ -82,7 +84,18 @@ class StepRepository(
      */
     private var recoveryPerformed = false
 
-    suspend fun checkAvailability(): StepSourceAvailability = stepSource.checkAvailability()
+    /**
+     * Never throws (other than cancellation) - ViewModels call this straight from
+     * `viewModelScope.launch` with no handler of their own, so a source whose availability check
+     * itself fails is reported as [StepSourceAvailability.Error] rather than crashing the app.
+     */
+    suspend fun checkAvailability(): StepSourceAvailability = try {
+        stepSource.checkAvailability()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        StepSourceAvailability.Error(e.message ?: "Unknown availability check failure")
+    }
 
     suspend fun syncNow(): SyncResult = syncMutex.withLock { syncNowLocked() }
 
@@ -95,18 +108,28 @@ class StepRepository(
         // than being allowed to propagate - see that function's own doc comment.
         ensureClassificationFreshOrFail()?.let { return it }
 
-        val availability = stepSource.checkAvailability()
-        if (availability !is StepSourceAvailability.Available) {
-            // Source availability/permission state is a separate axis from sync/collection
-            // health below - deliberately left untouched here rather than recorded as a sync
-            // failure, so the two concerns never get conflated in the UI.
-            return SyncResult.Unavailable(availability)
+        // Inside its own try for the same reason as the read below: an availability or
+        // subscription check that throws must surface as a structured SyncResult, never escape
+        // syncNow() into a caller's coroutine with no handler.
+        val preReadResult = try {
+            val availability = stepSource.checkAvailability()
+            when {
+                // Source availability/permission state is a separate axis from sync/collection
+                // health below - deliberately left untouched here rather than recorded as a sync
+                // failure, so the two concerns never get conflated in the UI.
+                availability !is StepSourceAvailability.Available -> SyncResult.Unavailable(availability)
+                // Without a live subscription a "successful" read could just be an empty/stale one -
+                // report this as a failure rather than silently recording an empty sync as success.
+                !stepSource.ensureSubscribed() ->
+                    recordFailure(SyncFailureCategory.SUBSCRIPTION_FAILED, "Unable to subscribe to the step data source")
+                else -> null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            recordFailure(SyncFailureCategory.UNKNOWN, e.message ?: "Unknown availability check failure")
         }
-        if (!stepSource.ensureSubscribed()) {
-            // Without a live subscription a "successful" read could just be an empty/stale one -
-            // report this as a failure rather than silently recording an empty sync as success.
-            return recordFailure(SyncFailureCategory.SUBSCRIPTION_FAILED, "Unable to subscribe to the step data source")
-        }
+        preReadResult?.let { return it }
 
         return try {
             val now = clock.instant()
@@ -142,7 +165,9 @@ class StepRepository(
             // throws, or this coroutine is cancelled anywhere in here) both roll back together.
             val recomputeResult = database.withTransaction {
                 database.stepBucketDao().upsertAll(bucketEntities)
-                recomputeClassificationWithinTransaction()
+                // Every minute this sync wrote starts at or after the (minute-aligned) window
+                // start, so only bouts that could reach it need re-classifying.
+                recomputeClassificationWithinTransaction(changedFromEpochSecond = alignToMinute(windowStart.epochSecond))
             }
             rescheduleFinalizationJob(recomputeResult.minuteBuckets, recomputeResult.thresholds, recomputeResult.computedAtEpochSecond)
 
@@ -290,9 +315,10 @@ class StepRepository(
     )
 
     /**
-     * The transactional half of classification recompute: reruns the classifier over the full raw
-     * history (every positive-step minute - see [com.example.stepsplit.data.local.bucket.StepBucketDao.getAllActive])
-     * and atomically replaces the classification cache. Passes the current instant explicitly so
+     * The transactional half of classification recompute: reruns the classifier over the raw
+     * positive-step minutes and atomically replaces the matching part of the classification cache -
+     * the full history when [changedFromEpochSecond] is null, otherwise only the bouts that minutes
+     * changed at or after it could affect (see [incrementalRecomputeStart]). Passes the current instant explicitly so
      * the classifier can decide whether the most recent bout is finished yet (see [WalkClassifier]'s
      * own doc comment) without reading a clock itself - it stays a pure function of its inputs.
      *
@@ -305,20 +331,49 @@ class StepRepository(
      * whatever coroutine it launched) stayed applied, since neither lives inside the transaction
      * itself.
      */
-    private suspend fun recomputeClassificationWithinTransaction(): ClassificationRecomputeResult {
+    private suspend fun recomputeClassificationWithinTransaction(
+        changedFromEpochSecond: Long? = null,
+    ): ClassificationRecomputeResult {
         val thresholds = settingsRepository.settings.first().thresholds
-        val buckets = database.stepBucketDao().getAllActive()
+        val recomputeFrom = changedFromEpochSecond?.let { incrementalRecomputeStart(it, thresholds) } ?: FULL_HISTORY
+        val buckets = database.stepBucketDao().getActiveFrom(recomputeFrom)
         val minuteBuckets = buckets.map { MinuteBucket(it.startEpochSecond, it.steps) }
         val computedAt = clock.instant().epochSecond
         val classified = WalkClassifier.classify(minuteBuckets, thresholds, computedAt)
 
         val entities = classified.map { it.toEntity(computedAt) }
         database.withTransaction {
-            database.walkBoutDao().clearAll()
+            database.walkBoutDao().deleteStartingFrom(recomputeFrom)
             database.walkBoutDao().insertAll(entities)
         }
 
         return ClassificationRecomputeResult(minuteBuckets, thresholds, computedAt)
+    }
+
+    /**
+     * Where an incremental recompute must start when raw minutes only changed at or after
+     * [changedFromEpochSecond] - so a routine sync re-classifies the last few hours instead of the
+     * entire history, which otherwise grows without bound and is reloaded on every sync.
+     *
+     * Active minutes are only ever added or corrected in place, never removed (see
+     * [syncNowLocked]'s upsert-only rule), so a bout whose end sits more than
+     * [ClassificationThresholds.maxGapMinutes] before [changedFromEpochSecond] can never absorb a
+     * changed minute and keeps its stored classification. Every bout is stored except a withheld
+     * trailing one, so stored bouts partition all active minutes up to the newest stored end; the
+     * returned start is always a true bout boundary:
+     * - the earliest start among stored bouts that might still change, or
+     * - if none might, the newest stored bout's end - only the withheld trailing bout (if any) and
+     *   new minutes lie beyond it, or
+     * - [FULL_HISTORY] when nothing is stored yet.
+     *
+     * Only valid while every stored row was computed under the current thresholds and
+     * [CLASSIFIER_VERSION] - threshold changes, recovery, and stale-version recomputes therefore
+     * always run over the full history instead.
+     */
+    private suspend fun incrementalRecomputeStart(changedFromEpochSecond: Long, thresholds: ClassificationThresholds): Long {
+        val stableUpToEnd = changedFromEpochSecond - (thresholds.maxGapMinutes + 1) * 60L
+        val boutDao = database.walkBoutDao()
+        return boutDao.earliestStartOfBoutEndingAfter(stableUpToEnd) ?: boutDao.latestEnd() ?: FULL_HISTORY
     }
 
     /**
@@ -329,8 +384,8 @@ class StepRepository(
      * that transaction has actually committed. [syncNowLocked] does NOT call this - see
      * [recomputeClassificationWithinTransaction]'s own doc comment for why.
      */
-    private suspend fun recomputeClassification() {
-        val result = recomputeClassificationWithinTransaction()
+    private suspend fun recomputeClassification(changedFromEpochSecond: Long? = null) {
+        val result = recomputeClassificationWithinTransaction(changedFromEpochSecond)
         rescheduleFinalizationJob(result.minuteBuckets, result.thresholds, result.computedAtEpochSecond)
     }
 
@@ -364,7 +419,20 @@ class StepRepository(
 
         finalizationJob = repositoryScope.launch {
             delay(delaySeconds * 1000)
-            syncMutex.withLock { recomputeClassification() }
+            syncMutex.withLock {
+                // Nothing above this coroutine handles errors - an escaped exception would crash
+                // the app. A failed finalization loses nothing: the next sync recomputes this
+                // same trailing bout from the same raw data.
+                try {
+                    // No raw data changed since the recompute that scheduled this - only the
+                    // trailing bout around the last active minute can need finalizing.
+                    recomputeClassification(changedFromEpochSecond = lastActiveMinuteStart)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) Log.w(TAG, "trailing-bout finalization failed (next sync retries): ${e.message}")
+                }
+            }
         }
     }
 
@@ -466,6 +534,11 @@ class StepRepository(
          */
         val RETENTION_WINDOW: Duration = Duration.ofDays(10)
         val SYNC_OVERLAP: Duration = Duration.ofHours(6)
+
+        /** A recompute start that covers every stored minute - see [incrementalRecomputeStart]. */
+        private const val FULL_HISTORY = Long.MIN_VALUE
+
+        private const val TAG = "StepRepository"
     }
 }
 

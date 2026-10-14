@@ -46,7 +46,23 @@ class HealthConnectStepSource(
 
     override val id: String = SOURCE_ID
 
-    override suspend fun checkAvailability(): StepSourceAvailability {
+    /**
+     * Never throws (other than cancellation). Health Connect's own permission query is an IPC call
+     * that can fail outright - a `RemoteException` while the provider is updating, an
+     * `IllegalStateException` while its service is unreachable - and every caller of this
+     * (ViewModel coroutines included) relies on getting a state back, not an exception with no
+     * handler above it. Such a failure is reported as [StepSourceAvailability.Error].
+     */
+    override suspend fun checkAvailability(): StepSourceAvailability = try {
+        checkAvailabilityOrThrow()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        debugLog { "checkAvailability: failed exception=${e::class.qualifiedName}: ${e.message}" }
+        StepSourceAvailability.Error(e::class.simpleName ?: "Health Connect check failed")
+    }
+
+    private suspend fun checkAvailabilityOrThrow(): StepSourceAvailability {
         if (!gateway.isOnDeviceStepCountingSupported()) return StepSourceAvailability.ApiUnavailable
         return when (gateway.sdkStatus()) {
             HealthConnectSdkStatus.AVAILABLE ->

@@ -849,6 +849,104 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v6 -> v7 migration ([StepSplitDatabase.MIGRATION_6_7]: adds the
+     * `step_buckets` start-time and local-date indices used by incremental classification and daily
+     * totals) is schema-correct and index-only: a v6 database is built from the exported `6.json`
+     * exactly as the tests above do, seeded with a bucket and a bout, then migrated and validated by
+     * a real [StepSplitDatabase].
+     */
+    @Test
+    fun `v6 to v7 adds the step_buckets indices without touching any data`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v6_v7.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildV6Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                for (index in listOf("index_step_buckets_startEpochSecond", "index_step_buckets_localDate")) {
+                    val indexCursor = migrated.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = '$index'")
+                    assertTrue("$index must exist after MIGRATION_6_7", indexCursor.moveToFirst())
+                    indexCursor.close()
+                }
+
+                val bucketCursor = migrated.query("SELECT source, startEpochSecond, steps, localDate FROM step_buckets WHERE id = 1")
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals("local_recording_api", bucketCursor.getString(0))
+                assertEquals(1_000L, bucketCursor.getLong(1))
+                assertEquals(42L, bucketCursor.getLong(2))
+                assertEquals("1970-01-01", bucketCursor.getString(3))
+                bucketCursor.close()
+
+                val boutCursor = migrated.query("SELECT autoClassification FROM walk_bouts WHERE id = 1")
+                assertTrue(boutCursor.moveToFirst())
+                assertEquals("WORKOUT", boutCursor.getString(0))
+                boutCursor.close()
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /** Same approach as [buildCompleteV5Database], from `6.json`; seeds only the two tables MIGRATION_6_7 could plausibly affect. */
+    private fun buildV6Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/6.json")
+        check(schemaFile.exists()) { "Expected the exported v6 schema at ${schemaFile.absolutePath}" }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(6) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                db.execSQL(indices.getJSONObject(j).getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+            db.execSQL(
+                "INSERT INTO walk_bouts (id, startEpochSecond, endEpochSecond, steps, activeMinutes, elapsedMinutes, " +
+                    "cadence, autoClassification, autoConfidence, autoReasonCode, classifierVersion, computedAtEpochSecond) " +
+                    "VALUES (1, 1000, 2000, 500, 15, 16, 90.0, 'WORKOUT', 0.9, 'MEETS_ALL_THRESHOLDS', 2, 2000)",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"
