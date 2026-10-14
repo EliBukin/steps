@@ -14,7 +14,7 @@ import java.util.Locale
  * the returned string to wherever the user chose to save it.
  */
 internal object GpxExport {
-    private const val CREATOR = "StepSplit"
+    private const val CREATOR = "Steps GPS Route"
 
     /**
      * Serializes [points] as a single GPX 1.1 track (`<trk><trkseg>`), preserving their given
@@ -40,8 +40,8 @@ internal object GpxExport {
         append("    </trkseg>\n  </trk>\n</gpx>\n")
     }
 
-    /** e.g. `stepsplit-trip-2026-08-17.gpx` for a trip that started on that (trip-local) date. */
-    fun suggestedFileName(tripDate: LocalDate): String = "stepsplit-trip-$tripDate.gpx"
+    /** e.g. `steps-gps-route-trip-2026-08-17.gpx` for a trip that started on that (trip-local) date. */
+    fun suggestedFileName(tripDate: LocalDate): String = "steps-gps-route-trip-$tripDate.gpx"
 
     private fun formatTimestamp(epochSecond: Long): String =
         DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochSecond(epochSecond))

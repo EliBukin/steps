@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Bukin\'s Split Step</string>
+    <string name="app_name">Steps GPS Route</string>
 
     <string name="nav_today">Today</string>
     <string name="nav_history">History</string>
@@ -35,7 +35,7 @@
 
     <string name="action_grant_permission">Grant permission</string>
 
-    <string name="health_permissions_rationale_title">How Bukin\'s Split Step uses Health Connect</string>
+    <string name="health_permissions_rationale_title">How Steps GPS Route uses Health Connect</string>
     <string name="health_permissions_rationale_body">This app reads your step count from Health Connect to show daily and weekly totals, and to automatically tell apart workout walks from everyday incidental movement. Step data is never written back to Health Connect, and is never shared with anyone else.</string>
 
     <string name="history_title">Last 7 days</string>
@@ -103,7 +103,7 @@
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
 
     <string name="trip_permission_rationale_title">Location needed for this trip</string>
-    <string name="trip_permission_rationale_message">Bukin\'s Split Step needs precise location to record your trip\'s route. Location is only used while a trip is being recorded, never in the background otherwise.</string>
+    <string name="trip_permission_rationale_message">Steps GPS Route needs precise location to record your trip\'s route. Location is only used while a trip is being recorded, never in the background otherwise.</string>
     <string name="trip_permission_rationale_continue">Continue</string>
     <string name="trip_permission_precise_required_title">Precise location required</string>
     <string name="trip_permission_denied_message">Route recording requires precise (GPS) location. Approximate location isn\'t accurate enough to record a useful route.</string>
