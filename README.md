@@ -5,7 +5,7 @@ An Android app that shows your daily steps and lets you record walking routes wi
 - **Steps** come from the phone's own step counter, through Health Connect. The app shows them
   per day and per week, against a goal, and splits them into *workout* and *incidental* steps.
 - **Trips** are GPS routes you record yourself with Start / Finish. You can view one on a map,
-  save it as a GPX file, or share the GPX file with another app.
+  and save or share it as a GPX file.
 
 There's no account, no cloud backend, no ads and no analytics. Everything is stored on the phone.
 The UI follows the phone's language: English on an English phone, otherwise Hebrew (right to
@@ -22,7 +22,7 @@ left).
 | **History** | The last 7 days as a stacked bar chart (workout + incidental) with the daily goal line, plus an estimated distance per day. |
 | **Stats** | A summary list in two sections. **Steps:** all steps ever, estimated distance (0.75 m per step, not GPS), workouts and workout time, active days, average per active day, best day, marathon equivalents and the next marathon, progress around the Earth and to the Moon (with progress bars), and estimated calories (0.04 kcal per step) and burgers burned (250 kcal each). **GPS trips:** total trips, time and distance, average speed and average pace. |
 | **Trips** | Start, finish or resume a GPS trip, with live time, distance and GPS signal while recording. Below that, the list of finished trips. |
-| **Trip detail** | Start/end time, duration and distance, the route on a map, and the buttons *Save GPX* (to a folder you pick), *Share GPX* (to WhatsApp, Gmail, Telegram, Drive or any app that takes files), *Show whole route* and *Delete trip*. |
+| **Trip detail** | Start/end time, duration and distance, the route on a map, and the buttons *Show whole route*, *Share GPX* and *Delete trip*. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that takes files. |
 | **Settings** | Daily step goal, the workout-detection thresholds (advanced), and the permission and data-collection status. Debug builds also show debug tools (see below). |
 
 ## How it works

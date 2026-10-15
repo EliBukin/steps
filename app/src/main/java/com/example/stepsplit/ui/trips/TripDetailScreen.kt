@@ -1,20 +1,14 @@
 package com.example.stepsplit.ui.trips
 
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -37,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.ui.common.formatClockTimeInZone
@@ -60,8 +53,6 @@ fun TripDetailScreen(
     var showWholeRouteRequests by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val gpxExportSuccessMessage = stringResource(R.string.trip_gpx_export_success)
-    val gpxExportFailureMessage = stringResource(R.string.trip_gpx_export_failure)
     val gpxShareFailureMessage = stringResource(R.string.trip_gpx_share_failure)
     val gpxShareChooserTitle = stringResource(R.string.trip_gpx_share_chooser_title)
 
@@ -75,33 +66,12 @@ fun TripDetailScreen(
     val date = tripDate(trip.startEpochSecond, trip.startZoneId)
     val gpxShareSubject = stringResource(R.string.trip_gpx_share_subject, formatDateLabel(date))
 
-    // Saving neither requests storage permission nor needs a FileProvider - the system document picker
-    // hands back a content:// Uri this app can write to directly via ContentResolver. The points are
-    // snapshotted from uiState right here (on the main thread, synchronously) before the coroutine
-    // starts, so a recomposition racing the background work can never change what gets serialized;
-    // serialization and the ContentResolver write both then run on Dispatchers.Default/IO, off the
-    // main thread, with the coroutine scoped to this composable so leaving the screen cancels it
-    // safely instead of touching a torn-down Toast/Context.
-    val gpxExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val points = uiState.points
-        coroutineScope.launch {
-            val succeeded = withContext(Dispatchers.Default) {
-                runCatching {
-                    val gpx = GpxExport.toGpx(points)
-                    withContext(Dispatchers.IO) {
-                        context.contentResolver.openOutputStream(uri)?.use { stream ->
-                            stream.write(gpx.toByteArray(Charsets.UTF_8))
-                        } ?: error("Unable to open an output stream for $uri")
-                    }
-                }.isSuccess
-            }
-            Toast.makeText(context, if (succeeded) gpxExportSuccessMessage else gpxExportFailureMessage, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Sharing writes the same GPX to the app's cache and opens the system share sheet on it - see
-    // GpxShare. Points are snapshotted and the work runs off the main thread, as for saving above.
+    // Writes the GPX to the app's cache and opens the system share sheet on it, which also offers
+    // "Save file" - see GpxShare. The points are snapshotted from uiState right here (on the main
+    // thread, synchronously) before the coroutine starts, so a recomposition racing the background
+    // work can never change what gets serialized; serialization and the file write run off the main
+    // thread, with the coroutine scoped to this composable so leaving the screen cancels it safely
+    // instead of touching a torn-down Toast/Context.
     val shareGpx: () -> Unit = {
         val points = uiState.points
         val tripId = trip.id
@@ -160,20 +130,22 @@ fun TripDetailScreen(
             )
         }
 
-        // Two rows of two equal-width buttons: the GPX actions, then the map and delete actions.
-        // Compact padding leaves room for the label; a long label (large font sizes, a longer
-        // translation) wraps inside its button, and the row keeps both buttons the same height.
-        val hasRoute = uiState.points.isNotEmpty()
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(modifier = ButtonRowModifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ActionButton(R.string.trip_detail_export_gpx_action, enabled = hasRoute) {
-                    gpxExportLauncher.launch(GpxExport.suggestedFileName(date))
-                }
-                ActionButton(R.string.trip_detail_share_gpx_action, enabled = hasRoute, onClick = shareGpx)
+        // Half the default side padding, so all three buttons fit on one line on a typical phone;
+        // the row still wraps onto a second line rather than clipping on narrow screens, with large
+        // font sizes, or with longer translations.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { showWholeRouteRequests++ },
+                enabled = uiState.points.isNotEmpty(),
+                contentPadding = CompactButtonPadding,
+            ) {
+                Text(stringResource(R.string.trip_detail_map_show_route_action))
             }
-            Row(modifier = ButtonRowModifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ActionButton(R.string.trip_detail_map_show_route_action, enabled = hasRoute) { showWholeRouteRequests++ }
-                ActionButton(R.string.trip_detail_delete_action) { showDeleteConfirm = true }
+            OutlinedButton(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), contentPadding = CompactButtonPadding) {
+                Text(stringResource(R.string.trip_detail_share_gpx_action))
+            }
+            OutlinedButton(onClick = { showDeleteConfirm = true }, contentPadding = CompactButtonPadding) {
+                Text(stringResource(R.string.trip_detail_delete_action))
             }
         }
     }
@@ -195,22 +167,6 @@ fun TripDetailScreen(
 }
 
 private val CompactButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-
-/** Full width, and as tall as the row's tallest button so both buttons match. */
-private val ButtonRowModifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)
-
-/** One of the two equal-width buttons in a row under the map. */
-@Composable
-private fun RowScope.ActionButton(@StringRes label: Int, enabled: Boolean = true, onClick: () -> Unit) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = enabled,
-        contentPadding = CompactButtonPadding,
-        modifier = Modifier.weight(1f).fillMaxHeight(),
-    ) {
-        Text(stringResource(label), textAlign = TextAlign.Center)
-    }
-}
 
 @Composable
 private fun DetailRow(label: String, value: String) {

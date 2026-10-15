@@ -3,16 +3,18 @@ package com.example.stepsplit.ui.trips
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LabeledIntent
 import androidx.core.content.FileProvider
+import com.example.stepsplit.R
 import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
  * Sends a trip's GPX file to another app (WhatsApp, Gmail, Telegram, Drive, a GPX app...) through
- * the system share sheet. Saving is different: the user picks a location and the app writes there.
- * To share, the app has to own the file and hand out a temporary read grant, so the file is written
- * to the app's private cache and offered as a `content://` Uri through [FileProvider]. Nothing
- * leaves the phone until the user picks an app in the sheet, and only that one file is shared.
+ * the system share sheet, which also offers "Save file" ([SaveGpxActivity]). To share, the app
+ * has to own the file and hand out a temporary read grant, so the file is written to the app's
+ * private cache and offered as a `content://` Uri through [FileProvider]. Nothing leaves the phone
+ * until the user picks an app in the sheet, and only that one file is shared.
  */
 internal object GpxShare {
     /** The cache subfolder the FileProvider exposes. Must match `res/xml/gpx_share_paths.xml`. */
@@ -57,6 +59,11 @@ internal object GpxShare {
     /**
      * The share sheet for [file], with [subject] as the subject for apps that use one (email).
      * The read grant travels with the chosen app's intent and covers only this file.
+     *
+     * Its first entry is this app's own "Save file", which opens [SaveGpxActivity] on the same
+     * file. It is passed as an initial intent, which the share sheet has supported since Android's
+     * first versions. Recent Android sheets draw it with the app's own icon and name, and this
+     * label under them, so the label is kept short.
      */
     fun chooserIntent(context: Context, file: File, subject: String, chooserTitle: String): Intent {
         val uri = FileProvider.getUriForFile(context, authority(context), file)
@@ -68,6 +75,14 @@ internal object GpxShare {
             clipData = ClipData.newRawUri(file.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        return Intent.createChooser(send, chooserTitle)
+        val saveFile = LabeledIntent(
+            Intent(context, SaveGpxActivity::class.java).setData(uri),
+            context.packageName,
+            context.getString(R.string.trip_gpx_save_file),
+            R.drawable.ic_save_file,
+        )
+        return Intent.createChooser(send, chooserTitle).apply {
+            putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf<Intent>(saveFile))
+        }
     }
 }

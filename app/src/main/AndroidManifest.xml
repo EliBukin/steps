@@ -80,6 +80,17 @@
         </activity-alias>
 
         <!--
+          The "Save file" entry in the GPX share sheet (see GpxShare and SaveGpxActivity): no
+          screen of its own, it opens the system "save as" picker and closes. Not exported - the
+          share sheet starts it on this app's behalf.
+        -->
+        <activity
+            android:name=".ui.trips.SaveGpxActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!--
           Dedicated foreground service for manually recorded GPS trips - entirely separate from
           the (foreground-only, see SyncScheduler) step-sync pipeline. Not exported: only this app
           ever starts it, always via an explicit Start-trip user action (or the OS restarting an

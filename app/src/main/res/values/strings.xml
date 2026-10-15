@@ -136,11 +136,11 @@
     <string name="trip_detail_end_label">סיום</string>
     <string name="trip_detail_duration_label">משך</string>
     <string name="trip_detail_distance_label">מרחק</string>
-    <string name="trip_detail_export_gpx_action">שמירת GPX</string>
     <string name="trip_gpx_export_success">קובץ ה-GPX נשמר בהצלחה</string>
     <string name="trip_gpx_export_failure">שמירת קובץ ה-GPX נכשלה</string>
     <string name="trip_detail_share_gpx_action">שיתוף GPX</string>
     <string name="trip_gpx_share_chooser_title">שיתוף קובץ GPX</string>
+    <string name="trip_gpx_save_file">שמירת קובץ</string>
     <string name="trip_gpx_share_subject">מסלול GPS מתאריך %1$s</string>
     <string name="trip_gpx_share_failure">לא ניתן היה להכין את קובץ ה-GPX לשיתוף</string>
     <string name="trip_detail_delete_action">מחיקת טיול</string>

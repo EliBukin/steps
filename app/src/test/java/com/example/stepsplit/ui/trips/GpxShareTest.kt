@@ -1,10 +1,13 @@
 package com.example.stepsplit.ui.trips
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LabeledIntent
 import android.net.Uri
 import androidx.core.content.IntentCompat
 import androidx.test.core.app.ApplicationProvider
+import com.example.stepsplit.R
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +31,7 @@ class GpxShareTest {
         context = ApplicationProvider.getApplicationContext()
         cacheDir = context.cacheDir
         File(cacheDir, GpxShare.CACHE_DIRECTORY).deleteRecursively()
+        clearFileProviderCache()
     }
 
     private fun sharedRoot() = File(cacheDir, GpxShare.CACHE_DIRECTORY)
@@ -91,5 +95,23 @@ class GpxShareTest {
         assertTrue(send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
         // The chooser itself must carry the grant too, or the picked app can't open the file.
         assertTrue(chooser.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+    }
+
+    @Test
+    fun `the share sheet's first entry is Save file, which opens SaveGpxActivity on the same file`() {
+        val file = GpxShare.writeFile(cacheDir, tripId = 9, fileName = "steps-gps-route-trip-2026-10-15.gpx", gpx = "<gpx/>", nowMillis = now)
+
+        val chooser = GpxShare.chooserIntent(context, file, subject = "subject", chooserTitle = "title")
+
+        @Suppress("DEPRECATION") // The typed overload needs API 33; this runs on every version.
+        val initial = chooser.getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS)!!
+        assertEquals(1, initial.size)
+        val save = initial[0] as LabeledIntent
+        assertEquals("Save file", save.nonLocalizedLabel)
+        assertEquals(context.packageName, save.sourcePackage)
+        assertEquals(R.drawable.ic_save_file, save.iconResource)
+        assertEquals(ComponentName(context, SaveGpxActivity::class.java), save.component)
+        val send = IntentCompat.getParcelableExtra(chooser, Intent.EXTRA_INTENT, Intent::class.java)!!
+        assertEquals(IntentCompat.getParcelableExtra(send, Intent.EXTRA_STREAM, Uri::class.java), save.data)
     }
 }
