@@ -1,113 +1,164 @@
 # Steps GPS Route
 
-An Android app that shows your daily steps and lets you record walking routes with GPS.
+An Android app with two jobs: it shows **how much you walk each day**, and it **records GPS routes**
+of your trips so you can see them on a map and export them as GPX files.
 
-- **Steps** come from the phone's own step counter, through Health Connect. The app shows them
-  per day and per week, against a goal, and splits them into *workout* and *incidental* steps.
-- **Trips** are GPS routes you record yourself with Start / Finish. You can view one on a map,
-  and save or share it as a GPX file.
+- **Steps.** Your daily and weekly step counts, a daily goal, the last 7 days, and lifetime stats.
+- **GPS trips.** Start a trip, and the app records your route until you finish it. Afterwards you
+  can view the route on a map, and save or share it as a GPX file to use in other apps.
 
 There's no account, no cloud backend, no ads and no analytics. Everything is stored on the phone.
-The UI follows the phone's language: English on an English phone, otherwise Hebrew (right to
-left).
+The app is in English on an English phone, and in Hebrew (right to left) otherwise.
 
-> The project and its package are still called **StepSplit** (`com.example.stepsplit`). Only the
-> name shown to users changed.
+**Privacy policy:** <https://elibukin.github.io/steps/privacy-policy.html>
+
+## Why this app
+
+I built it for my own use:
+
+- **Daily movement.** I want to see how much I move every day, at a glance.
+- **Hikes and nature walks.** I record the route of a hike or a walk in nature with the GPS tracker.
+- **4x4 trips.** I also use the GPS tracker on off-road trips with my jeep. (Fast driving isn't
+  supported yet; see *Known limitations*.)
+- **GPX for other apps.** Exporting a trip as GPX is the important part: it lets me open the route
+  in other map and navigation apps.
+
+## Not a health app
+
+Steps GPS Route is **not** a health, fitness-coaching or medical app. It gives no health advice, and
+nothing in it is meant to diagnose, treat or track any health condition.
+
+It reads your step count from Android's Health Connect only because that's where Android keeps the
+phone's step count.
+
+Some stats are there just for fun and are deliberately rough. Don't rely on them:
+
+- calories burned (a flat 0.04 kcal per step);
+- burgers burned;
+- distance estimated from steps (0.75 m per step);
+- progress around the Earth and to the Moon.
+
+The split into *workout* and *incidental* steps is a rule of thumb too.
 
 ## Screens
 
 | Screen | What it shows |
 |---|---|
-| **Today** | Today's total, workout and incidental steps. Progress toward the daily goal, this week's total and the weekly goal (daily goal × 7; weeks start on Sunday). The time of the last sync, plus a banner when step data isn't available or a sync failed. |
-| **History** | The last 7 days as a stacked bar chart (workout + incidental) with the daily goal line, plus an estimated distance per day. |
-| **Stats** | A summary list in two sections. **Steps:** all steps ever, estimated distance (0.75 m per step, not GPS), workouts and workout time, active days, average per active day, best day, marathon equivalents and the next marathon, progress around the Earth and to the Moon (with progress bars), and estimated calories (0.04 kcal per step) and burgers burned (250 kcal each). **GPS trips:** total trips, time and distance, average speed and average pace. With *Keep deleted trips in Stats* on, these include deleted trips, and *Total trips* says how many. |
-| **Trips** | Start, finish or resume a GPS trip, with live time, distance and GPS signal while recording. Below that, the list of finished trips. |
-| **Trip detail** | Start/end time, duration and distance, the route on a map, and the buttons *Show whole route*, *Share GPX* and *Delete trip*. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that takes files. |
-| **Settings** | Daily step goal, the workout-detection thresholds (advanced), *Keep deleted trips in Stats* (see below), and the permission and data-collection status. Debug builds also show debug tools (see below). |
+| **Today** | Today's steps (total, workout and incidental) and progress toward the daily goal. This week's total and the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
+| **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
+| **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** number of trips, total time and distance, average speed and average pace. |
+| **Trips** | Start, finish or resume a trip, with live time, distance and GPS signal while recording. Below that, your finished trips. |
+| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map. Buttons: *Show whole route*, *Share GPX* and *Delete trip*. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
 
-### Step counting
+### Steps
 
-- **Source.** Health Connect's on-device step counting. It needs Android 14 or later with Health
-  Connect's step counting available (SDK extension 20+). This is the only step source, and there's
-  no fallback: on an unsupported phone the app says step tracking isn't available.
-- **Collecting.** The phone counts steps all the time, whether the app is open or not. The app
-  only *imports* the counts while it's in the foreground: when it opens or resumes, about once a
-  minute while Today is on screen, and right after you grant permission. There's no background
-  job.
-- **Catch-up.** Each sync re-reads the last 6 hours, so late or corrected counts are picked up.
-  The first sync, or one after a long break, reaches back **30 days**. If the app goes unopened
-  for more than 30 days, steps from before that are never imported.
-- **Storage.** Steps are stored as one row per minute that had steps. A sync only adds or
-  corrects minutes and never deletes any, so a short or empty read can't erase history.
-- **Workout vs. incidental.** This is a rule of thumb, not a measurement:
+- **Where steps come from.** Android's Health Connect. It holds the step count from the phone's
+  built-in step counter, plus steps from any other app or watch you've connected to Health Connect.
+  The app reads Health Connect's combined total and never writes anything back.
+- **Requirements.** Android 14 or later, with Health Connect's step counting available. On an older
+  or unsupported phone, the app says step tracking isn't available; trips still work.
+- **When steps update.** The phone counts steps all the time, whether the app is open or not. The
+  app copies the counts in only while it's open: when you open it, about once a minute while
+  *Today* is on screen, and right after you grant permission. It never runs in the background.
+- **Catching up.** Each update re-reads the last 6 hours, so late or corrected counts are picked
+  up. The first update, or one after a long break, reaches back **30 days**. Steps older than that
+  are never copied in, so open the app at least once a month.
+- **Storage.** The app keeps one record per minute that had steps. An update only adds or corrects
+  minutes and never deletes any, so a bad or empty read can't erase your history.
+- **Workout vs. incidental.**
   1. Minutes with steps are grouped into walks. A pause of up to 2 minutes stays inside the walk.
-  2. A walk counts only once it has been idle for 3 minutes.
-  3. It's a **workout** if it lasts at least 10 minutes, has at least 8 minutes with steps, at
-     least 600 steps, and averages at least 60 steps per minute. Otherwise it's **incidental**.
+  2. A walk is labelled once you've been still for 3 minutes.
+  3. It's a **workout** if it lasted at least 10 minutes, had at least 8 minutes with steps and at
+     least 600 steps, and averaged at least 60 steps per minute. Otherwise it's **incidental**.
 
-  All of these limits can be changed in Settings. Labelling never changes the total: every
-  counted step is either workout or incidental.
+  You can change these limits in Settings. The labels never change the total: every step counts
+  as either workout or incidental.
 
 ### GPS trips
 
-- **Recording.** You start a trip in the app. Recording then runs in a foreground service with an
-  ongoing notification, so it continues with the screen off or in another app. You can finish
-  from the notification or from the app.
-- **Interruptions.** If Android stops the app during a trip, the next launch shows the trip as
-  *interrupted*. You can resume it (leaving a gap in the route) or finish it at its last point.
-- **Fixes the app keeps.** Location is requested every 10 seconds at high accuracy. A fix is
-  rejected if it's less accurate than 30 m, older than 2 minutes, implies more than 6 m/s
-  (≈ 22 km/h), contradicts the phone's reported speed, or is only drift while standing still.
-- **Displayed route.** Before display, distance and GPX export, the stored points are cleaned of
-  outliers and smoothed. All three use the same processed route, so they always agree.
-- **Deleting a trip.** Deleting removes the trip and its route. With *Keep deleted trips in Stats*
-  on (off by default), a finished trip's date, duration and distance are kept, without any
-  location, and Stats keeps counting it. Turning the setting off hides those trips from Stats until
-  it's turned on again; trips deleted while it's off are gone from Stats for good.
-- **Map.** Tiles come from [OpenFreeMap](https://openfreemap.org) (free, no API key) via
-  MapLibre. The map supports pan, pinch zoom, double-tap zoom and rotation; tilt is off. The scale
-  bar is always metric. Without internet, the screen shows an offline outline of the route
-  instead, with a *Retry map* button.
+- **Recording.** You start a trip yourself. While it records, Android shows an ongoing
+  notification, and recording continues with the screen off or while you use other apps. You can
+  finish from the notification or from the app.
+- **Interruptions.** If Android stops the app during a trip, the next time you open it the trip is
+  marked *interrupted*. You can resume it (the route will have a gap) or finish it at its last
+  point.
+- **Which GPS points are kept.** The app asks for a location every 10 seconds at high accuracy. It
+  skips a point that is less accurate than 30 m, older than 2 minutes, implies moving faster than
+  6 m/s (about 22 km/h), contradicts the speed the phone reports, or is just GPS drift while you
+  stand still. The limits are tuned for walking and hiking.
+- **The route you see.** Before the route is drawn, measured or exported, stray points are removed
+  and the line is smoothed. The map, the distance and the GPX file all use this same route, so
+  they always agree.
+- **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
+  sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app.
+- **Deleting a trip.** Deleting removes the trip and its route. If *Keep deleted trips in Stats*
+  is on (it's off by default), the app first keeps the trip's date, duration and distance, with
+  no location, and Stats keeps counting it. Turning the setting off hides those trips from Stats
+  until you turn it on again. Trips deleted while it's off are gone from Stats for good.
+- **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org). You can pan, zoom and
+  rotate the map; tilting is off. The scale bar is always in meters and kilometers. Without
+  internet, the screen shows a plain outline of the route instead, with a *Retry map* button.
 
-### The two features are separate
+### Steps and trips are separate
 
-Step counting and GPS trips share only the database file, the app process and navigation. Trip
-code never reads or writes step data, and step code never uses location. A trip doesn't affect
-your step counts, and deleting one never removes steps. Two test files enforce this:
-`ArchitectureInvariantsTest` scans the code for cross-imports, and `StepGpsSeparationTest` runs
-both features together.
+Recording a trip doesn't change your step counts, and deleting a trip never removes steps. Trip
+code never reads step data, and step code never uses location. The two share only the app's
+database file and its screens.
 
 ## Permissions
 
 | Permission | Used for | When it's asked |
 |---|---|---|
-| Health Connect *Read steps* | Step counting | When you tap the grant button on Today |
-| Fine and coarse location | GPS trips (precise location is required) | When you tap *Start trip* or *Resume* |
-| Notifications | The recording notification | With location, on Android 13+. Recording still works if you deny it. |
+| Health Connect: *Read steps* | Your step counts | When you tap the grant button on *Today* |
+| Precise location | Recording a trip's route | When you tap *Start trip* or *Resume* |
+| Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |
-| Internet | Map tiles on the trip detail screen only | Granted automatically |
+| Internet | Loading the map on a trip's screen | Granted automatically |
 
-The app never asks for background location.
+The app never asks for background location. It uses location only while a trip is recording.
 
 ## Privacy and data
 
-- Everything stays in a local Room database (`stepsplit.db`) and local settings files.
-  `allowBackup` is off, so this data isn't included in Android's cloud backup.
-- A trip's GPX file leaves the app only when you save or share it yourself. Sharing writes a
-  copy to the app's private cache and gives only the app you pick permission to read it; copies
-  older than a day are removed the next time you share.
-- The app's own network traffic is only map-tile requests, made while a trip's detail screen is
-  open. They don't include your GPS points, but like any map they reveal which area you're viewing
-  (plus the usual IP address and similar request details) to OpenFreeMap.
+The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.html>. In short:
+
+- Steps, trips and settings are stored only on the phone. Android's cloud backup is turned off for
+  this app.
+- The app sends nothing to the developer or anyone else. Its only internet traffic is loading map
+  tiles from OpenFreeMap while a trip's screen is open. Those requests don't include your GPS
+  points, but like any map they show OpenFreeMap which area you're looking at, and your IP address.
+- A GPX file leaves the app only when you save or share it yourself.
 - Step data is never written back to Health Connect.
 
-## Project structure
+## Known limitations
 
-Single module (`app`), Kotlin + Jetpack Compose, with dependencies wired by hand
-(`di/AppContainer.kt`, no DI framework). Data flows from Room/DataStore through a repository into
-ViewModels with `StateFlow`, and from there to the Compose screens.
+- **Fast trips stop recording.** Points are checked against the last point the app kept. When you
+  move faster than about 22 km/h, such as in a car, on a bus or on a fast 4x4 stretch, new points
+  keep being skipped until you slow down for a while. The route then shows a straight jump.
+- **"Searching" while standing still.** The GPS status can show *Searching* after 30 seconds
+  without moving, because no new points are kept then.
+- **Steps update only while the app is open.** The phone keeps counting, but if you don't open
+  the app for more than 30 days, the steps from before that are never copied in.
+- **Android 14+ only for steps.** Older phones get no step counting.
+- **Workout vs. incidental is a guess.** A long, brisk walk to the shop counts as a workout.
+- **A trip stops if Android closes the app.** It stays *interrupted* until you resume it.
+- **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
+  tap *Start trip* again.
+- **Brief "invalid goal" message on launch.** When the app first opens, *Today* can show zeros and
+  "Enter a valid step count" for a moment until the data loads.
+
+## For developers
+
+> The project and its package are still called **StepSplit** (`com.example.stepsplit`). Only the
+> name shown to users changed.
+
+### Project structure
+
+A single `app` module in Kotlin and Jetpack Compose. Dependencies are wired by hand in
+`di/AppContainer.kt` (no DI framework). Data flows from Room and DataStore through repositories into
+ViewModels (`StateFlow`), and from there to the Compose screens.
 
 ```
 app/src/main/java/com/example/stepsplit/
@@ -120,13 +171,16 @@ app/src/main/java/com/example/stepsplit/
     repository/     StepRepository: imports, stores and classifies steps
     trip/           TripRepository, GPS location client, recording coordinator
     local/          Room database, entities and DAOs
-    settings/       DataStore settings (goal, thresholds, last sync)
+    settings/       DataStore settings (goal, thresholds, last sync, keep deleted trips)
   trip/service/     The trip recording foreground service and its command handling
   sync/             Cancels a background job left by older app versions (nothing is scheduled)
   debug/            Debug-only sample data and device diagnostics
 ```
 
-## Build, install, test
+The privacy policy's source is `docs/privacy-policy.html`. It's published on GitHub Pages from the
+`gh-pages` branch, as `index.html` and `privacy-policy.html`.
+
+### Build, install, test
 
 You need **JDK 21** (the unit tests need it; building alone works with JDK 17) and the Android SDK
 with platform 36.
@@ -138,18 +192,24 @@ with platform 36.
 ./gradlew lintDebug
 ```
 
-- **Tests.** About 450 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
+- **Tests.** About 480 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
   run under Robolectric. There are no instrumented (on-device) tests.
-- **Real phone.** Step counting needs a real phone with Health Connect step counting, since an
-  emulator reports step tracking as unavailable.
-- **Emulator.** Trips can be tested on an emulator by feeding simulated positions with
+- **Step separation.** `ArchitectureInvariantsTest` scans the code to make sure step and trip code
+  don't import each other, and `StepGpsSeparationTest` runs both features together.
+- **Real phone.** Step counting needs a real phone with Health Connect step counting. An emulator
+  reports step tracking as unavailable.
+- **Emulator.** Trips can be tested on an emulator by feeding it positions with
   `adb emu geo fix <longitude> <latitude>`.
 - **Debug tools.** Debug builds (`com.example.stepsplit.debug`) add a *Debug tools* section in
-  Settings: *Generate sample data* (a week of fake steps, stored under a separate source so they
-  never count toward lifetime stats), a step source check, and device diagnostics. None of this
-  exists in release builds.
+  Settings:
+  - *Generate sample data*: a week of fake steps, stored under a separate source so they never
+    count toward lifetime stats;
+  - a step source check;
+  - device diagnostics.
 
-## Database
+  None of this exists in release builds.
+
+### Database
 
 - **Version.** Room schema version **8**. Each version's schema is exported to `app/schemas/` and
   committed. Migrations never delete steps or change step counts; the 5→6 migration did drop the
@@ -163,21 +223,3 @@ with platform 36.
 - **Step source id.** Steps from Health Connect are stored under the source id
   `local_recording_api`, the old source's id, so earlier history stayed in place without a
   migration.
-
-## Known limitations
-
-- **Steps only update while the app is open.** Counting itself never stops; after more than 30
-  days without opening the app, older steps are never imported.
-- **Android 14+ only for steps.** Older phones get no step counting and no fallback.
-- **Workout vs. incidental is a guess.** A long brisk walk to a shop counts as a workout.
-- **Fast movement stalls GPS recording.** Fixes are only compared with the last accepted one. So
-  after fast movement (bus, bike) or one bad fix that got through, new fixes keep being rejected
-  until enough time passes.
-- **GPS can read "Searching" while you stand still.** This happens after 30 seconds without
-  movement, because no new points are accepted then.
-- **Killed trips stop recording.** If Android stops the app mid-trip, recording stops until you
-  resume.
-- **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
-  the answer is lost and you need to tap *Start trip* again.
-- **Brief "invalid goal" text on launch.** On a cold start, Today shows zeros and "Enter a valid
-  step count" for a moment until data loads.
