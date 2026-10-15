@@ -4,12 +4,18 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.domain.model.TripState
+import com.example.stepsplit.domain.trip.DeletedTripTotals
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
+import com.example.stepsplit.domain.trip.RouteSanitizer
+import com.example.stepsplit.domain.trip.RouteSmoother
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -367,6 +373,69 @@ class TripRepositoryTest {
 
         assertNull(repository.getTrip(tripId))
         assertTrue(repository.getTripPoints(tripId).isEmpty())
+    }
+
+    /** A FINISHED trip ten minutes long, with a short three-point route. */
+    private suspend fun finishedTripWithRoute(): Long {
+        val tripId = repository.startTrip()
+        repository.recordAcceptedBatch(
+            tripId,
+            listOf(
+                sample(32.0, 34.0, fixedNow.epochSecond + 10),
+                sample(32.0001, 34.0, fixedNow.epochSecond + 20),
+                sample(32.0002, 34.0, fixedNow.epochSecond + 30),
+            ),
+        )
+        repository.finishTrip(tripId, fixedNow.epochSecond + 600)
+        return tripId
+    }
+
+    @Test
+    fun `deleting with keepInStats keeps the trip's start, duration and displayed distance, but not its route`() = runTest {
+        val tripId = finishedTripWithRoute()
+        val displayedMeters = RouteSmoother.smooth(RouteSanitizer.sanitize(repository.getTripPoints(tripId)).points).distanceMeters
+        assertTrue(displayedMeters > 0.0)
+
+        repository.deleteTrip(tripId, keepInStats = true)
+
+        assertNull(repository.getTrip(tripId))
+        assertTrue(repository.getTripPoints(tripId).isEmpty())
+        val kept = database.deletedTripTotalsDao().observeAll().first().single()
+        assertEquals(fixedNow.epochSecond, kept.startEpochSecond)
+        assertEquals(600L, kept.durationSeconds)
+        assertEquals(displayedMeters, kept.distanceMeters, 1e-9)
+        assertEquals(listOf(DeletedTripTotals(600L, displayedMeters)), repository.observeDeletedTripTotals().first())
+    }
+
+    @Test
+    fun `deleting without keepInStats keeps nothing`() = runTest {
+        val tripId = finishedTripWithRoute()
+
+        repository.deleteTrip(tripId)
+
+        assertNull(repository.getTrip(tripId))
+        assertTrue(repository.observeDeletedTripTotals().first().isEmpty())
+    }
+
+    @Test
+    fun `a trip that is not finished is never kept, even with keepInStats`() = runTest {
+        val tripId = repository.startTrip()
+
+        repository.deleteTrip(tripId, keepInStats = true)
+
+        assertNull(repository.getTrip(tripId))
+        assertTrue(repository.observeDeletedTripTotals().first().isEmpty())
+    }
+
+    @Test
+    fun `deleting the same trip twice at once keeps it only once`() = runTest {
+        val tripId = finishedTripWithRoute()
+
+        coroutineScope {
+            repeat(2) { launch(Dispatchers.Default) { repository.deleteTrip(tripId, keepInStats = true) } }
+        }
+
+        assertEquals(1, repository.observeDeletedTripTotals().first().size)
     }
 
     @Test

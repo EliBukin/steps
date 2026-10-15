@@ -19,6 +19,8 @@ import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleDao
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleEntity
+import com.example.stepsplit.data.local.trip.DeletedTripTotalsDao
+import com.example.stepsplit.data.local.trip.DeletedTripTotalsEntity
 import com.example.stepsplit.data.local.trip.TripDao
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointDao
@@ -54,8 +56,9 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         TemporalContinuityStateEntity::class,
         MotionEvidenceEntity::class,
         StepCounterSampleEntity::class,
+        DeletedTripTotalsEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -63,6 +66,7 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun walkBoutDao(): WalkBoutDao
     abstract fun tripDao(): TripDao
     abstract fun tripPointDao(): TripPointDao
+    abstract fun deletedTripTotalsDao(): DeletedTripTotalsDao
     abstract fun activityIntervalDao(): ActivityIntervalDao
     abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
     abstract fun motionEvidenceDao(): MotionEvidenceDao
@@ -260,7 +264,22 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
-        internal val MIGRATIONS = arrayOf<Migration>(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+        /**
+         * v7 -> v8: adds the empty `deleted_trip_totals` table ([DeletedTripTotalsEntity]) that
+         * keeps a deleted trip's time and distance in Stats when the user asked for that. Purely
+         * additive: no existing table or row is touched.
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `deleted_trip_totals` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`startEpochSecond` INTEGER NOT NULL, `durationSeconds` INTEGER NOT NULL, `distanceMeters` REAL NOT NULL)",
+                )
+            }
+        }
+        internal val MIGRATIONS = arrayOf<Migration>(
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+        )
 
         fun build(context: Context): StepSplitDatabase =
             Room.databaseBuilder(context.applicationContext, StepSplitDatabase::class.java, DATABASE_NAME)

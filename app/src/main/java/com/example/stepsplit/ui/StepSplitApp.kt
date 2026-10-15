@@ -144,6 +144,7 @@ fun StepSplitApp(
                     onSetDailyGoal = viewModel::setDailyGoal,
                     onSetThresholds = viewModel::setThresholds,
                     onResetThresholds = viewModel::resetThresholds,
+                    onSetKeepDeletedTripsInStats = viewModel::setKeepDeletedTripsInStats,
                     onGenerateSampleData = {
                         coroutineScope.launch { DebugDataSeeder.seed(container) }
                     },

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -18,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.BuildConfig
@@ -46,11 +49,12 @@ fun SettingsScreen(
     onSetDailyGoal: (Long) -> Unit,
     onSetThresholds: (ClassificationThresholds) -> Unit,
     onResetThresholds: () -> Unit,
+    onSetKeepDeletedTripsInStats: (Boolean) -> Unit,
     onGenerateSampleData: () -> Unit,
     onRunStepSourceCheck: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Status, SettingsSection.Debug) }
+    val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Debug) }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -62,6 +66,7 @@ fun SettingsScreen(
             when (section) {
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)
                 SettingsSection.Advanced -> AdvancedThresholdsSection(uiState.thresholds, onSetThresholds, onResetThresholds)
+                SettingsSection.Trips -> TripsSection(uiState.keepDeletedTripsInStats, onSetKeepDeletedTripsInStats)
                 SettingsSection.Status -> StatusSection(uiState)
                 SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
             }
@@ -69,7 +74,7 @@ fun SettingsScreen(
     }
 }
 
-private enum class SettingsSection { Goals, Advanced, Status, Debug }
+private enum class SettingsSection { Goals, Advanced, Trips, Status, Debug }
 
 @Composable
 private fun GoalsSection(uiState: SettingsUiState, onSetDailyGoal: (Long) -> Unit) {
@@ -159,6 +164,33 @@ private fun AdvancedThresholdsSection(
 
             Text(text = stringResource(R.string.settings_classification_limitation_title), style = MaterialTheme.typography.titleSmall)
             Text(text = stringResource(R.string.settings_classification_limitation_note), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** GPS trip settings. A switch here, unlike the thresholds card's Show / Hide: it really turns something on and off. */
+@Composable
+private fun TripsSection(keepDeletedTripsInStats: Boolean, onSetKeepDeletedTripsInStats: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.settings_trips_section_title), style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth().toggleable(
+                    value = keepDeletedTripsInStats,
+                    role = Role.Switch,
+                    onValueChange = onSetKeepDeletedTripsInStats,
+                ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.settings_keep_deleted_trips_label),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f).padding(end = 12.dp),
+                )
+                // The whole row toggles (and is what a screen reader announces), so the switch itself takes no clicks.
+                Switch(checked = keepDeletedTripsInStats, onCheckedChange = null)
+            }
+            Text(stringResource(R.string.settings_keep_deleted_trips_note), style = MaterialTheme.typography.bodySmall)
         }
     }
 }

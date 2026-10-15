@@ -2,15 +2,20 @@ package com.example.stepsplit.data.trip
 
 import androidx.room.withTransaction
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.local.trip.DeletedTripTotalsEntity
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.trip.DeletedTripTotals
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSampleDecision
 import com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy
+import com.example.stepsplit.domain.trip.RouteSanitizer
+import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.finishedTripDurationSeconds
 import java.time.Clock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -602,8 +607,38 @@ class TripRepository(
     suspend fun getTripPoints(tripId: Long): List<TripPoint> =
         database.tripPointDao().getAllForTrip(tripId).map { it.toDomain() }
 
-    /** Cascades to every point of this trip - see [TripPointEntity]'s foreign key. */
-    suspend fun deleteTrip(tripId: Long) = database.tripDao().deleteById(tripId)
+    /** The kept time and distance of trips deleted while "Keep deleted trips in Stats" was on - see [deleteTrip]. */
+    fun observeDeletedTripTotals(): Flow<List<DeletedTripTotals>> =
+        database.deletedTripTotalsDao().observeAll().map { rows -> rows.map { DeletedTripTotals(it.durationSeconds, it.distanceMeters) } }
+
+    /**
+     * Deletes [tripId] with its route (the delete cascades to every point - see [TripPointEntity]'s
+     * foreign key).
+     *
+     * With [keepInStats], a FINISHED trip's start, duration and distance are first kept in
+     * `deleted_trip_totals`, in the same transaction as the delete, so Stats can keep counting it.
+     * The distance is the one the app displays, from the same `RouteSanitizer -> RouteSmoother`
+     * pipeline as the Trips list and the trip screen, so Stats doesn't change when the trip is
+     * deleted. The transaction checks the trip still exists, so a second delete of the same trip
+     * (a double tap) can never keep it twice.
+     */
+    suspend fun deleteTrip(tripId: Long, keepInStats: Boolean = false) {
+        val trip = database.tripDao().getById(tripId) ?: return
+        val kept = if (keepInStats && trip.state == TripState.FINISHED.name) {
+            DeletedTripTotalsEntity(
+                startEpochSecond = trip.startEpochSecond,
+                durationSeconds = finishedTripDurationSeconds(trip.startEpochSecond, trip.endEpochSecond),
+                distanceMeters = RouteSmoother.smooth(RouteSanitizer.sanitize(getTripPoints(tripId)).points).distanceMeters,
+            )
+        } else {
+            null
+        }
+        database.withTransaction {
+            if (database.tripDao().getById(tripId) == null) return@withTransaction
+            kept?.let { database.deletedTripTotalsDao().insert(it) }
+            database.tripDao().deleteById(tripId)
+        }
+    }
 
     private companion object {
         /** Generous enough to tolerate ordinary GPS-vs-device clock drift, tight enough that a corrupt/bogus far-future timestamp can never become the last-accepted point - see [recordAcceptedBatch]'s doc comment. */

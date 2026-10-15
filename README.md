@@ -20,10 +20,10 @@ left).
 |---|---|
 | **Today** | Today's total, workout and incidental steps. Progress toward the daily goal, this week's total and the weekly goal (daily goal × 7; weeks start on Sunday). The time of the last sync, plus a banner when step data isn't available or a sync failed. |
 | **History** | The last 7 days as a stacked bar chart (workout + incidental) with the daily goal line, plus an estimated distance per day. |
-| **Stats** | A summary list in two sections. **Steps:** all steps ever, estimated distance (0.75 m per step, not GPS), workouts and workout time, active days, average per active day, best day, marathon equivalents and the next marathon, progress around the Earth and to the Moon (with progress bars), and estimated calories (0.04 kcal per step) and burgers burned (250 kcal each). **GPS trips:** total trips, time and distance, average speed and average pace. |
+| **Stats** | A summary list in two sections. **Steps:** all steps ever, estimated distance (0.75 m per step, not GPS), workouts and workout time, active days, average per active day, best day, marathon equivalents and the next marathon, progress around the Earth and to the Moon (with progress bars), and estimated calories (0.04 kcal per step) and burgers burned (250 kcal each). **GPS trips:** total trips, time and distance, average speed and average pace. With *Keep deleted trips in Stats* on, these include deleted trips, and *Total trips* says how many. |
 | **Trips** | Start, finish or resume a GPS trip, with live time, distance and GPS signal while recording. Below that, the list of finished trips. |
 | **Trip detail** | Start/end time, duration and distance, the route on a map, and the buttons *Show whole route*, *Share GPX* and *Delete trip*. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that takes files. |
-| **Settings** | Daily step goal, the workout-detection thresholds (advanced), and the permission and data-collection status. Debug builds also show debug tools (see below). |
+| **Settings** | Daily step goal, the workout-detection thresholds (advanced), *Keep deleted trips in Stats* (see below), and the permission and data-collection status. Debug builds also show debug tools (see below). |
 
 ## How it works
 
@@ -62,6 +62,10 @@ left).
   (≈ 22 km/h), contradicts the phone's reported speed, or is only drift while standing still.
 - **Displayed route.** Before display, distance and GPX export, the stored points are cleaned of
   outliers and smoothed. All three use the same processed route, so they always agree.
+- **Deleting a trip.** Deleting removes the trip and its route. With *Keep deleted trips in Stats*
+  on (off by default), a finished trip's date, duration and distance are kept, without any
+  location, and Stats keeps counting it. Turning the setting off hides those trips from Stats until
+  it's turned on again; trips deleted while it's off are gone from Stats for good.
 - **Map.** Tiles come from [OpenFreeMap](https://openfreemap.org) (free, no API key) via
   MapLibre. The map supports pan, pinch zoom, double-tap zoom and rotation; tilt is off. The scale
   bar is always metric. Without internet, the screen shows an offline outline of the route
@@ -147,10 +151,10 @@ with platform 36.
 
 ## Database
 
-- **Version.** Room schema version **7**. Each version's schema is exported to `app/schemas/` and
+- **Version.** Room schema version **8**. Each version's schema is exported to `app/schemas/` and
   committed. Migrations never delete steps or change step counts; the 5→6 migration did drop the
   old manual-relabelling table (`session_overrides`).
-- **Migration tests.** Each step from 1→7 has a test in `StepSplitDatabaseMigrationTest`. It
+- **Migration tests.** Each step from 1→8 has a test in `StepSplitDatabaseMigrationTest`. It
   builds the old schema from its exported JSON, migrates, and lets Room validate the result.
 - **Unused leftovers.** Some tables and columns from removed features are kept but unused:
   `manual_walks`, `activity_intervals`, `motion_evidence`, `temporal_continuity_state`,

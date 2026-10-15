@@ -61,6 +61,9 @@
     <string name="settings_threshold_min_steps">Minimum steps</string>
     <string name="settings_threshold_min_cadence">Minimum cadence (steps per minute)</string>
     <string name="settings_reset_thresholds">Reset to defaults</string>
+    <string name="settings_trips_section_title">GPS trips</string>
+    <string name="settings_keep_deleted_trips_label">Keep deleted trips in Stats</string>
+    <string name="settings_keep_deleted_trips_note">When on, deleting a trip still removes its route, but its date, time and distance keep counting in Stats. Turning this off hides those trips from Stats until you turn it on again. Trips deleted while it\'s off are gone from Stats for good.</string>
     <string name="settings_classification_limitation_title">Limitations of automatic classification</string>
     <string name="settings_classification_limitation_note">A phone cannot know your intent with certainty - a continuous walk to a store can look identical to a walking workout. Classification uses a transparent heuristic only, and you can adjust its thresholds right here in Settings.</string>
     <string name="settings_permission_status_title">Permission status</string>
@@ -146,6 +149,7 @@
     <string name="trip_detail_delete_action">Delete trip</string>
     <string name="trip_detail_delete_confirm_title">Delete this trip?</string>
     <string name="trip_detail_delete_confirm_message">This permanently deletes the trip and its recorded route. This cannot be undone.</string>
+    <string name="trip_detail_delete_confirm_message_keep_stats">This deletes the trip and its recorded route. Its time and distance stay in Stats, as \"Keep deleted trips in Stats\" is on in Settings.</string>
     <string name="trip_detail_delete_confirm_action">Delete</string>
     <string name="trip_detail_route_empty">No route points were recorded for this trip</string>
 
@@ -203,6 +207,10 @@
     <string name="stats_burgers_label">Burgers burned</string>
     <string name="stats_estimates_note">Distance and calories are estimated from your steps (0.75 m and 0.04 kcal per step), not measured by GPS.</string>
     <string name="stats_trips_count_label">Total trips</string>
+    <plurals name="stats_trips_deleted_included">
+        <item quantity="one">Includes %1$d deleted trip</item>
+        <item quantity="other">Includes %1$d deleted trips</item>
+    </plurals>
     <string name="stats_trips_time_label">Total time</string>
     <string name="stats_trips_distance_label">Total distance</string>
     <string name="stats_trips_speed_label">Average speed</string>

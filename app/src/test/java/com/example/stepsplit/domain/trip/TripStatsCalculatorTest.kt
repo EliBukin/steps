@@ -83,4 +83,37 @@ class TripStatsCalculatorTest {
 
         assertEquals(0L, totals.totalDurationSeconds)
     }
+
+    @Test
+    fun `kept deleted trips count exactly like finished ones`() {
+        val half = finishedTrip(1, durationSeconds = 30 * 60, distanceMeters = 3_000.0)
+
+        val withDeleted = TripStatsCalculator.calculate(listOf(half), listOf(DeletedTripTotals(30 * 60, 3_000.0)))
+        val allFinished = TripStatsCalculator.calculate(listOf(half, finishedTrip(2, 30 * 60, 3_000.0)))
+
+        assertEquals(2, withDeleted.tripCount)
+        assertEquals(1, withDeleted.deletedTripCount)
+        assertEquals(60 * 60L, withDeleted.totalDurationSeconds)
+        assertEquals(6_000.0, withDeleted.totalDistanceMeters, 1e-9)
+        assertEquals(6.0, withDeleted.averageSpeedKmh!!, 1e-9)
+        assertEquals(600L, withDeleted.averagePaceSecondsPerKm)
+        assertEquals(allFinished.copy(deletedTripCount = 1), withDeleted)
+    }
+
+    @Test
+    fun `only kept deleted trips still give totals`() {
+        val totals = TripStatsCalculator.calculate(emptyList(), listOf(DeletedTripTotals(21 * 60, 2_630.0)))
+
+        assertTrue(totals.hasTrips)
+        assertEquals(1, totals.tripCount)
+        assertEquals(1, totals.deletedTripCount)
+        assertEquals(2_630.0, totals.totalDistanceMeters, 1e-9)
+    }
+
+    @Test
+    fun `a finished trip's duration runs from start to end and is never negative`() {
+        assertEquals(600L, finishedTripDurationSeconds(1_000L, 1_600L))
+        assertEquals(0L, finishedTripDurationSeconds(1_000L, null))
+        assertEquals(0L, finishedTripDurationSeconds(1_000L, 900L))
+    }
 }

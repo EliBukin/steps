@@ -947,6 +947,110 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v7 -> v8 migration ([StepSplitDatabase.MIGRATIONS]' `MIGRATION_7_8`: adds the empty
+     * `deleted_trip_totals` table) is schema-correct and purely additive: a v7 database built from
+     * the exported `7.json`, seeded with a trip, one of its points and a step bucket, is migrated
+     * and validated by a real [StepSplitDatabase], and every seeded row survives unchanged.
+     */
+    @Test
+    fun `v7 to v8 adds an empty deleted_trip_totals table`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v7_v8.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildV7Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                val keptCursor = migrated.query("SELECT COUNT(*) FROM deleted_trip_totals")
+                assertTrue(keptCursor.moveToFirst())
+                assertEquals(0, keptCursor.getInt(0))
+                keptCursor.close()
+
+                val tripCursor = migrated.query("SELECT state, startEpochSecond, endEpochSecond, distanceMeters FROM trips WHERE id = 1")
+                assertTrue(tripCursor.moveToFirst())
+                assertEquals("FINISHED", tripCursor.getString(0))
+                assertEquals(1_000L, tripCursor.getLong(1))
+                assertEquals(1_600L, tripCursor.getLong(2))
+                assertEquals(250.0, tripCursor.getDouble(3), 1e-9)
+                tripCursor.close()
+
+                val pointCursor = migrated.query("SELECT COUNT(*) FROM trip_points WHERE tripId = 1")
+                assertTrue(pointCursor.moveToFirst())
+                assertEquals(1, pointCursor.getInt(0))
+                pointCursor.close()
+
+                val bucketCursor = migrated.query("SELECT steps FROM step_buckets WHERE id = 1")
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals(42L, bucketCursor.getLong(0))
+                bucketCursor.close()
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /** Same approach as [buildV6Database], from `7.json`; seeds a trip with one point and a step bucket. */
+    private fun buildV7Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/7.json")
+        check(schemaFile.exists()) { "Expected the exported v7 schema at ${schemaFile.absolutePath}" }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(7) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                db.execSQL(indices.getJSONObject(j).getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) VALUES (1, 1000, 1600, 'UTC', 'FINISHED', 250.0, 1590, 1000)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_points (id, tripId, capturedAtEpochSecond, latitude, longitude, accuracyMeters, " +
+                    "altitudeMeters, speedMetersPerSecond) VALUES (1, 1, 1590, 32.0, 34.0, 5.0, NULL, 1.2)",
+            )
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

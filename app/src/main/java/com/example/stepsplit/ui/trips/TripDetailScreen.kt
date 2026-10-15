@@ -154,7 +154,17 @@ fun TripDetailScreen(
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text(stringResource(R.string.trip_detail_delete_confirm_title)) },
-            text = { Text(stringResource(R.string.trip_detail_delete_confirm_message)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (uiState.keepDeletedTripsInStats) {
+                            R.string.trip_detail_delete_confirm_message_keep_stats
+                        } else {
+                            R.string.trip_detail_delete_confirm_message
+                        },
+                    ),
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false

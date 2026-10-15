@@ -40,6 +40,21 @@ class SettingsRepositoryTest {
         // file, not guaranteed fresh per test method under Robolectric.
         repository.resetThresholds()
         repository.clearSyncFailure()
+        repository.setKeepDeletedTripsInStats(false)
+    }
+
+    @Test
+    fun `deleted trips are not kept in Stats by default`() = runTest {
+        assertFalse(repository.settings.first().keepDeletedTripsInStats)
+    }
+
+    @Test
+    fun `keeping deleted trips in Stats is persisted and can be turned off again`() = runTest {
+        repository.setKeepDeletedTripsInStats(true)
+        assertTrue(repository.settings.first().keepDeletedTripsInStats)
+
+        repository.setKeepDeletedTripsInStats(false)
+        assertFalse(repository.settings.first().keepDeletedTripsInStats)
     }
 
     @Test

@@ -8,6 +8,9 @@ import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayViewModel
 import com.example.stepsplit.ui.trips.TripDetailViewModel
 import com.example.stepsplit.ui.trips.TripsViewModel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** Hand-written [ViewModelProvider.Factory] wiring each screen's ViewModel to [AppContainer]. */
 class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.Factory {
@@ -26,7 +29,7 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
             container.clock,
         )
 
-        StatsViewModel::class.java -> StatsViewModel(container.stepRepository, container.tripRepository)
+        StatsViewModel::class.java -> StatsViewModel(container.stepRepository, container.tripRepository, keepDeletedTripsInStats())
 
         SettingsViewModel::class.java -> SettingsViewModel(
             container.settingsRepository,
@@ -46,7 +49,10 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass == TripDetailViewModel::class.java) { "Unknown ViewModel class: ${modelClass.name}" }
-            return TripDetailViewModel(container.tripRepository, tripId) as T
+            return TripDetailViewModel(container.tripRepository, tripId, keepDeletedTripsInStats()) as T
         }
     }
+
+    private fun keepDeletedTripsInStats(): Flow<Boolean> =
+        container.settingsRepository.settings.map { it.keepDeletedTripsInStats }.distinctUntilChanged()
 }

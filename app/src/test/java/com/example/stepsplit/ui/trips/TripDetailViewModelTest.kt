@@ -16,13 +16,16 @@ import java.time.ZoneOffset
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -108,7 +111,7 @@ class TripDetailViewModelTest {
         database.tripPointDao().insert(goodC)
 
         val repository = TripRepository(database, clock)
-        val viewModel = TripDetailViewModel(repository, tripId)
+        val viewModel = TripDetailViewModel(repository, tripId, keepDeletedTripsInStats = flowOf(false))
 
         val uiState = viewModel.uiState.first { !it.isLoading }
 
@@ -183,7 +186,7 @@ class TripDetailViewModelTest {
         rawEntities.forEach { database.tripPointDao().insert(it) }
 
         val repository = TripRepository(database, clock)
-        val viewModel = TripDetailViewModel(repository, tripId)
+        val viewModel = TripDetailViewModel(repository, tripId, keepDeletedTripsInStats = flowOf(false))
 
         val uiState = viewModel.uiState.first { !it.isLoading }
 
@@ -216,5 +219,70 @@ class TripDetailViewModelTest {
         val gpx = GpxExport.toGpx(uiState.points)
         assertTrue(gpx.contains(String.format(Locale.ROOT, "%.7f", uiState.points[1].latitude)))
         assertTrue(uiState.points[1].longitude != rawEntities[1].longitude)
+    }
+
+    /** A FINISHED trip with a short two-point route, inserted directly. */
+    private suspend fun insertFinishedTrip(): Long {
+        val start = fixedNow.epochSecond - 600
+        val tripId = database.tripDao().insert(
+            TripEntity(
+                startEpochSecond = start,
+                endEpochSecond = fixedNow.epochSecond,
+                startZoneId = "UTC",
+                state = TripState.FINISHED.name,
+                distanceMeters = 0.0,
+                lastAcceptedPointEpochSecond = start + 20,
+                createdAtEpochSecond = start,
+            ),
+        )
+        for ((offset, latitude) in listOf(10L to 32.0, 20L to 32.0001)) {
+            database.tripPointDao().insert(
+                TripPointEntity(
+                    tripId = tripId,
+                    capturedAtEpochSecond = start + offset,
+                    latitude = latitude,
+                    longitude = 34.0,
+                    accuracyMeters = 5f,
+                    altitudeMeters = null,
+                    speedMetersPerSecond = 1.1f,
+                ),
+            )
+        }
+        return tripId
+    }
+
+    @Test
+    fun `the delete dialog follows the Keep deleted trips in Stats setting`() = runTest {
+        val tripId = insertFinishedTrip()
+        val keep = MutableStateFlow(false)
+        val viewModel = TripDetailViewModel(TripRepository(database, clock), tripId, keep)
+
+        assertFalse(viewModel.uiState.first { !it.isLoading }.keepDeletedTripsInStats)
+        keep.value = true
+        assertTrue(viewModel.uiState.first { it.keepDeletedTripsInStats }.keepDeletedTripsInStats)
+    }
+
+    @Test
+    fun `deleting with the setting on keeps the trip's time and distance for Stats`() = runTest {
+        val tripId = insertFinishedTrip()
+        val repository = TripRepository(database, clock)
+        val viewModel = TripDetailViewModel(repository, tripId, keepDeletedTripsInStats = flowOf(true))
+
+        viewModel.deleteTrip()
+
+        assertTrue(viewModel.uiState.first { it.deleted }.deleted)
+        assertEquals(600L, repository.observeDeletedTripTotals().first().single().durationSeconds)
+    }
+
+    @Test
+    fun `deleting with the setting off keeps nothing`() = runTest {
+        val tripId = insertFinishedTrip()
+        val repository = TripRepository(database, clock)
+        val viewModel = TripDetailViewModel(repository, tripId, keepDeletedTripsInStats = flowOf(false))
+
+        viewModel.deleteTrip()
+
+        assertTrue(viewModel.uiState.first { it.deleted }.deleted)
+        assertTrue(repository.observeDeletedTripTotals().first().isEmpty())
     }
 }

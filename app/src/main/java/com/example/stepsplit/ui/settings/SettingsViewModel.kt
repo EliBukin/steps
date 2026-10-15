@@ -32,6 +32,8 @@ data class SettingsUiState(
     /** The most recent sync failure, if any hasn't since been cleared by a successful sync - a separate concern from [availability]. */
     val syncFailure: SyncFailure? = null,
     val goalInputError: Boolean = false,
+    /** See [com.example.stepsplit.data.settings.AppSettings.keepDeletedTripsInStats]. */
+    val keepDeletedTripsInStats: Boolean = false,
     /** See [StepCollectionHealth] - distinguishes a source that has never observed a step from one that has (historical evidence only - never a claim that collection is working *right now*, see that enum's own doc comment). */
     val collectionHealth: StepCollectionHealth? = null,
     /** Raw production acquisition diagnostics for the debug-only panel - see [StepSourceHealthStore]. Never shown outside debug builds. */
@@ -71,6 +73,7 @@ class SettingsViewModel(
             availability = currentAvailability,
             syncFailure = settings.lastSyncFailure,
             goalInputError = hasGoalError,
+            keepDeletedTripsInStats = settings.keepDeletedTripsInStats,
             collectionHealth = deriveStepCollectionHealth(
                 currentAvailability,
                 settings.lastSyncFailure,
@@ -121,6 +124,10 @@ class SettingsViewModel(
 
     fun resetThresholds() {
         viewModelScope.launch { stepRepository.resetThresholds() }
+    }
+
+    fun setKeepDeletedTripsInStats(keep: Boolean) {
+        viewModelScope.launch { settingsRepository.setKeepDeletedTripsInStats(keep) }
     }
 
     /**

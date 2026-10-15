@@ -61,6 +61,9 @@
     <string name="settings_threshold_min_steps">מספר צעדים מזערי</string>
     <string name="settings_threshold_min_cadence">קצב צעידה מזערי (צעדים לדקה)</string>
     <string name="settings_reset_thresholds">איפוס לברירת המחדל</string>
+    <string name="settings_trips_section_title">טיולי GPS</string>
+    <string name="settings_keep_deleted_trips_label">שמירת טיולים שנמחקו בסטטיסטיקה</string>
+    <string name="settings_keep_deleted_trips_note">כשההגדרה פעילה, מחיקת טיול עדיין מוחקת את המסלול שלו, אבל התאריך, הזמן והמרחק שלו ממשיכים להיספר בסטטיסטיקה. כיבוי ההגדרה מסתיר את הטיולים האלה מהסטטיסטיקה עד שמפעילים אותה שוב. טיולים שנמחקו כשההגדרה כבויה לא נספרים יותר.</string>
     <string name="settings_classification_limitation_title">מגבלות הסיווג האוטומטי</string>
     <string name="settings_classification_limitation_note">מכשיר נייד אינו יכול לדעת בוודאות מהי כוונת המשתמש - הליכה רצופה לחנות עשויה להיראות זהה להליכת אימון. הסיווג מבוסס על היוריסטיקה שקופה בלבד, וניתן להתאים את הסף שלה בהגדרות אלו.</string>
     <string name="settings_permission_status_title">סטטוס הרשאה</string>
@@ -146,6 +149,7 @@
     <string name="trip_detail_delete_action">מחיקת טיול</string>
     <string name="trip_detail_delete_confirm_title">למחוק את הטיול הזה?</string>
     <string name="trip_detail_delete_confirm_message">פעולה זו תמחק לצמיתות את הטיול ואת המסלול שנרשם. לא ניתן לבטל פעולה זו.</string>
+    <string name="trip_detail_delete_confirm_message_keep_stats">פעולה זו תמחק את הטיול ואת המסלול שנרשם. הזמן והמרחק שלו יישארו בסטטיסטיקה, כי ההגדרה \"שמירת טיולים שנמחקו בסטטיסטיקה\" פעילה.</string>
     <string name="trip_detail_delete_confirm_action">מחיקה</string>
     <string name="trip_detail_route_empty">לא נרשמו נקודות מסלול עבור טיול זה</string>
 
@@ -203,6 +207,11 @@
     <string name="stats_burgers_label">המבורגרים שנשרפו</string>
     <string name="stats_estimates_note">המרחק והקלוריות מוערכים לפי הצעדים שלך (0.75 מטר ו-0.04 קק״ל לצעד), ואינם נמדדים ב-GPS.</string>
     <string name="stats_trips_count_label">סך הכול טיולים</string>
+    <plurals name="stats_trips_deleted_included">
+        <item quantity="one">כולל טיול אחד שנמחק</item>
+        <item quantity="two">כולל שני טיולים שנמחקו</item>
+        <item quantity="other">כולל %1$d טיולים שנמחקו</item>
+    </plurals>
     <string name="stats_trips_time_label">זמן כולל</string>
     <string name="stats_trips_distance_label">מרחק כולל</string>
     <string name="stats_trips_speed_label">מהירות ממוצעת</string>

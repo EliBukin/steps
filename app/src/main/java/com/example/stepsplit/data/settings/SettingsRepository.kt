@@ -3,6 +3,7 @@ package com.example.stepsplit.data.settings
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -25,11 +26,18 @@ data class AppSettings(
     val lastSuccessfulSync: Instant?,
     /** The most recent sync failure, if any hasn't since been cleared by a successful sync - see [SyncFailure]. */
     val lastSyncFailure: SyncFailure?,
+    /**
+     * Whether deleting a finished GPS trip keeps its time and distance in Stats, and whether Stats
+     * counts the trips kept that way - see [com.example.stepsplit.data.trip.TripRepository.deleteTrip].
+     * Off by default, so deleting removes a trip from Stats too.
+     */
+    val keepDeletedTripsInStats: Boolean = false,
 )
 
 /**
  * Small key-value application settings: the user's daily step goal, the classification
- * thresholds (advanced/optional tuning), and the last successful sync timestamp. Everything here
+ * thresholds (advanced/optional tuning), the last successful sync timestamp, and whether deleted
+ * GPS trips keep counting in Stats. Everything here
  * is a scalar preference, so Preferences DataStore (not proto DataStore or Room) is the right
  * fit - no schema migration machinery needed for a handful of numbers.
  */
@@ -48,6 +56,7 @@ class SettingsRepository(context: Context) {
         val LAST_SYNC_EPOCH_SECOND = longPreferencesKey("last_sync_epoch_second")
         val SYNC_FAILURE_CATEGORY = stringPreferencesKey("sync_failure_category")
         val SYNC_FAILURE_EPOCH_SECOND = longPreferencesKey("sync_failure_epoch_second")
+        val KEEP_DELETED_TRIPS_IN_STATS = booleanPreferencesKey("keep_deleted_trips_in_stats")
     }
 
     val settings: Flow<AppSettings> = dataStore.data.map { prefs ->
@@ -73,6 +82,7 @@ class SettingsRepository(context: Context) {
                     SyncFailure(SyncFailureCategory.valueOf(categoryName), atEpochSecond)
                 }
             },
+            keepDeletedTripsInStats = prefs[Keys.KEEP_DELETED_TRIPS_IN_STATS] ?: false,
         )
     }
 
@@ -98,6 +108,10 @@ class SettingsRepository(context: Context) {
 
     suspend fun resetThresholds() {
         setThresholds(ClassificationThresholds.DEFAULT)
+    }
+
+    suspend fun setKeepDeletedTripsInStats(keep: Boolean) {
+        dataStore.edit { it[Keys.KEEP_DELETED_TRIPS_IN_STATS] = keep }
     }
 
     /**

@@ -7,9 +7,11 @@ import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -18,6 +20,8 @@ data class TripDetailUiState(
     val trip: TripSummary? = null,
     val points: List<TripPoint> = emptyList(),
     val deleted: Boolean = false,
+    /** Whether deleting this trip keeps its time and distance in Stats - the delete dialog says which. */
+    val keepDeletedTripsInStats: Boolean = false,
 )
 
 /**
@@ -40,22 +44,26 @@ data class TripDetailUiState(
 class TripDetailViewModel(
     private val repository: TripRepository,
     private val tripId: Long,
+    /** The "Keep deleted trips in Stats" setting - see [com.example.stepsplit.data.settings.AppSettings.keepDeletedTripsInStats]. */
+    private val keepDeletedTripsInStats: Flow<Boolean>,
 ) : ViewModel() {
 
     val uiState: StateFlow<TripDetailUiState> = combine(
         repository.observeTrip(tripId),
         repository.observeTripPoints(tripId),
-    ) { trip, rawPoints ->
+        keepDeletedTripsInStats,
+    ) { trip, rawPoints, keepInStats ->
         val smoothed = RouteSmoother.smooth(RouteSanitizer.sanitize(rawPoints).points)
         TripDetailUiState(
             isLoading = false,
             trip = trip?.copy(distanceMeters = smoothed.distanceMeters),
             points = smoothed.points,
             deleted = trip == null,
+            keepDeletedTripsInStats = keepInStats,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripDetailUiState())
 
     fun deleteTrip() {
-        viewModelScope.launch { repository.deleteTrip(tripId) }
+        viewModelScope.launch { repository.deleteTrip(tripId, keepInStats = keepDeletedTripsInStats.first()) }
     }
 }
