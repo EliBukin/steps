@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Steps GPS Route - Privacy policy</title>
+<!-- Source: docs/privacy-policy.html on the main branch. Published copies live on the gh-pages
+     branch as index.html and privacy-policy.html; publication requires owner approval. -->
+<style>
+  :root { color-scheme: light dark; --fg: #1b1c1f; --bg: #f7f8fa; --accent: #2c5f9e; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e3e4e8; --bg: #15171b; --accent: #9cc2f5; } }
+  body { margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--fg);
+         font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.8rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.2rem; margin: 2rem 0 .5rem; }
+  a { color: var(--accent); }
+  code { font-size: .9em; overflow-wrap: anywhere; }
+  ul { padding-left: 1.25rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy policy</h1>
+<ul>
+<li><strong>App:</strong> Steps GPS Route</li>
+<li><strong>Developer:</strong> bukin</li>
+<li><strong>Contact:</strong> dev.mechanics998877@gmail.com</li>
+<li><strong>Effective date:</strong> 2026-10-16</li>
+</ul>
+<p>This policy explains what the app does with your information. Steps GPS Route shows how much you walk each day, and records GPS routes of trips you start yourself, such as hikes, nature walks or off-road drives, so you can view them on a map and export them as GPX files.</p>
+<p>Steps GPS Route is not a health or medical app. It gives no health advice, and it is not meant to diagnose, treat or track any health condition.</p>
+
+<h2>Summary</h2>
+<ul>
+<li>The app reads only your step count from Health Connect, and uses your location only while a trip you started is recording.</li>
+<li>Your steps, trips and settings are stored only on your device. The app has no account, no ads, no analytics and no crash reporting, and it does not send your information to the developer or to anyone else.</li>
+<li>The app's only internet traffic is loading map tiles from OpenFreeMap when you open a trip's screen. Your GPS points are not sent.</li>
+<li>A trip leaves your device only when you save or share its GPX file yourself.</li>
+</ul>
+
+<h2>Step data from Health Connect</h2>
+<p>If you allow it, the app reads your step count from Health Connect, Android's on-device store for activity data. It asks only for permission to <strong>read steps</strong> and does not read any other kind of data.</p>
+<ul>
+<li><strong>What is read.</strong> The number of steps in each minute. Health Connect combines the steps counted by your phone with steps from any other app or device you've connected to Health Connect. The app reads only this combined total, not which app or device recorded the steps. On first use, or after a long break, it reads up to the last 30 days.</li>
+<li><strong>When.</strong> Only while the app is open. It never reads steps in the background.</li>
+<li><strong>What it's used for.</strong> Showing your daily and weekly steps, your progress toward your step goal, your step history, lifetime stats, and the split into workout and incidental steps.</li>
+<li><strong>What happens to it.</strong> A copy of the step counts is stored in the app's private storage on your device. The app never writes anything to Health Connect, never sends step data off your device, and never sells or shares it, uses it for advertising, or uses it for any purpose other than the features above.</li>
+</ul>
+<p>The use of information received from Health Connect adheres to the Health Connect Permissions policy, including the Limited Use requirements.</p>
+<p>You can withdraw the permission at any time in Health Connect's settings. The app then stops reading steps; steps it already copied stay in the app until you uninstall it.</p>
+
+<h2>Location and GPS trips</h2>
+<p>The app asks for precise location when you start (or resume) a trip. It uses your location <strong>only while a trip you started is recording</strong>. The app does not ask for background location permission and never tracks your location at other times.</p>
+<p>While a trip records, Android shows an ongoing notification, and recording continues with the screen off or while you use other apps, until you finish the trip or Android stops the app. On Android 13 and later the app also asks for permission to show notifications, so that this notification can appear; recording works either way.</p>
+<p>For each trip, the app stores on your device:</p>
+<ul>
+<li>when the trip started and finished, and its time zone;</li>
+<li>its route: a series of GPS points, each with its time, latitude, longitude, accuracy, and altitude and speed when the phone reports them;</li>
+<li>its distance.</li>
+</ul>
+<p>Trips are used to show the route on a map, the trip's time and distance, your trip stats, and to create GPX files when you ask for one.</p>
+
+<h2>Maps and internet use</h2>
+<p>When you open a trip's screen, the app loads the map from <a href="https://openfreemap.org">OpenFreeMap</a>, a free map service. These requests contain the map tiles for the area being shown and the usual technical details of any internet request, such as your IP address. They do not contain your GPS points, but like any online map they show OpenFreeMap which area you're viewing. OpenFreeMap handles these requests under its own terms.</p>
+<p>Map tiles you've viewed are cached in the app's private storage, so maps load faster next time. This is the app's only internet use.</p>
+
+<h2>Sharing and saving GPX files</h2>
+<p>A trip's route leaves your device only when you tap <strong>Share GPX</strong>:</p>
+<ul>
+<li><strong>Save file</strong> saves the GPX file to a folder you pick. That folder may belong to another app or service, such as cloud storage, which handles the file under its own terms.</li>
+<li><strong>Any other choice</strong>, such as WhatsApp, Gmail or Drive, sends the file to that app. The app you choose, and the people you send it to, handle it under their own terms.</li>
+</ul>
+<p>To share a file, the app writes a temporary copy to its private cache and gives read access only to the app you pick. Copies more than a day old are removed the next time you share a trip, and Android may clear the cache earlier on its own.</p>
+
+<h2>Other information stored on your device</h2>
+<ul>
+<li>Your settings: step goal, the limits for telling workout steps from incidental steps, and whether deleted trips stay in Stats.</li>
+<li>When steps were last updated, and the technical status of recent updates, such as whether they worked.</li>
+<li>If you turn on <strong>Keep deleted trips in Stats</strong>: for each finished trip you delete, its date, duration and distance, so your trip totals keep counting it. No route or location is kept.</li>
+</ul>
+<p>All of this is kept in the app's private storage, which other apps can't read. It is not encrypted beyond Android's own protection of app storage.</p>
+
+<h2>How long data is kept, and deleting it</h2>
+<ul>
+<li><strong>Trips</strong> are kept until you delete them in the app. Deleting a trip removes its route and GPS points.</li>
+<li><strong>Step counts and settings</strong> are kept until you uninstall the app.</li>
+<li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, or GPX files you saved or shared.</li>
+</ul>
+
+<h2>Backups and moving to a new phone</h2>
+<p>Android's cloud backup is turned off for this app, so nothing is backed up to your Google account. When you move to a new phone, Android's phone-to-phone transfer may still copy the app's data to the new phone.</p>
+
+<h2>Information shared with the developer or third parties</h2>
+<p>The app contains no advertising, analytics, tracking or crash-reporting code. The app itself does not collect, sell or share your personal information. The developer never receives your steps, trips or locations.</p>
+<p>If you install the app from Google Play, Google provides the developer with statistics such as install counts and, if you agreed to share usage and diagnostics data with Google, crash and performance reports about the app. Google processes this data under its own privacy policy.</p>
+
+<h2>Estimates are for fun</h2>
+<p>Some numbers in the app are rough, for-fun estimates rather than measurements: calories and burgers burned, distance estimated from steps, and progress around the Earth and to the Moon. They should not be relied on for any purpose, including health decisions.</p>
+
+<h2>Children</h2>
+<p>The app is intended for a general audience and is not specifically designed for children.</p>
+
+<h2>Visiting this policy webpage</h2>
+<p>This privacy-policy webpage is hosted on GitHub Pages. GitHub logs visitor IP addresses for security purposes. This is separate from the app. See the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a>.</p>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes, the updated version will be published at this address with a new effective date.</p>
+
+<h2>Contact</h2>
+<p>Questions about this policy: dev.mechanics998877@gmail.com</p>
+</main>
+</body>
+</html>
