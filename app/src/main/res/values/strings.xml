@@ -52,6 +52,8 @@
     <string name="settings_goal_invalid_error">יש להזין מספר צעדים תקין (גדול מאפס)</string>
     <string name="settings_save">שמירה</string>
     <string name="settings_advanced_section_title">סף סיווג אוטומטי (מתקדם)</string>
+    <string name="settings_advanced_show">הצגה</string>
+    <string name="settings_advanced_hide">הסתרה</string>
     <string name="settings_threshold_max_gap">פער מרבי בתוך הליכה (דקות)</string>
     <string name="settings_threshold_idle_finalize">זמן חוסר פעילות לסיום הליכה (דקות)</string>
     <string name="settings_threshold_min_duration">משך זמן מזערי (דקות)</string>

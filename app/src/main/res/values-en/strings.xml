@@ -52,6 +52,8 @@
     <string name="settings_goal_invalid_error">Enter a valid step count (greater than zero)</string>
     <string name="settings_save">Save</string>
     <string name="settings_advanced_section_title">Automatic classification thresholds (advanced)</string>
+    <string name="settings_advanced_show">Show</string>
+    <string name="settings_advanced_hide">Hide</string>
     <string name="settings_threshold_max_gap">Maximum gap inside a bout (minutes)</string>
     <string name="settings_threshold_idle_finalize">Idle time to finalize a bout (minutes)</string>
     <string name="settings_threshold_min_duration">Minimum elapsed duration (minutes)</string>
