@@ -93,6 +93,21 @@
             android:foregroundServiceType="location" />
 
         <!--
+          Hands a trip's GPX file to the app the user picks in the share sheet (see GpxShare), as a
+          content:// Uri with a one-off read grant. Not exported, and it only serves the shared-GPX
+          cache folder listed in gpx_share_paths.xml.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/gpx_share_paths" />
+        </provider>
+
+        <!--
           WorkManager's default automatic (ContentProvider/App-Startup-based) initialization is
           replaced with on-demand initialization via a plain Configuration.Provider implementation
           on StepSplitApplication - no custom WorkerFactory is needed for that (there is no longer

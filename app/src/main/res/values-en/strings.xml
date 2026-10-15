@@ -136,9 +136,13 @@
     <string name="trip_detail_end_label">Finished</string>
     <string name="trip_detail_duration_label">Duration</string>
     <string name="trip_detail_distance_label">Distance</string>
-    <string name="trip_detail_export_gpx_action">Export GPX</string>
+    <string name="trip_detail_export_gpx_action">Save GPX</string>
     <string name="trip_gpx_export_success">GPX file saved successfully</string>
     <string name="trip_gpx_export_failure">Failed to save the GPX file</string>
+    <string name="trip_detail_share_gpx_action">Share GPX</string>
+    <string name="trip_gpx_share_chooser_title">Share GPX file</string>
+    <string name="trip_gpx_share_subject">GPS route from %1$s</string>
+    <string name="trip_gpx_share_failure">Couldn\'t prepare the GPX file for sharing</string>
     <string name="trip_detail_delete_action">Delete trip</string>
     <string name="trip_detail_delete_confirm_title">Delete this trip?</string>
     <string name="trip_detail_delete_confirm_message">This permanently deletes the trip and its recorded route. This cannot be undone.</string>

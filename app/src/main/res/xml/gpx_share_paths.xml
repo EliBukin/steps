@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the FileProvider may hand out: only GPX files written for sharing, in the app's private
+  cache (see GpxShare). Nothing else in the app's storage is reachable through it.
+-->
+<paths>
+    <cache-path name="shared_gpx" path="shared-gpx/" />
+</paths>
