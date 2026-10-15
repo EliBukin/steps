@@ -238,6 +238,115 @@ class RoutePointAcceptancePolicyTest {
         assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
     }
 
+    // ---- Driving: the vehicle regime (see RouteMovementPlausibility's own doc comment) ----
+
+    @Test
+    fun `steady driving at 20 to 80 kmh with a matching reported speed is accepted`() {
+        for (kmh in 20..80 step 10) {
+            val (last, next) = drive(kmh, kmh)
+            assertTrue("$kmh km/h must be accepted", decide(next, last) is RouteSampleDecision.Accepted)
+        }
+    }
+
+    @Test
+    fun `a whole drive from a standstill up to 80 kmh and back to a crawl is accepted fix by fix`() {
+        // Each fix is compared with the previous one, exactly as live recording compares it with
+        // the last accepted fix - the comparison that used to stall above ~22 km/h.
+        var last: RawLocationSample? = null
+        for (fix in drive(0, 10, 20, 35, 50, 65, 80, 80, 80, 60, 40, 20, 5)) {
+            assertTrue(
+                "fix at ${fix.capturedAtEpochSecond} reporting ${fix.speedMetersPerSecond} m/s must be accepted",
+                decide(fix, last) is RouteSampleDecision.Accepted,
+            )
+            last = fix
+        }
+    }
+
+    @Test
+    fun `hard braking is accepted - the previous fix's speed explains the distance the almost-stopped newer fix cannot`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = 20f)
+        // Braking from 72 km/h to a crawl within one 10s interval covers ~100m (10 m/s on average),
+        // while the newer fix itself already reports only 0.5 m/s.
+        val next = sample(lat = degreesLatFor(100.0), lon = 0.0, capturedAt = 1_010L, speed = 0.5f)
+        assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
+    }
+
+    @Test
+    fun `the same braking-shaped jump is still rejected when neither fix reports more than walking pace`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = 1.4f)
+        val next = sample(lat = degreesLatFor(100.0), lon = 0.0, capturedAt = 1_010L, speed = 0.5f)
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decide(next, last) as RouteSampleDecision.Rejected).reason)
+    }
+
+    @Test
+    fun `a reported speed exactly at the on-foot cap is not vehicle evidence, just above it is`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS.toFloat())
+        val impliedSpeed = RouteMovementPlausibility.MAX_PLAUSIBLE_SPEED_METERS_PER_SECOND + 0.5
+        val atThreshold = sample(
+            lat = degreesLatFor(impliedSpeed * 10),
+            lon = 0.0,
+            capturedAt = 1_010L,
+            speed = RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS.toFloat(),
+        )
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decide(atThreshold, last) as RouteSampleDecision.Rejected).reason)
+
+        val justAbove = atThreshold.copy(speedMetersPerSecond = impliedSpeed.toFloat())
+        assertTrue(decide(justAbove, last) is RouteSampleDecision.Accepted)
+    }
+
+    @Test
+    fun `driving-speed movement with no reported speed on either fix is still rejected - nothing shows it is a vehicle`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = null)
+        val next = sample(lat = degreesLatFor(150.0), lon = 0.0, capturedAt = 1_010L, speed = null) // 15 m/s implied
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decide(next, last) as RouteSampleDecision.Rejected).reason)
+    }
+
+    @Test
+    fun `a spike during a drive that the reported speed cannot explain is still rejected`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = 20f)
+        // 500m in 10s = 50 m/s implied, while both fixes report 20 m/s: over the 20*2+3 = 43 m/s ceiling.
+        val spike = sample(lat = degreesLatFor(500.0), lon = 0.0, capturedAt = 1_010L, speed = 20f)
+        assertEquals(RouteSampleRejectionReason.SPEED_CONTRADICTION, (decide(spike, last) as RouteSampleDecision.Rejected).reason)
+    }
+
+    @Test
+    fun `the vehicle regime is capped at about 200 kmh whatever speed is reported`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = 40f)
+        val maxSpeed = RouteMovementPlausibility.MAX_VEHICLE_SPEED_METERS_PER_SECOND
+
+        val justUnder = sample(lat = degreesLatFor((maxSpeed - 0.5) * 10), lon = 0.0, capturedAt = 1_010L, speed = 40f)
+        assertTrue(decide(justUnder, last) is RouteSampleDecision.Accepted)
+
+        // 40*2+3 = 83 m/s would allow this; the hard ceiling does not.
+        val justOver = sample(lat = degreesLatFor((maxSpeed + 0.5) * 10), lon = 0.0, capturedAt = 1_010L, speed = 40f)
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decide(justOver, last) as RouteSampleDecision.Rejected).reason)
+
+        // Nor can a garbage reported speed license a teleport.
+        val teleport = sample(lat = degreesLatFor(5_000.0), lon = 0.0, capturedAt = 1_010L, speed = 1_000f)
+        assertEquals(RouteSampleRejectionReason.IMPLAUSIBLE_JUMP, (decide(teleport, last) as RouteSampleDecision.Rejected).reason)
+    }
+
+    @Test
+    fun `the A55 defect pattern is still rejected right after a fast jog that stays under the vehicle threshold`() {
+        val last = sample(lat = 0.0, lon = 0.0, capturedAt = 1_000L, speed = 5.9f)
+        // ~90m in 10s = 9 m/s implied, reported 1.5 m/s - the defect's own shape.
+        val spike = sample(lat = degreesLatFor(90.0), lon = 0.0, capturedAt = 1_010L, speed = 1.5f)
+        assertTrue(decide(spike, last) is RouteSampleDecision.Rejected)
+    }
+
+    /**
+     * Fixes every 10s heading north along a meridian, for a drive whose speed changes evenly
+     * between consecutive fixes through [speedsKmh]; each fix reports its own instantaneous speed,
+     * as a phone's GPS does.
+     */
+    private fun drive(vararg speedsKmh: Int): List<RawLocationSample> {
+        var traveledMeters = 0.0
+        return speedsKmh.mapIndexed { i, kmh ->
+            if (i > 0) traveledMeters += (speedsKmh[i - 1] + kmh) / 3.6 / 2 * 10
+            sample(lat = 32.0 + degreesLatFor(traveledMeters), lon = 34.0, capturedAt = 1_000L + i * 10L, speed = (kmh / 3.6).toFloat())
+        }
+    }
+
     private fun degreesLatFor(distanceMeters: Double): Double =
         Math.toDegrees(distanceMeters / EARTH_RADIUS_METERS)
 

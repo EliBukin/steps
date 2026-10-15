@@ -18,8 +18,8 @@ I built it for my own use:
 
 - **Daily movement.** I want to see how much I move every day, at a glance.
 - **Hikes and nature walks.** I record the route of a hike or a walk in nature with the GPS tracker.
-- **4x4 trips.** I also use the GPS tracker on off-road trips with my jeep. (Fast driving isn't
-  supported yet; see *Known limitations*.)
+- **4x4 trips.** I also use the GPS tracker on off-road trips with my jeep, so it keeps recording
+  at driving speed too.
 - **GPX for other apps.** Exporting a trip as GPX is the important part: it lets me open the route
   in other map and navigation apps.
 
@@ -86,9 +86,18 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   marked *interrupted*. You can resume it (the route will have a gap) or finish it at its last
   point.
 - **Which GPS points are kept.** The app asks for a location every 10 seconds at high accuracy. It
-  skips a point that is less accurate than 30 m, older than 2 minutes, implies moving faster than
-  6 m/s (about 22 km/h), contradicts the speed the phone reports, or is just GPS drift while you
-  stand still. The limits are tuned for walking and hiking.
+  skips a point that is less accurate than 30 m, older than 2 minutes, contradicts the speed the
+  phone reports, or is just GPS drift while you stand still. Each point is compared with the last
+  point the app kept:
+  - **On foot** (the phone reports 6 m/s or less, or no speed at all), a point that implies moving
+    faster than 6 m/s (about 22 km/h) is skipped.
+  - **In a vehicle** (the phone reports more than 6 m/s for this point or the last kept one), the
+    limit becomes twice the reported speed plus 3 m/s, and never more than 55 m/s (about
+    200 km/h). So a drive records a continuous route, braking included.
+
+  A GPS jump that the phone's own speed can't explain is skipped either way. Phones normally
+  measure speed from the satellite signal itself, separately from the position, which is why the
+  app trusts it to tell a real drive from a jump.
 - **The route you see.** Before the route is drawn, measured or exported, stray points are removed
   and the line is smoothed. The map, the distance and the GPX file all use this same route, so
   they always agree.
@@ -134,9 +143,12 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
 
 ## Known limitations
 
-- **Fast trips stop recording.** Points are checked against the last point the app kept. When you
-  move faster than about 22 km/h, such as in a car, on a bus or on a fast 4x4 stretch, new points
-  keep being skipped until you slow down for a while. The route then shows a straight jump.
+- **Driving needs the phone's speed.** Above about 22 km/h, points are kept only while the phone
+  reports its speed. GPS points normally include it; if the phone stops reporting it, points are
+  skipped until you slow down, and the route shows a straight jump.
+- **GPS jumps are harder to catch while driving.** The faster the phone says you're going, the
+  bigger the gap between two points the app allows. While driving, a stray point a few hundred
+  meters to the side of the road can stay in the route.
 - **"Searching" while standing still.** The GPS status can show *Searching* after 30 seconds
   without moving, because no new points are kept then.
 - **Steps update only while the app is open.** The phone keeps counting, but if you don't open

@@ -216,6 +216,34 @@ class TripRepositoryTest {
         assertEquals(expectedGoodDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
     }
 
+    /**
+     * The 4x4 case: before the vehicle regime in [com.example.stepsplit.domain.trip.RouteMovementPlausibility],
+     * every fix after the drive passed ~22 km/h was rejected until it slowed down again. One fix
+     * per batch, as the 10s location requests deliver them, so each comparison reads the previous
+     * fix - and its reported speed - back from the database.
+     */
+    @Test
+    fun `a drive at up to 80 kmh delivered fix by fix is stored and displayed whole`() = runTest {
+        val tripId = repository.startTrip()
+        val t0 = fixedNow.epochSecond
+        val speedsKmh = listOf(0, 10, 20, 35, 50, 65, 80, 80, 80, 60, 40, 20, 5)
+        var traveledMeters = 0.0
+        val fixes = speedsKmh.mapIndexed { i, kmh ->
+            if (i > 0) traveledMeters += (speedsKmh[i - 1] + kmh) / 3.6 / 2 * 10
+            sample(32.0 + Math.toDegrees(traveledMeters / EARTH_RADIUS_METERS), 34.0, t0 + 10 + i * 10L, speed = (kmh / 3.6).toFloat())
+        }
+
+        fixes.forEach { repository.recordAcceptedBatch(tripId, listOf(it)) }
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(fixes.size, points.size)
+        val expectedDistance = (1 until fixes.size).sumOf { i ->
+            RouteMath.haversineMeters(fixes[i - 1].latitude, fixes[i - 1].longitude, fixes[i].latitude, fixes[i].longitude)
+        }
+        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+        assertEquals(points, RouteSanitizer.sanitize(points).points)
+    }
+
     @Test
     fun `a batch delivered out of order is still processed chronologically`() = runTest {
         val tripId = repository.startTrip()

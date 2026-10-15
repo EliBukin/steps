@@ -54,6 +54,14 @@ sealed interface RouteSampleDecision {
  * structurally cannot; see [RouteSanitizer]'s own doc comment for what is genuinely shared between
  * the two layers versus unique to read-time cleanup, and `RouteSanitizerTest` for the end-to-end
  * proof.
+ *
+ * ## Driving
+ *
+ * Each fix is compared only with the last *accepted* one, so an on-foot speed cap alone would stall
+ * a trip recorded in a car or 4x4 the moment it went faster than a run: every later fix would be
+ * rejected until the vehicle slowed down, and the route would then jump in a straight line. A
+ * reported speed above the on-foot cap on either fix switches that pair to
+ * [RouteMovementPlausibility]'s vehicle regime instead - see its own doc comment.
  */
 object RoutePointAcceptancePolicy {
     /**
@@ -106,7 +114,8 @@ object RoutePointAcceptancePolicy {
                     elapsedSeconds = elapsedSeconds,
                     fromAccuracyMeters = lastAccepted.accuracyMeters,
                     toAccuracyMeters = candidate.accuracyMeters,
-                    reportedSpeedMetersPerSecond = candidate.speedMetersPerSecond,
+                    fromReportedSpeedMetersPerSecond = lastAccepted.speedMetersPerSecond,
+                    toReportedSpeedMetersPerSecond = candidate.speedMetersPerSecond,
                 )
             ) {
                 MovementPlausibility.STATIONARY_WOBBLE -> return RouteSampleDecision.Rejected(RouteSampleRejectionReason.STATIONARY_WOBBLE)

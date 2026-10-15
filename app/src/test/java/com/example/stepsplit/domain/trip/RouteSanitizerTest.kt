@@ -396,6 +396,90 @@ class RouteSanitizerTest {
         assertTrue(result.distanceMeters < rawSum)
     }
 
+    // ---- Driving: the vehicle regime (see RouteMovementPlausibility's own doc comment) ----
+
+    /**
+     * A drive sampled every 10s, heading north and then east from fix [turnAtIndex] on, whose speed
+     * changes evenly between consecutive fixes through [speedsKmh]; each fix reports its own
+     * instantaneous speed, as a phone's GPS does.
+     */
+    private fun drive(speedsKmh: List<Int>, startT: Long = 1_000L, turnAtIndex: Int = Int.MAX_VALUE): List<TripPoint> {
+        val latitude = 10.0
+        var northMeters = 0.0
+        var eastMeters = 0.0
+        return speedsKmh.mapIndexed { i, kmh ->
+            if (i > 0) {
+                val meters = (speedsKmh[i - 1] + kmh) / 3.6 / 2 * 10
+                if (i <= turnAtIndex) northMeters += meters else eastMeters += meters
+            }
+            point(
+                lat = latitude + degreesLatFor(northMeters),
+                lon = 20.0 + degreesLonFor(eastMeters, latitude),
+                t = startT + i * 10L,
+                speed = (kmh / 3.6).toFloat(),
+            )
+        }
+    }
+
+    @Test
+    fun `a whole drive from a standstill up to 80 kmh and back to a crawl, with a right-angle turn, is kept whole`() {
+        val route = drive(listOf(0, 10, 20, 35, 50, 65, 80, 80, 80, 60, 40, 20, 5), turnAtIndex = 7)
+
+        val result = RouteSanitizer.sanitize(route)
+
+        assertEquals(route, result.points)
+        assertTrue(result.rejections.isEmpty())
+        val expectedDistance = (1 until route.size).sumOf { i ->
+            RouteMath.haversineMeters(route[i - 1].latitude, route[i - 1].longitude, route[i].latitude, route[i].longitude)
+        }
+        assertEquals(expectedDistance, result.distanceMeters, 1e-6)
+    }
+
+    @Test
+    fun `a drive to the trailhead followed by a hike is kept whole`() {
+        val driveLeg = drive(listOf(0, 20, 50, 80, 80, 50, 20, 5))
+        val trailhead = driveLeg.last()
+        val hikeLeg = (1..6).map { i ->
+            point(
+                lat = trailhead.latitude + degreesLatFor(14.0 * i),
+                lon = trailhead.longitude,
+                t = trailhead.capturedAtEpochSecond + i * 10L,
+                speed = 1.4f,
+            )
+        }
+
+        val result = RouteSanitizer.sanitize(driveLeg + hikeLeg)
+
+        assertEquals(driveLeg + hikeLeg, result.points)
+    }
+
+    @Test
+    fun `a sideways spike during a drive that the reported speed cannot explain is removed`() {
+        val route = drive(List(6) { 72 }) // a steady 20 m/s: 200m between fixes
+        val before = route[2]
+        // 500m sideways from where the vehicle really was: ~54 m/s implied from the previous fix,
+        // over the 20*2+3 = 43 m/s ceiling its 20 m/s reported speed allows.
+        val spike = route[3].copy(longitude = route[3].longitude + degreesLonFor(500.0, before.latitude))
+        val withSpike = route.toMutableList().apply { set(3, spike) }
+
+        val result = RouteSanitizer.sanitize(withSpike)
+
+        assertEquals(route - route[3], result.points)
+        assertTrue(result.rejections.any { it.point == spike && it.reason == RouteSampleRejectionReason.SPEED_CONTRADICTION })
+    }
+
+    @Test
+    fun `stored driving-speed points with no reported speed are still removed - nothing shows they are a vehicle`() {
+        val a = point(10.0, 20.0, t = 1_000L, speed = 1.4f)
+        val b = point(10.0 + degreesLatFor(14.0), 20.0, t = 1_010L, speed = 1.4f)
+        val tooFast = point(b.latitude + degreesLatFor(150.0), 20.0, t = 1_020L, speed = null) // 15 m/s implied
+        val c = point(b.latitude + degreesLatFor(14.0), 20.0, t = 1_030L, speed = 1.4f)
+
+        val result = RouteSanitizer.sanitize(listOf(a, b, tooFast, c))
+
+        assertEquals(listOf(a, b, c), result.points)
+    }
+
     // ---- Anonymized A55 field-defect regression fixture ----
     //
     // Reproduces the *shape* of the confirmed defect - GPS jump segments implying 8-11 m/s while

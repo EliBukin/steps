@@ -231,7 +231,8 @@ object RouteSanitizer {
             elapsedSeconds = elapsedSeconds,
             fromAccuracyMeters = from.accuracyMeters,
             toAccuracyMeters = to.accuracyMeters,
-            reportedSpeedMetersPerSecond = to.speedMetersPerSecond,
+            fromReportedSpeedMetersPerSecond = from.speedMetersPerSecond,
+            toReportedSpeedMetersPerSecond = to.speedMetersPerSecond,
         )
     }
 
