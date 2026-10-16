@@ -99,11 +99,39 @@ object RouteMovementPlausibility {
      * first sample or two after a person starts walking again can still have a small displacement
      * while already reporting real speed). Both the implied-speed and accuracy-noise-floor
      * conditions must hold together, not either alone - deliberately conservative, so only
-     * genuinely *obvious* wobble is suppressed, never real, if slow, deliberate movement.
+     * genuinely *obvious* wobble is suppressed, never real, if slow, deliberate movement. A second,
+     * wider wobble rule applies when Android reports standing still on both fixes - see
+     * [STANDING_STILL_ACCURACY_FRACTION].
      */
     const val STATIONARY_WOBBLE_MAX_IMPLIED_SPEED_MPS = 0.3
     const val STATIONARY_WOBBLE_ACCURACY_FRACTION = 0.5
     const val STATIONARY_WOBBLE_MAX_REPORTED_SPEED_MPS = 0.3f
+
+    /**
+     * Suppresses drift while Android itself reports standing still, which the implied-speed rule
+     * above cannot: the trip's location request only delivers a fix once the position has moved
+     * 8m ([com.example.stepsplit.data.trip.FusedTripLocationClient.MIN_UPDATE_DISTANCE_METERS]), so
+     * a phone at rest hands over only drift fixes at least 8m apart. Confirmed on the A55 (trip 4,
+     * 2026-10-16): five consecutive fixes reported exactly 0 m/s while sitting 8-21m apart, 10-40s
+     * apart (implied 0.33-1.0 m/s, over [STATIONARY_WOBBLE_MAX_IMPLIED_SPEED_MPS]) with 12-17m
+     * accuracy, and Health Connect recorded only ~10 steps over that minute.
+     *
+     * So when **both** fixes report at most [STATIONARY_WOBBLE_MAX_REPORTED_SPEED_MPS] (an explicit
+     * value - a fix with no reported speed is no evidence either way), a displacement within
+     * [STANDING_STILL_ACCURACY_FRACTION] of the summed accuracy radii is wobble, however short the
+     * interval. The summed radii (each a 68% confidence radius) cover about 90% of the gap between
+     * two independent fixes of one true position when their accuracies are similar.
+     *
+     * Both ends, not just the newer one: the first fix after stopping is compared with a fix that
+     * still reported moving, so it is kept, and becomes the anchor every following drift fix is
+     * compared with. That keeps where the person actually stopped - the far end of an out-and-back
+     * walk, the last metres before Finish - and can never classify a vehicle braking to a halt
+     * (whose previous fix reports driving speed) as drift. The cost is at most one noisy segment per
+     * stop. Real movement is not lost either: a dropped fix never moves the anchor, so once a person
+     * is further than the accuracy noise from it, the next kept fix's segment covers the whole way -
+     * including from a start of walking that Android's speed estimate has not caught up with yet.
+     */
+    const val STANDING_STILL_ACCURACY_FRACTION = 1.0
 
     /**
      * [elapsedSeconds] must be strictly positive (the caller is responsible for chronological
@@ -111,8 +139,9 @@ object RouteMovementPlausibility {
      * already a finite, non-negative haversine distance (see [RouteMath.haversineMeters]'s own
      * finiteness guarantee). [fromReportedSpeedMetersPerSecond] / [toReportedSpeedMetersPerSecond]
      * are Android's reported speeds at A and B, `null` where the fix carried none; only the newer
-     * fix's speed feeds the wobble veto and the on-foot contradiction check, while either one can
-     * select the vehicle regime (see this class's own doc comment).
+     * fix's speed feeds the wobble veto and the on-foot contradiction check, both must report
+     * standing still for [STANDING_STILL_ACCURACY_FRACTION]'s rule, and either one can select the
+     * vehicle regime (see this class's own doc comment).
      */
     fun evaluate(
         distanceMeters: Double,
@@ -130,6 +159,13 @@ object RouteMovementPlausibility {
         val withinAccuracyNoiseFloor =
             distanceMeters <= (fromAccuracyMeters + toAccuracyMeters) * STATIONARY_WOBBLE_ACCURACY_FRACTION
         if (impliedSpeed <= STATIONARY_WOBBLE_MAX_IMPLIED_SPEED_MPS && withinAccuracyNoiseFloor && !movesFasterThanWobble) {
+            return MovementPlausibility.STATIONARY_WOBBLE
+        }
+        if (
+            reportsStandingStill(fromReportedSpeedMetersPerSecond) &&
+            reportsStandingStill(toReportedSpeedMetersPerSecond) &&
+            distanceMeters <= (fromAccuracyMeters + toAccuracyMeters) * STANDING_STILL_ACCURACY_FRACTION
+        ) {
             return MovementPlausibility.STATIONARY_WOBBLE
         }
 
@@ -156,6 +192,12 @@ object RouteMovementPlausibility {
 
         return MovementPlausibility.PLAUSIBLE
     }
+
+    /** Whether the fix explicitly reports at most [STATIONARY_WOBBLE_MAX_REPORTED_SPEED_MPS]; `null`, negative or NaN is no evidence of standing still. */
+    private fun reportsStandingStill(reportedSpeedMetersPerSecond: Float?): Boolean =
+        reportedSpeedMetersPerSecond != null &&
+            reportedSpeedMetersPerSecond >= 0f &&
+            reportedSpeedMetersPerSecond <= STATIONARY_WOBBLE_MAX_REPORTED_SPEED_MPS
 
     /** The faster of the two reported speeds if it is vehicle evidence (finite and above [VEHICLE_REPORTED_SPEED_THRESHOLD_MPS]), else `null` - the on-foot regime. */
     private fun vehicleReportedSpeed(fromReported: Float?, toReported: Float?): Float? =

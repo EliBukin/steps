@@ -323,6 +323,84 @@ class RouteSanitizerTest {
         assertEquals(0.0, result.distanceMeters, 1e-9)
     }
 
+    // ---- Standing still: drift while the phone reports 0 m/s (see RouteMovementPlausibility.STANDING_STILL_ACCURACY_FRACTION) ----
+
+    private fun storedPoint(fix: StandingStillDriftFixture.Fix) = point(
+        lat = StandingStillDriftFixture.latitude(fix),
+        lon = StandingStillDriftFixture.longitude(fix),
+        t = fix.t,
+        accuracy = fix.accuracy,
+        speed = fix.speed,
+    )
+
+    private fun pathMeters(points: List<TripPoint>): Double =
+        points.zipWithNext().sumOf { (a, b) -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }
+
+    @Test
+    fun `stored drift while the phone reported standing still is removed, keeping the stop and the walk on both sides - the A55 trip 4 shape`() {
+        val fixture = StandingStillDriftFixture
+        val raw = fixture.all.map(::storedPoint)
+
+        val result = RouteSanitizer.sanitize(raw)
+
+        val expected = (fixture.walkIn + fixture.stop + fixture.walkOut).map(::storedPoint)
+        assertEquals(expected, result.points)
+        assertEquals(
+            fixture.drift.map { RouteSanitizer.Rejection(storedPoint(it), RouteSampleRejectionReason.STATIONARY_WOBBLE) },
+            result.rejections,
+        )
+        assertEquals(pathMeters(expected), result.distanceMeters, 1e-6)
+        // Only the stop fix's own noise is left on top of what was walked; the raw route ran ~60m over.
+        assertTrue(result.distanceMeters < fixture.WALKED_METERS + fixture.stop.accuracy)
+        assertTrue(pathMeters(raw) > fixture.WALKED_METERS + 60.0)
+    }
+
+    @Test
+    fun `stored slow walking at 0_5 to 1 mps with a matching reported speed is kept whole after a stop`() {
+        var northMeters = 0.0
+        val route = listOf(0f, 0.5f, 0.75f, 1.0f, 0.5f).mapIndexed { i, speed ->
+            northMeters += speed * 10
+            point(10.0 + degreesLatFor(northMeters), 20.0, t = 1_000L + i * 10L, accuracy = 15f, speed = speed)
+        }
+
+        val result = RouteSanitizer.sanitize(route)
+
+        assertEquals(route, result.points)
+        assertTrue(result.rejections.isEmpty())
+    }
+
+    @Test
+    fun `a stored start of walking loses no distance while the phone's speed still reported about 0 mps`() {
+        val stop = point(10.0, 20.0, t = 1_000L, speed = 0f)
+        val walk = listOf(9.0 to 0f, 18.0 to 0.2f, 28.0 to 0.9f, 38.0 to 1.0f).mapIndexed { i, (northMeters, speed) ->
+            point(10.0 + degreesLatFor(northMeters), 20.0, t = 1_010L + i * 10L, speed = speed)
+        }
+
+        val result = RouteSanitizer.sanitize(listOf(stop) + walk)
+
+        assertEquals(listOf(stop, walk[2], walk[3]), result.points)
+        assertEquals(38.0, result.distanceMeters, 1e-6)
+    }
+
+    @Test
+    fun `a stored drive that brakes to a halt keeps the halt, and only the parked drift after it is removed`() {
+        val route = drive(listOf(0, 20, 50, 30, 0))
+        val halt = route.last()
+        val parkedDrift = listOf(9.0, -7.0, 4.0).mapIndexed { i, eastMeters ->
+            point(
+                lat = halt.latitude,
+                lon = halt.longitude + degreesLonFor(eastMeters, halt.latitude),
+                t = halt.capturedAtEpochSecond + 20L * (i + 1),
+                speed = 0f,
+            )
+        }
+
+        val result = RouteSanitizer.sanitize(route + parkedDrift)
+
+        assertEquals(route, result.points)
+        assertEquals(parkedDrift.map { RouteSanitizer.Rejection(it, RouteSampleRejectionReason.STATIONARY_WOBBLE) }, result.rejections)
+    }
+
     // ---- Legitimate sharp turn ----
 
     @Test

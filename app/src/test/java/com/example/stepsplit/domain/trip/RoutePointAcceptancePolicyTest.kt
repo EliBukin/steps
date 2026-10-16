@@ -1,5 +1,6 @@
 package com.example.stepsplit.domain.trip
 
+import kotlin.math.cos
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -238,6 +239,154 @@ class RoutePointAcceptancePolicyTest {
         assertTrue(decide(next, last) is RouteSampleDecision.Accepted)
     }
 
+    // ---- Standing still: drift while the phone reports 0 m/s (see RouteMovementPlausibility.STANDING_STILL_ACCURACY_FRACTION) ----
+
+    @Test
+    fun `the standing-still fixture reproduces the trip 4 shape the implied-speed wobble rule let through`() {
+        val stoppedFixes = listOf(StandingStillDriftFixture.stop) + StandingStillDriftFixture.drift
+        assertEquals(5, stoppedFixes.size)
+        for ((from, to) in stoppedFixes.zipWithNext()) {
+            val meters = RouteMath.haversineMeters(
+                StandingStillDriftFixture.latitude(from),
+                StandingStillDriftFixture.longitude(from),
+                StandingStillDriftFixture.latitude(to),
+                StandingStillDriftFixture.longitude(to),
+            )
+            val impliedSpeed = meters / (to.t - from.t)
+            assertTrue("$meters m apart", meters in 8.0..21.0)
+            assertTrue("$impliedSpeed m/s implied", impliedSpeed > RouteMovementPlausibility.STATIONARY_WOBBLE_MAX_IMPLIED_SPEED_MPS && impliedSpeed <= 1.0)
+            assertTrue(to.accuracy in 12f..17f && to.speed == 0f)
+        }
+    }
+
+    @Test
+    fun `drift while the phone reports standing still is rejected even when it implies more than 0_3 mps - the A55 trip 4 shape`() {
+        val fixture = StandingStillDriftFixture
+        val (accepted, rejected) = recordLive(fixture.all.map(::liveSample))
+
+        assertEquals((fixture.walkIn + fixture.stop + fixture.walkOut).map(::liveSample), accepted)
+        assertEquals(fixture.drift.map { liveSample(it) to RouteSampleRejectionReason.STATIONARY_WOBBLE }, rejected)
+        // Only the stop fix's own noise is left on top of what was walked - not the ~58m of drift.
+        assertTrue(pathMeters(accepted) < fixture.WALKED_METERS + fixture.stop.accuracy)
+    }
+
+    @Test
+    fun `slow walking at 0_5 to 1 mps with a matching reported speed is kept fix by fix, even within the accuracy noise`() {
+        // Starts from a fix reporting standing still, and every step is well within the 15+15m
+        // summed accuracy, so only the reported speed shows this is real movement.
+        var northMeters = 0.0
+        val fixes = listOf(0f, 0.5f, 0.75f, 1.0f, 0.5f).mapIndexed { i, speed ->
+            northMeters += speed * 10
+            sample(lat = 32.0 + degreesLatFor(northMeters), lon = 34.0, accuracy = 15f, capturedAt = 1_000L + i * 10L, speed = speed)
+        }
+
+        val (accepted, rejected) = recordLive(fixes)
+
+        assertEquals(fixes, accepted)
+        assertTrue(rejected.isEmpty())
+    }
+
+    @Test
+    fun `starting to walk loses no distance while the phone's speed still reports about 0 mps`() {
+        val stop = sample(lat = 32.0, lon = 34.0, capturedAt = 1_000L, speed = 0f)
+        // Walking north at ~1 m/s; Android's speed estimate takes two fixes to catch up.
+        val walk = listOf(9.0 to 0f, 18.0 to 0.2f, 28.0 to 0.9f, 38.0 to 1.0f).mapIndexed { i, (northMeters, speed) ->
+            sample(lat = 32.0 + degreesLatFor(northMeters), lon = 34.0, capturedAt = 1_010L + i * 10L, speed = speed)
+        }
+
+        val (accepted, rejected) = recordLive(listOf(stop) + walk)
+
+        // The two lagging fixes are within the 10+10m summed accuracy of the stop, so they count as
+        // drift - but the stop stays the anchor, and the next kept fix's segment covers the whole way.
+        assertEquals(listOf(stop, walk[2], walk[3]), accepted)
+        assertEquals(listOf(walk[0], walk[1]).map { it to RouteSampleRejectionReason.STATIONARY_WOBBLE }, rejected)
+        assertEquals(38.0, pathMeters(accepted), 1e-6)
+    }
+
+    @Test
+    fun `a walk the phone wrongly reports as 0 mps throughout still counts in full once it leaves the accuracy noise`() {
+        val fixes = (0..6).map { i -> sample(lat = 32.0 + degreesLatFor(11.0 * i), lon = 34.0, capturedAt = 1_000L + i * 10L, speed = 0f) }
+
+        val (accepted, _) = recordLive(fixes)
+
+        // Every second fix is more than the 10+10m summed accuracy from the last kept one.
+        assertEquals(listOf(fixes[0], fixes[2], fixes[4], fixes[6]), accepted)
+        assertEquals(66.0, pathMeters(accepted), 1e-6)
+    }
+
+    @Test
+    fun `a vehicle braking to a halt is never drift, while the parked drift after it is`() {
+        val moving = sample(lat = 32.0, lon = 34.0, accuracy = 20f, capturedAt = 1_000L, speed = 7f)
+        // ~25 km/h to a halt within 10s covers ~35m: inside the 20+20m summed accuracy, but the
+        // previous fix reports driving speed, so this is not standing still.
+        val halted = sample(lat = 32.0 + degreesLatFor(35.0), lon = 34.0, accuracy = 20f, capturedAt = 1_010L, speed = 0f)
+        val parkedDrift = sample(
+            lat = halted.latitude,
+            lon = 34.0 + degreesLonFor(15.0, halted.latitude),
+            accuracy = 20f,
+            capturedAt = 1_030L,
+            speed = 0f,
+        )
+
+        val (accepted, rejected) = recordLive(listOf(moving, halted, parkedDrift))
+
+        assertEquals(listOf(moving, halted), accepted)
+        assertEquals(listOf(parkedDrift to RouteSampleRejectionReason.STATIONARY_WOBBLE), rejected)
+    }
+
+    @Test
+    fun `while both fixes report standing still, drift up to the summed accuracy is rejected and beyond it is kept`() {
+        val last = sample(lat = 0.0, lon = 0.0, accuracy = 10f, capturedAt = 1_000L, speed = 0f)
+        // 30s apart, so ~0.65 and ~0.68 m/s implied - both over the 0.3 m/s implied-speed wobble limit.
+        val within = sample(lat = degreesLatFor(19.5), lon = 0.0, accuracy = 10f, capturedAt = 1_030L, speed = 0f)
+        assertEquals(RouteSampleRejectionReason.STATIONARY_WOBBLE, (decide(within, last) as RouteSampleDecision.Rejected).reason)
+
+        val beyond = within.copy(latitude = degreesLatFor(20.5))
+        assertTrue(decide(beyond, last) is RouteSampleDecision.Accepted)
+    }
+
+    @Test
+    fun `standing still means a reported speed of at most 0_3 mps on both fixes, never a missing one`() {
+        val last = sample(lat = 0.0, lon = 0.0, accuracy = 10f, capturedAt = 1_000L, speed = 0f)
+        val next = sample(
+            lat = degreesLatFor(15.0),
+            lon = 0.0,
+            accuracy = 10f,
+            capturedAt = 1_030L,
+            speed = RouteMovementPlausibility.STATIONARY_WOBBLE_MAX_REPORTED_SPEED_MPS,
+        )
+        assertEquals(RouteSampleRejectionReason.STATIONARY_WOBBLE, (decide(next, last) as RouteSampleDecision.Rejected).reason)
+
+        assertTrue(decide(next.copy(speedMetersPerSecond = 0.31f), last) is RouteSampleDecision.Accepted)
+        assertTrue(decide(next, last.copy(speedMetersPerSecond = 0.31f)) is RouteSampleDecision.Accepted)
+        assertTrue(decide(next.copy(speedMetersPerSecond = null), last) is RouteSampleDecision.Accepted)
+        assertTrue(decide(next, last.copy(speedMetersPerSecond = null)) is RouteSampleDecision.Accepted)
+    }
+
+    private fun liveSample(fix: StandingStillDriftFixture.Fix) = sample(
+        lat = StandingStillDriftFixture.latitude(fix),
+        lon = StandingStillDriftFixture.longitude(fix),
+        accuracy = fix.accuracy,
+        capturedAt = fix.t,
+        speed = fix.speed,
+    )
+
+    /** Feeds [fixes] through the policy in order, each compared with the last accepted one - exactly as recording does. */
+    private fun recordLive(fixes: List<RawLocationSample>): Pair<List<RawLocationSample>, List<Pair<RawLocationSample, RouteSampleRejectionReason>>> {
+        val accepted = mutableListOf<RawLocationSample>()
+        val rejected = mutableListOf<Pair<RawLocationSample, RouteSampleRejectionReason>>()
+        for (fix in fixes) {
+            when (val decision = decide(fix, accepted.lastOrNull())) {
+                is RouteSampleDecision.Accepted -> accepted += fix
+                is RouteSampleDecision.Rejected -> rejected += fix to decision.reason
+            }
+        }
+        return accepted to rejected
+    }
+
+    private fun pathMeters(fixes: List<RawLocationSample>): Double =
+        fixes.zipWithNext().sumOf { (a, b) -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }
+
     // ---- Driving: the vehicle regime (see RouteMovementPlausibility's own doc comment) ----
 
     @Test
@@ -349,6 +498,9 @@ class RoutePointAcceptancePolicyTest {
 
     private fun degreesLatFor(distanceMeters: Double): Double =
         Math.toDegrees(distanceMeters / EARTH_RADIUS_METERS)
+
+    private fun degreesLonFor(distanceMeters: Double, atLatitude: Double): Double =
+        Math.toDegrees(distanceMeters / (EARTH_RADIUS_METERS * cos(Math.toRadians(atLatitude))))
 
     private companion object {
         const val EARTH_RADIUS_METERS = 6_371_000.0

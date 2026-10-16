@@ -89,6 +89,10 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   skips a point that is less accurate than 30 m, older than 2 minutes, contradicts the speed the
   phone reports, or is just GPS drift while you stand still. Each point is compared with the last
   point the app kept:
+  - **Standing still** (the phone reports 0.3 m/s or less for this point and the last kept one), a
+    point that is closer to the last kept one than their two accuracies added together is drift,
+    and is skipped. The first point after you stop is still kept, so the route reaches where you
+    stopped.
   - **On foot** (the phone reports 6 m/s or less, or no speed at all), a point that implies moving
     faster than 6 m/s (about 22 km/h) is skipped.
   - **In a vehicle** (the phone reports more than 6 m/s for this point or the last kept one), the
