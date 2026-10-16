@@ -6,6 +6,7 @@ import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.trip.SmoothedRoute
 import com.example.stepsplit.trip.service.TripRecordingService
 import java.time.Clock
 import kotlinx.coroutines.Dispatchers
@@ -47,8 +48,8 @@ import kotlinx.coroutines.launch
 class TripsViewModel(
     private val repository: TripRepository,
     private val clock: Clock,
-    /** The displayed route distance for a list of raw points - a parameter only so a test can count how often it runs. */
-    private val routeDistanceMeters: (List<TripPoint>) -> Double = ::smoothedRouteDistanceMeters,
+    /** The displayed route for a list of raw points - a parameter only so a test can count how often it runs. */
+    private val smoothRoute: (List<TripPoint>) -> SmoothedRoute = ::smoothedRoute,
 ) : ViewModel() {
 
     init {
@@ -77,10 +78,10 @@ class TripsViewModel(
      * one-second tick that exists purely to refresh [TripsUiState.elapsedSeconds].
      */
     private val activeTripSanitizedDistance: Flow<Double> =
-        activeTripPoints.map { routeDistanceMeters(it) }.flowOn(Dispatchers.Default)
+        activeTripPoints.map { smoothRoute(it).distanceMeters }.flowOn(Dispatchers.Default)
 
-    /** Finished trips with their displayed (cleaned-up and smoothed) distances - see [FinishedTripHistory]. */
-    private val finishedTripHistory: Flow<List<TripSummary>> = FinishedTripHistory(repository, routeDistanceMeters).trips
+    /** Finished trips with their displayed (cleaned-up and smoothed) distances and thumbnails - see [FinishedTripHistory]. */
+    private val finishedTripHistory: Flow<List<FinishedTrip>> = FinishedTripHistory(repository, smoothRoute).finishedTrips
 
     private val ticker: Flow<Long> = flow {
         while (true) {

@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -17,10 +19,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.trip.RoutePoint
+import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
@@ -67,9 +72,8 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
 /**
  * The completed-trip route on a real geographic basemap, in a rounded Material 3 card that fills
  * whatever size [modifier] gives it: fits the camera to the full route with padding, draws the
- * route as a polyline, and marks the start and finish distinctly. Each change of
- * [showWholeRouteRequests] (the caller's "Show whole route" button) re-frames the route, north up,
- * after the user pans, zooms or rotates away. Must not be placed inside a vertically scrollable container - see `TripDetailScreen` for why that breaks the map's gestures. Reads only the already-recorded [points] (must be non-empty - the caller
+ * route as a polyline, and marks the start and finish distinctly. A round "Show whole route" button
+ * on the map re-frames the route, north up, after the user pans, zooms or rotates away. Must not be placed inside a vertically scrollable container - see `TripDetailScreen` for why that breaks the map's gestures. Reads only the already-recorded [points] (must be non-empty - the caller
  * shows its own empty state instead, as before) - never requests a new location fix, never shows
  * the user's live position, and never associates the route with step data.
  *
@@ -84,7 +88,7 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
  * stale failure from a different trip or a theme switch never blocks an otherwise-healthy load.
  */
 @Composable
-fun TripRouteMapCard(points: List<TripPoint>, showWholeRouteRequests: Int, modifier: Modifier = Modifier) {
+fun TripRouteMapCard(points: List<TripPoint>, modifier: Modifier = Modifier) {
     require(points.isNotEmpty()) { "TripRouteMapCard requires at least one point; callers show their own empty state." }
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         var mapLoadFailed by remember { mutableStateOf(false) }
@@ -95,13 +99,13 @@ fun TripRouteMapCard(points: List<TripPoint>, showWholeRouteRequests: Int, modif
         if (mapLoadFailed) {
             OfflineFallback(points = points, onRetry = { mapLoadFailed = false })
         } else {
-            LiveMap(points = points, isDark = isDark, showWholeRouteRequests = showWholeRouteRequests, onLoadFailed = { mapLoadFailed = true })
+            LiveMap(points = points, isDark = isDark, onLoadFailed = { mapLoadFailed = true })
         }
     }
 }
 
 @Composable
-private fun LiveMap(points: List<TripPoint>, isDark: Boolean, showWholeRouteRequests: Int, onLoadFailed: () -> Unit) {
+private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -> Unit) {
     val styleUrl = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
     val first = points.first()
     val cameraState = rememberCameraState(
@@ -109,15 +113,9 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, showWholeRouteRequ
     )
     val fit = remember(points) { RouteCameraBounds.compute(points) }
     val mapDescription = stringResource(R.string.cd_trip_map_with_markers)
-
-    // The value this map was composed with - only a later change is an actual request, so a freshly
-    // composed map (e.g. after "Retry map") isn't re-framed twice.
-    val initialShowWholeRouteRequests = remember { showWholeRouteRequests }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(fit) { cameraState.showWholeRoute(fit, animate = false) }
-    LaunchedEffect(showWholeRouteRequests) {
-        if (showWholeRouteRequests != initialShowWholeRouteRequests) cameraState.showWholeRoute(fit, animate = true)
-    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         MaplibreMap(
@@ -166,12 +164,26 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, showWholeRouteRequ
             maxWidth = maxWidth * 0.5f,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
         )
+
+        // Bottom end, just above MapLibre's attribution button, which sits in that corner (both
+        // mirror in right-to-left languages); the compass has the top end and the scale bar the top start.
+        SmallFloatingActionButton(
+            onClick = { coroutineScope.launch { cameraState.showWholeRoute(fit, animate = true) } },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 40.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_fit_route_24),
+                contentDescription = stringResource(R.string.trip_detail_map_show_route_action),
+            )
+        }
     }
 }
 
 /**
- * Frames the whole route, north up - on first display, and again whenever the user taps "Show
- * whole route" after panning, zooming or rotating away.
+ * Frames the whole route, north up - on first display, and again whenever the user taps the "Show
+ * whole route" button after panning, zooming or rotating away.
  */
 private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?, animate: Boolean) {
     when (fit) {

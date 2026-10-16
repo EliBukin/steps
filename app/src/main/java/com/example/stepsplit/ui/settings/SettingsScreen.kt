@@ -39,6 +39,8 @@ import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.data.stepsource.StepSourceHealthSnapshot
 import com.example.stepsplit.domain.classification.ClassificationThresholds
 import com.example.stepsplit.domain.model.StepCollectionHealth
+import com.example.stepsplit.ui.common.ScreenHeader
+import com.example.stepsplit.ui.common.formatCount
 import com.example.stepsplit.ui.common.statusText
 import com.example.stepsplit.ui.common.text
 import java.time.Instant
@@ -61,7 +63,7 @@ fun SettingsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { Text(text = stringResource(R.string.settings_title), style = MaterialTheme.typography.titleLarge) }
+        item { ScreenHeader(title = stringResource(R.string.settings_title)) }
         items(sections) { section ->
             when (section) {
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)
@@ -94,7 +96,7 @@ private fun GoalsSection(uiState: SettingsUiState, onSetDailyGoal: (Long) -> Uni
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                text = stringResource(R.string.settings_weekly_goal_label, uiState.goals.weeklyGoalSteps.toString()),
+                text = stringResource(R.string.settings_weekly_goal_label, formatCount(uiState.goals.weeklyGoalSteps)),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Button(onClick = { goalText.toLongOrNull()?.let(onSetDailyGoal) ?: onSetDailyGoal(-1) }) {

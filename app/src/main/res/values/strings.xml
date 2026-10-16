@@ -8,12 +8,12 @@
     <string name="nav_trips">טיולים</string>
     <string name="nav_settings">הגדרות</string>
 
-    <string name="label_total_steps">סך הכול צעדים</string>
     <string name="label_workout_steps">צעדי אימון</string>
     <string name="label_incidental_steps">צעדים יומיומיים</string>
-    <string name="label_daily_goal">יעד יומי</string>
-    <string name="label_weekly_goal">יעד שבועי</string>
     <string name="label_weekly_total">סך הכול השבוע</string>
+    <string name="today_of_goal_steps_format">מתוך %1$s צעדים</string>
+    <string name="today_of_goal_format">מתוך %1$s</string>
+    <string name="today_steps_unit">צעדים</string>
 
     <string name="last_sync_label">סנכרון אחרון: %1$s</string>
     <string name="last_sync_never">טרם בוצע סנכרון</string>
@@ -92,6 +92,7 @@
     <string name="settings_debug_label_step_counting_supported">ספירת צעדים במכשיר נתמכת</string>
 
     <string name="percent_of_goal_format">%1$d%% מהיעד</string>
+    <string name="percent_format">%1$d%%</string>
 
     <string name="cd_daily_progress">התקדמות יעד יומי, %1$d אחוז</string>
     <string name="cd_weekly_progress">התקדמות יעד שבועי, %1$d אחוז</string>
@@ -105,6 +106,7 @@
     <string name="trips_history_title">טיולים קודמים</string>
     <string name="trips_history_empty">עדיין לא נרשמו טיולים</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
+    <string name="trip_card_title_format">%1$s %2$s · %3$s</string>
 
     <string name="trip_permission_rationale_title">נדרש מיקום לטיול הזה</string>
     <string name="trip_permission_rationale_message">Steps GPS Route זקוקה למיקום מדויק כדי לתעד את מסלול הטיול שלך. המיקום ישמש רק בזמן הקלטת טיול, ולעולם לא ברקע מעבר לכך.</string>
@@ -135,10 +137,10 @@
     <string name="trip_interrupted_resume_action">המשך (עם פער)</string>
     <string name="trip_interrupted_finish_action">סיום בנקודה האחרונה</string>
 
-    <string name="trip_detail_start_label">התחלה</string>
-    <string name="trip_detail_end_label">סיום</string>
     <string name="trip_detail_duration_label">משך</string>
     <string name="trip_detail_distance_label">מרחק</string>
+    <string name="trip_detail_time_label">שעות</string>
+    <string name="trip_detail_time_range_format">%1$s – %2$s</string>
     <string name="trip_gpx_export_success">קובץ ה-GPX נשמר בהצלחה</string>
     <string name="trip_gpx_export_failure">שמירת קובץ ה-GPX נכשלה</string>
     <string name="trip_detail_share_gpx_action">שיתוף GPX</string>
@@ -173,7 +175,7 @@
     <string name="trip_map_scale_meters_format">%1$s מ׳</string>
     <string name="trip_map_scale_kilometers_format">%1$s ק״מ</string>
 
-    <string name="stats_title">סטטיסטיקה לכל הזמנים</string>
+    <string name="stats_subtitle">לכל הזמנים</string>
     <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
     <string name="stats_distance_label">מרחק הליכה משוער</string>
     <string name="stats_distance_km_format">%1$,.1f ק״מ</string>

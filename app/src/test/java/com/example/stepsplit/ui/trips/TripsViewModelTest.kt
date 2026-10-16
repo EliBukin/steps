@@ -100,7 +100,7 @@ class TripsViewModelTest {
 
         val uiState = viewModel.uiState.first { it.history.isNotEmpty() }
 
-        val listedTrip = uiState.history.single()
+        val listedTrip = uiState.history.single().summary
         assertEquals(tripId, listedTrip.id)
         assertTrue(listedTrip.distanceMeters < 999_999.0)
 
@@ -154,7 +154,7 @@ class TripsViewModelTest {
         val repository = TripRepository(database, clock)
         val viewModel = TripsViewModel(repository, clock) { points ->
             if (points.firstOrNull()?.capturedAtEpochSecond == finishedStart) finishedTripComputations.incrementAndGet()
-            RouteSmoother.smooth(RouteSanitizer.sanitize(points).points).distanceMeters
+            RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
         }
         viewModel.uiState.first { it.history.size == 1 }
 
@@ -165,5 +165,28 @@ class TripsViewModelTest {
         viewModel.uiState.first { it.history.size == 2 }
 
         assertEquals(1, finishedTripComputations.get())
+    }
+
+    @Test
+    fun `a finished trip's thumbnail is its displayed route, thinned out but keeping start and finish`() = runTest {
+        val start = fixedNow.epochSecond - 7200
+        val tripId = database.tripDao().insert(tripEntity(start, TripState.FINISHED))
+        val rawEntities = (0 until 200).map { pointEntity(tripId, start + it * 10L, it) }
+        rawEntities.forEach { database.tripPointDao().insert(it) }
+
+        val viewModel = TripsViewModel(TripRepository(database, clock), clock)
+        val preview = viewModel.uiState.first { it.history.isNotEmpty() }.history.single().routePreview
+
+        val displayed = RouteSmoother.smooth(
+            RouteSanitizer.sanitize(
+                rawEntities.map { TripPoint(it.capturedAtEpochSecond, it.latitude, it.longitude, it.accuracyMeters, it.altitudeMeters, it.speedMetersPerSecond) },
+            ).points,
+        ).points
+        assertTrue("the displayed route must be longer than a thumbnail for this test to mean anything", displayed.size > ROUTE_PREVIEW_MAX_POINTS)
+        assertEquals(ROUTE_PREVIEW_MAX_POINTS, preview.size)
+        assertEquals(displayed.first().latitude, preview.first().latitude, 1e-12)
+        assertEquals(displayed.first().longitude, preview.first().longitude, 1e-12)
+        assertEquals(displayed.last().latitude, preview.last().latitude, 1e-12)
+        assertEquals(displayed.last().longitude, preview.last().longitude, 1e-12)
     }
 }

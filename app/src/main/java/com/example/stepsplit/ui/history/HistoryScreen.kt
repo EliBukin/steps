@@ -25,7 +25,9 @@ import com.example.stepsplit.domain.aggregation.DateStepBreakdown
 import com.example.stepsplit.domain.model.GoalProgress
 import com.example.stepsplit.domain.stats.LifetimeStatsCalculator
 import com.example.stepsplit.ui.common.LegendDot
+import com.example.stepsplit.ui.common.ScreenHeader
 import com.example.stepsplit.ui.common.WeeklyStackedBarChart
+import com.example.stepsplit.ui.common.formatCount
 import com.example.stepsplit.ui.common.formatDateLabel
 import com.example.stepsplit.ui.common.formatDayLabel
 import com.example.stepsplit.ui.common.formatEstimatedDistanceMeters
@@ -51,7 +53,7 @@ fun HistoryScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Text(text = stringResource(R.string.history_title), style = MaterialTheme.typography.titleLarge)
+            ScreenHeader(title = stringResource(R.string.nav_history), subtitle = stringResource(R.string.history_title))
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -84,7 +86,7 @@ private fun DayCard(day: DateStepBreakdown, dailyGoal: Long) {
                     Text(text = formatDateLabel(day.date), style = MaterialTheme.typography.bodySmall)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(text = "${day.totalSteps}", style = MaterialTheme.typography.titleLarge)
+                    Text(text = formatCount(day.totalSteps), style = MaterialTheme.typography.titleLarge)
                     if (dailyGoal > 0) {
                         Text(
                             text = stringResource(R.string.percent_of_goal_format, progress.percent.roundToInt()),
@@ -98,12 +100,12 @@ private fun DayCard(day: DateStepBreakdown, dailyGoal: Long) {
                 StepKindStat(
                     color = WorkoutSegmentColor,
                     label = stringResource(R.string.label_workout_steps),
-                    value = "${day.workoutSteps}",
+                    value = formatCount(day.workoutSteps),
                 )
                 StepKindStat(
                     color = IncidentalSegmentColor,
                     label = stringResource(R.string.label_incidental_steps),
-                    value = "${day.incidentalSteps}",
+                    value = formatCount(day.incidentalSteps),
                 )
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

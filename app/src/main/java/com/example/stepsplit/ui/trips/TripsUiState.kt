@@ -9,7 +9,7 @@ data class TripsUiState(
     val activeTrip: TripSummary? = null,
     val interruptedTrip: TripSummary? = null,
     /** Finished trips, newest first. */
-    val history: List<TripSummary> = emptyList(),
+    val history: List<FinishedTrip> = emptyList(),
     val elapsedSeconds: Long = 0L,
     val acceptedPointCount: Int = 0,
     val gpsStatus: GpsStatus = GpsStatus.SEARCHING,

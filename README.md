@@ -44,11 +44,11 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 
 | Screen | What it shows |
 |---|---|
-| **Today** | Today's steps (total, workout and incidental) and progress toward the daily goal. This week's total and the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
+| **Today** | Today's steps inside a ring that fills toward the daily goal, with the workout and incidental steps below it. This week's total against the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
 | **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
 | **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** number of trips, total time and distance, average speed and average pace. |
-| **Trips** | Start, finish or resume a trip, with live time, distance and GPS signal while recording. Below that, your finished trips. |
-| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map. Buttons: *Show whole route*, *Share GPX* and *Delete trip*. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route. |
+| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map. The round button on the map shows the whole route again; the trash icon at the top deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
 | **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
@@ -162,8 +162,6 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
 - **A trip stops if Android closes the app.** It stays *interrupted* until you resume it.
 - **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
   tap *Start trip* again.
-- **Brief "invalid goal" message on launch.** When the app first opens, *Today* can show zeros and
-  "Enter a valid step count" for a moment until the data loads.
 
 ## For developers
 

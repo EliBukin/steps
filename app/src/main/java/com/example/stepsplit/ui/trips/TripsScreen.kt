@@ -7,20 +7,37 @@ import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,8 +45,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -40,9 +62,13 @@ import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.trip.service.TripRecordingService
+import com.example.stepsplit.ui.common.ScreenHeader
+import com.example.stepsplit.ui.common.formatClockTimeInZone
 import com.example.stepsplit.ui.common.formatDateLabel
+import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Locale
 
 /** What the current permission/location-enabled flow will do once it succeeds - Start and Resume share every dialog/check below, differing only in which command they ultimately send. */
 private sealed interface PendingRecordingAction {
@@ -104,7 +130,7 @@ fun TripsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Text(text = stringResource(R.string.trips_title), style = MaterialTheme.typography.titleLarge) }
+        item { ScreenHeader(title = stringResource(R.string.trips_title)) }
 
         uiState.interruptedTrip?.let { trip ->
             item {
@@ -134,8 +160,8 @@ fun TripsScreen(
         if (uiState.history.isEmpty()) {
             item { Text(text = stringResource(R.string.trips_history_empty), style = MaterialTheme.typography.bodyMedium) }
         } else {
-            items(uiState.history, key = { it.id }) { trip ->
-                TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.id) })
+            items(uiState.history, key = { it.summary.id }) { trip ->
+                TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
             }
         }
     }
@@ -209,12 +235,18 @@ private fun IdleStatusCard(onStartClick: () -> Unit) {
             Text(text = stringResource(R.string.trips_status_off_title), style = MaterialTheme.typography.titleMedium)
             Text(text = stringResource(R.string.trips_status_off_description), style = MaterialTheme.typography.bodyMedium)
             Button(onClick = onStartClick, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                 Text(stringResource(R.string.trips_start_button))
             }
         }
     }
 }
 
+/**
+ * The live trip: a calm card (recording is the normal, wanted state - the red error colors are kept
+ * for an interrupted trip), a blinking dot, the GPS signal, and a clock that ticks every second.
+ */
 @Composable
 private fun ActiveRecordingCard(
     uiState: TripsUiState,
@@ -226,28 +258,29 @@ private fun ActiveRecordingCard(
         modifier = Modifier
             .fillMaxWidth()
             .semantics { contentDescription = recordingActiveDescription },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = stringResource(R.string.trip_recording_indicator),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RecordingDot()
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.trip_recording_indicator),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                GpsStatusChip(uiState.gpsStatus)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
                 Column {
                     Text(stringResource(R.string.trip_elapsed_label), style = MaterialTheme.typography.labelMedium)
-                    Text(formatElapsed(uiState.elapsedSeconds), style = MaterialTheme.typography.headlineSmall)
+                    Text(formatElapsedClock(uiState.elapsedSeconds), style = MaterialTheme.typography.headlineMedium)
                 }
                 Column {
                     Text(stringResource(R.string.trip_distance_label), style = MaterialTheme.typography.labelMedium)
-                    Text(formatDistance(uiState.activeTrip?.distanceMeters ?: 0.0), style = MaterialTheme.typography.headlineSmall)
+                    Text(formatDistance(uiState.activeTrip?.distanceMeters ?: 0.0), style = MaterialTheme.typography.headlineMedium)
                 }
             }
-            Text(
-                text = "${stringResource(R.string.trip_gps_status_label)}: ${gpsStatusText(uiState.gpsStatus)}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
             Text(
                 text = stringResource(R.string.trip_points_count_label, uiState.acceptedPointCount),
                 style = MaterialTheme.typography.bodySmall,
@@ -260,8 +293,67 @@ private fun ActiveRecordingCard(
                 )
             }
             Button(onClick = onFinishClick, modifier = Modifier.fillMaxWidth()) {
+                Icon(painterResource(R.drawable.ic_stop_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
                 Text(stringResource(R.string.trip_finish_button))
             }
+        }
+    }
+}
+
+/**
+ * A red dot that slowly fades in and out while a trip records. It fades *up* to fully red: with
+ * animations turned off on the phone, an infinite animation rests on its target value, and a solid
+ * dot reads better than a faint one.
+ */
+@Composable
+private fun RecordingDot() {
+    val dotAlpha by rememberInfiniteTransition(label = "recording-dot").animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 900), RepeatMode.Reverse),
+        label = "recording-dot-alpha",
+    )
+    val color = MaterialTheme.colorScheme.error
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .graphicsLayer { alpha = dotAlpha }
+            .background(color, CircleShape),
+    )
+}
+
+/** "GPS: Good" with signal bars: none lit while searching, two when weak, all four when good. */
+@Composable
+private fun GpsStatusChip(status: GpsStatus) {
+    val litBars = when (status) {
+        GpsStatus.SEARCHING -> 0
+        GpsStatus.WEAK -> 2
+        GpsStatus.GOOD -> 4
+    }
+    val litColor = MaterialTheme.colorScheme.primary
+    val dimColor = MaterialTheme.colorScheme.outlineVariant
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Canvas(modifier = Modifier.size(width = 16.dp, height = 12.dp)) {
+                val barWidth = size.width / 7
+                for (i in 0 until 4) {
+                    val barHeight = size.height * (i + 1) / 4
+                    drawRect(
+                        color = if (i < litBars) litColor else dimColor,
+                        topLeft = Offset(x = i * 2 * barWidth, y = size.height - barHeight),
+                        size = Size(barWidth, barHeight),
+                    )
+                }
+            }
+            Text(
+                text = "${stringResource(R.string.trip_gps_status_label)}: ${gpsStatusText(status)}",
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }
@@ -291,19 +383,37 @@ private fun InterruptedTripCard(onResume: () -> Unit, onFinishAtLastPoint: () ->
     }
 }
 
+/** One finished trip: a small picture of its route, then its day, date and start time, distance and duration. */
 @Composable
-private fun TripHistoryCard(trip: TripSummary, onClick: () -> Unit) {
+private fun TripHistoryCard(trip: FinishedTrip, onClick: () -> Unit) {
+    val summary = trip.summary
     Card(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text = formatDateLabel(tripStartDate(trip)), style = MaterialTheme.typography.titleSmall)
-            Text(
-                text = stringResource(
-                    R.string.trip_card_distance_duration_format,
-                    formatDistance(trip.distanceMeters),
-                    formatElapsed(tripDurationSeconds(trip)),
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-            )
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            RouteThumbnail(points = trip.routePreview)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val date = tripStartDate(summary)
+                Text(
+                    text = stringResource(
+                        R.string.trip_card_title_format,
+                        formatDayLabel(date),
+                        formatDateLabel(date),
+                        formatClockTimeInZone(summary.startEpochSecond, ZoneId.of(summary.startZoneId)),
+                    ),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.trip_card_distance_duration_format,
+                        formatDistance(summary.distanceMeters),
+                        formatElapsed(tripDurationSeconds(summary)),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
     }
 }
@@ -328,6 +438,12 @@ internal fun formatDistance(meters: Double): String = if (meters >= 1000.0) {
     stringResource(R.string.trip_unit_kilometers_format, meters / 1000.0)
 } else {
     stringResource(R.string.trip_unit_meters_format, meters.toInt())
+}
+
+/** A running clock for the trip being recorded, "h:mm:ss" - e.g. "0:42:17". */
+internal fun formatElapsedClock(totalSeconds: Long): String {
+    val seconds = totalSeconds.coerceAtLeast(0L)
+    return String.format(Locale.ROOT, "%d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
 }
 
 @Composable

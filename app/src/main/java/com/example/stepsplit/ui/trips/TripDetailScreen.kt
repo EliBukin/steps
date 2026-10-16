@@ -3,38 +3,46 @@ package com.example.stepsplit.ui.trips
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.ui.common.formatClockTimeInZone
 import com.example.stepsplit.ui.common.formatDateLabel
+import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
@@ -49,8 +57,6 @@ fun TripDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    // Bumped by the "Show whole route" button; TripRouteMapCard re-frames the route on each change.
-    var showWholeRouteRequests by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val gpxShareFailureMessage = stringResource(R.string.trip_gpx_share_failure)
@@ -94,28 +100,45 @@ fun TripDetailScreen(
     // scrollable container, any drag with a vertical component (an upward pan, a diagonal drag, a
     // pinch) is claimed by the container after a few pixels and cancelled for the map, so the map
     // stalls mid-gesture. Here nothing competes for touches on the map, and it takes whatever
-    // height the details above and the buttons below leave free.
+    // height the one-line summary above and the Share button below leave free.
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_navigate_back))
             }
-            Text(text = formatDateLabel(date), style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = "${formatDayLabel(date)} ${formatDateLabel(date)}",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f).semantics { heading() },
+            )
+            IconButton(onClick = { showDeleteConfirm = true }) {
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.trip_detail_delete_action))
+            }
         }
 
         val zoneId = ZoneId.of(trip.startZoneId)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                DetailRow(stringResource(R.string.trip_detail_start_label), formatClockTimeInZone(trip.startEpochSecond, zoneId))
-                DetailRow(
-                    stringResource(R.string.trip_detail_end_label),
-                    trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                SummaryCell(
+                    label = stringResource(R.string.trip_detail_time_label),
+                    value = stringResource(
+                        R.string.trip_detail_time_range_format,
+                        formatClockTimeInZone(trip.startEpochSecond, zoneId),
+                        trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
+                    ),
                 )
-                DetailRow(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
-                DetailRow(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
+                SummaryCell(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
+                SummaryCell(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
             }
         }
 
@@ -123,30 +146,13 @@ fun TripDetailScreen(
             Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.weight(1f))
         } else {
-            TripRouteMapCard(
-                points = uiState.points,
-                showWholeRouteRequests = showWholeRouteRequests,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            TripRouteMapCard(points = uiState.points, modifier = Modifier.fillMaxWidth().weight(1f))
         }
 
-        // Half the default side padding, so all three buttons fit on one line on a typical phone;
-        // the row still wraps onto a second line rather than clipping on narrow screens, with large
-        // font sizes, or with longer translations.
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { showWholeRouteRequests++ },
-                enabled = uiState.points.isNotEmpty(),
-                contentPadding = CompactButtonPadding,
-            ) {
-                Text(stringResource(R.string.trip_detail_map_show_route_action))
-            }
-            OutlinedButton(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), contentPadding = CompactButtonPadding) {
-                Text(stringResource(R.string.trip_detail_share_gpx_action))
-            }
-            OutlinedButton(onClick = { showDeleteConfirm = true }, contentPadding = CompactButtonPadding) {
-                Text(stringResource(R.string.trip_detail_delete_action))
-            }
+        Button(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            Text(stringResource(R.string.trip_detail_share_gpx_action))
         }
     }
 
@@ -176,13 +182,12 @@ fun TripDetailScreen(
     }
 }
 
-private val CompactButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-
+/** One label-over-value column of the summary row: time, duration or distance. */
 @Composable
-private fun DetailRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(text = label, style = MaterialTheme.typography.bodyMedium)
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
+private fun SummaryCell(label: String, value: String) {
+    Column(modifier = Modifier.semantics(mergeDescendants = true) {}) {
+        Text(text = label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, style = MaterialTheme.typography.titleMedium, maxLines = 1)
     }
 }
 

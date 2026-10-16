@@ -8,12 +8,12 @@
     <string name="nav_trips">Trips</string>
     <string name="nav_settings">Settings</string>
 
-    <string name="label_total_steps">Total steps</string>
     <string name="label_workout_steps">Workout steps</string>
     <string name="label_incidental_steps">Incidental steps</string>
-    <string name="label_daily_goal">Daily goal</string>
-    <string name="label_weekly_goal">Weekly goal</string>
     <string name="label_weekly_total">Total this week</string>
+    <string name="today_of_goal_steps_format">of %1$s steps</string>
+    <string name="today_of_goal_format">of %1$s</string>
+    <string name="today_steps_unit">steps</string>
 
     <string name="last_sync_label">Last synced: %1$s</string>
     <string name="last_sync_never">Not synced yet</string>
@@ -92,6 +92,7 @@
     <string name="settings_debug_label_step_counting_supported">On-device step counting supported</string>
 
     <string name="percent_of_goal_format">%1$d%% of goal</string>
+    <string name="percent_format">%1$d%%</string>
 
     <string name="cd_daily_progress">Daily goal progress, %1$d percent</string>
     <string name="cd_weekly_progress">Weekly goal progress, %1$d percent</string>
@@ -105,6 +106,7 @@
     <string name="trips_history_title">Previous trips</string>
     <string name="trips_history_empty">No trips recorded yet</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
+    <string name="trip_card_title_format">%1$s %2$s · %3$s</string>
 
     <string name="trip_permission_rationale_title">Location needed for this trip</string>
     <string name="trip_permission_rationale_message">Steps GPS Route needs precise location to record your trip\'s route. Location is only used while a trip is being recorded, never in the background otherwise.</string>
@@ -135,10 +137,10 @@
     <string name="trip_interrupted_resume_action">Resume (with a gap)</string>
     <string name="trip_interrupted_finish_action">Finish at last point</string>
 
-    <string name="trip_detail_start_label">Started</string>
-    <string name="trip_detail_end_label">Finished</string>
     <string name="trip_detail_duration_label">Duration</string>
     <string name="trip_detail_distance_label">Distance</string>
+    <string name="trip_detail_time_label">Time</string>
+    <string name="trip_detail_time_range_format">%1$s – %2$s</string>
     <string name="trip_gpx_export_success">GPX file saved successfully</string>
     <string name="trip_gpx_export_failure">Failed to save the GPX file</string>
     <string name="trip_detail_share_gpx_action">Share GPX</string>
@@ -173,7 +175,7 @@
     <string name="trip_map_scale_meters_format">%1$s m</string>
     <string name="trip_map_scale_kilometers_format">%1$s km</string>
 
-    <string name="stats_title">Lifetime Stats</string>
+    <string name="stats_subtitle">All time</string>
     <string name="stats_lifetime_steps_label">Total steps ever</string>
     <string name="stats_distance_label">Estimated walking distance</string>
     <string name="stats_distance_km_format">%1$,.1f km</string>

@@ -6,12 +6,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,6 +24,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.stats.LifetimeWalkingStats
 import com.example.stepsplit.domain.trip.TripTotals
+import com.example.stepsplit.ui.common.PlainProgressBar
+import com.example.stepsplit.ui.common.ScreenHeader
 import com.example.stepsplit.ui.common.formatDateLabel
 import com.example.stepsplit.ui.trips.formatDistance
 import com.example.stepsplit.ui.trips.formatElapsed
@@ -57,7 +57,7 @@ fun StatsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { Text(text = stringResource(R.string.stats_title), style = MaterialTheme.typography.titleLarge) }
+        item { ScreenHeader(title = stringResource(R.string.nav_stats), subtitle = stringResource(R.string.stats_subtitle)) }
 
         if (!uiState.stats.hasData) {
             item { ZeroDataCard() }
@@ -208,10 +208,7 @@ private fun StatRow(label: String, value: String, icon: String? = null, progress
             Text(text = value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
         }
         if (progress != null) {
-            LinearProgressIndicator(
-                progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(6.dp),
-            )
+            PlainProgressBar(fraction = progress, modifier = Modifier.padding(top = 8.dp), height = 6.dp)
         }
         if (caption != null) {
             Text(text = caption, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))

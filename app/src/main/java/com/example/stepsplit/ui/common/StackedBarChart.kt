@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,7 +39,7 @@ import com.example.stepsplit.domain.aggregation.DateStepBreakdown
 import com.example.stepsplit.ui.theme.IncidentalSegmentColor
 import com.example.stepsplit.ui.theme.WorkoutSegmentColor
 
-private val YAxisWidth = 36.dp
+private val YAxisWidth = 40.dp
 private val GridLineFractions = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
 
 /** Extra breathing room above [LabelHeadroom]'s own line-height estimate, so it is never a tight fit. */
@@ -138,8 +139,8 @@ private fun YAxisLabels(scaleMax: Long, height: Dp) {
         verticalArrangement = Arrangement.SpaceBetween,
         horizontalAlignment = Alignment.End,
     ) {
-        Text(text = "$scaleMax", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(text = "${scaleMax / 2}", style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text = formatCount(scaleMax), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text = formatCount(scaleMax / 2), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(text = "0", style = MaterialTheme.typography.labelSmall)
     }
 }
@@ -194,20 +195,22 @@ private fun DayBar(day: DateStepBreakdown, scaleMax: Long, barAreaHeight: Dp, mo
                 )
             }
         }
+        // May be a little wider than the bar ("12,345"); it spills into the gap between bars rather
+        // than being cut short.
         Text(
-            text = "${day.totalSteps}",
+            text = formatCount(day.totalSteps),
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
             textAlign = TextAlign.Center,
-            modifier = Modifier.align(Alignment.BottomCenter).offset(y = -barHeight),
+            modifier = Modifier.align(Alignment.BottomCenter).offset(y = -barHeight).wrapContentWidth(unbounded = true),
         )
     }
 }
 
 @Composable
 private fun GoalLegend(dailyGoal: Long, color: Color) {
-    val description = stringResource(R.string.history_chart_goal_label, dailyGoal.toString())
+    val description = stringResource(R.string.history_chart_goal_label, formatCount(dailyGoal))
     Row(
         modifier = Modifier
             .padding(start = YAxisWidth)

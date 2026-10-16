@@ -61,4 +61,61 @@ class RouteTraceGeometryTest {
             assertTrue(it.y in 0f..150f)
         }
     }
+
+    @Test
+    fun `fitKeepingShape keeps a wide route wide instead of stretching it into a square`() {
+        // At the equator a degree of longitude and of latitude are the same length: 2 by 1 degrees.
+        val points = listOf(RoutePoint(0.0, 0.0), RoutePoint(1.0, 2.0))
+        val offsets = RouteTraceGeometry.fitKeepingShape(points, 100f, 100f, paddingFraction = 0f)
+        val width = offsets[1].x - offsets[0].x
+        val height = offsets[0].y - offsets[1].y
+        assertEquals(100f, width, 0.01f)
+        assertEquals(50f, height, 0.01f)
+        // Centered vertically, and north is up.
+        assertEquals(75f, offsets[0].y, 0.01f)
+        assertEquals(25f, offsets[1].y, 0.01f)
+    }
+
+    @Test
+    fun `fitKeepingShape narrows longitude away from the equator`() {
+        // At 60 degrees north a degree of longitude is half as long as a degree of latitude, so a
+        // route 2 degrees east and 1 degree north is square on the ground.
+        val points = listOf(RoutePoint(59.5, 0.0), RoutePoint(60.5, 2.0))
+        val offsets = RouteTraceGeometry.fitKeepingShape(points, 100f, 100f, paddingFraction = 0f)
+        assertEquals(offsets[1].x - offsets[0].x, offsets[0].y - offsets[1].y, 0.5f)
+    }
+
+    @Test
+    fun `fitKeepingShape centers a single point and handles an empty route`() {
+        val single = RouteTraceGeometry.fitKeepingShape(listOf(RoutePoint(31.0, 35.0)), 60f, 40f)
+        assertEquals(30f, single.single().x, 0.01f)
+        assertEquals(20f, single.single().y, 0.01f)
+        assertTrue(RouteTraceGeometry.fitKeepingShape(emptyList(), 60f, 40f).isEmpty())
+    }
+
+    @Test
+    fun `fitKeepingShape draws a straight north-south route as a centered vertical line`() {
+        val points = listOf(RoutePoint(10.0, 20.0), RoutePoint(10.5, 20.0), RoutePoint(11.0, 20.0))
+        val offsets = RouteTraceGeometry.fitKeepingShape(points, 100f, 100f, paddingFraction = 0.1f)
+        offsets.forEach { assertEquals(50f, it.x, 0.01f) }
+        assertEquals(90f, offsets.first().y, 0.01f)
+        assertEquals(10f, offsets.last().y, 0.01f)
+    }
+
+    @Test
+    fun `downsample keeps a short route as it is`() {
+        val points = (0 until 10).map { RoutePoint(it.toDouble(), 0.0) }
+        assertEquals(points, RouteTraceGeometry.downsample(points, 64))
+    }
+
+    @Test
+    fun `downsample thins a long route evenly and keeps its first and last points`() {
+        val points = (0 until 1000).map { RoutePoint(it.toDouble(), 0.0) }
+        val thinned = RouteTraceGeometry.downsample(points, 64)
+        assertEquals(64, thinned.size)
+        assertEquals(points.first(), thinned.first())
+        assertEquals(points.last(), thinned.last())
+        val gaps = thinned.zipWithNext { a, b -> b.latitude - a.latitude }
+        assertTrue("points must stay in order and evenly spread: $gaps", gaps.all { it in 15.0..17.0 })
+    }
 }
