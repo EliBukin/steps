@@ -158,15 +158,34 @@ class TripRecordingServiceSpotTest {
     @Test
     fun `a second spot from the notification gets the next number`() {
         val service = recordingService()
+        val first = deliverFix(lat = 31.7701)
+        val markSpot = command(TripRecordingService.ACTION_MARK_SPOT)
+
+        service.onStartCommand(markSpot, 0, 2)
+        waitUntil("the first spot") { ShadowToast.getTextOfLatestToast() == "Spot 1 marked" }
+        // A newer fix a few metres on: one fix, one spot, so the second tap needs one.
+        waitUntil("the next second") { Instant.now().epochSecond > first.capturedAtEpochSecond }
+        deliverFix(lat = 31.7703)
+        service.onStartCommand(markSpot, 0, 3)
+        waitUntil("the second spot") { ShadowToast.getTextOfLatestToast() == "Spot 2 marked" }
+
+        assertEquals("Spot 2 marked", shownNotification().text)
+    }
+
+    @Test
+    fun `tapping the notification's Mark spot twice on one fix marks one spot`() {
+        val service = recordingService()
         deliverFix(lat = 31.7701)
         val markSpot = command(TripRecordingService.ACTION_MARK_SPOT)
 
         service.onStartCommand(markSpot, 0, 2)
         waitUntil("the first spot") { ShadowToast.getTextOfLatestToast() == "Spot 1 marked" }
         service.onStartCommand(markSpot, 0, 3)
-        waitUntil("the second spot") { ShadowToast.getTextOfLatestToast() == "Spot 2 marked" }
+        waitUntil("the second tap's answer") { ShadowToast.getTextOfLatestToast() == "Spot 1 is already marked here" }
 
-        assertEquals("Spot 2 marked", shownNotification().text)
+        val tripId = container.tripRecordingCoordinator.recordingTripId!!
+        assertEquals(1, runBlocking { container.tripRepository.getTripSpots(tripId) }.size)
+        assertEquals("Spot 1 is already marked here", shownNotification().text)
     }
 
     /**

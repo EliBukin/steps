@@ -11,9 +11,9 @@ interface TripSpotDao {
     @Insert
     suspend fun insert(spot: TripSpotEntity): Long
 
-    /** The highest number used in [tripId] so far, or null before its first spot - see [com.example.stepsplit.data.trip.TripRepository.addSpot]. */
-    @Query("SELECT MAX(number) FROM trip_spots WHERE tripId = :tripId")
-    suspend fun maxNumber(tripId: Long): Int?
+    /** [tripId]'s spot with the highest number - the newest - or null before its first spot - see [com.example.stepsplit.data.trip.TripRepository.addSpot]. */
+    @Query("SELECT * FROM trip_spots WHERE tripId = :tripId ORDER BY number DESC LIMIT 1")
+    suspend fun newest(tripId: Long): TripSpotEntity?
 
     @Query("SELECT * FROM trip_spots WHERE tripId = :tripId ORDER BY number ASC")
     suspend fun getAllForTrip(tripId: Long): List<TripSpotEntity>

@@ -16,6 +16,8 @@ fun spotDisplayName(resources: Resources, spot: TripSpot): String =
 fun spotMarkMessage(resources: Resources, result: SpotMarkResult): String = when (result) {
     is SpotMarkResult.Marked ->
         resources.getString(R.string.trip_spot_marked_message, resources.getString(R.string.trip_spot_default_name, result.number))
+    is SpotMarkResult.AlreadyMarked ->
+        resources.getString(R.string.trip_spot_already_marked_message, resources.getString(R.string.trip_spot_default_name, result.number))
     SpotMarkResult.NoFix -> resources.getString(R.string.trip_spot_no_fix_message)
     SpotMarkResult.NotRecording -> resources.getString(R.string.trip_spot_not_recording_message)
     SpotMarkResult.Failed -> resources.getString(R.string.trip_spot_failed_message)

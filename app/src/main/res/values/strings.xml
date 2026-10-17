@@ -176,6 +176,7 @@
     <string name="trip_spots_count_label">מקומות שסומנו: %1$d</string>
     <string name="trip_spot_default_name">מקום %1$d</string>
     <string name="trip_spot_marked_message">%1$s סומן</string>
+    <string name="trip_spot_already_marked_message">%1$s כבר מסומן כאן</string>
     <string name="trip_spot_no_fix_message">אין עדיין מיקום GPS – המקום לא סומן</string>
     <string name="trip_spot_not_recording_message">אין טיול בהקלטה – המקום לא סומן</string>
     <string name="trip_spot_failed_message">לא ניתן היה לשמור את המקום</string>

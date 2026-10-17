@@ -27,6 +27,11 @@ import kotlin.math.abs
  *    at the first fix that is close enough, or that was captured after T, since no later fix can be
  *    closer in time ([needsCloserFix]). When the wait ends, the closest candidate so far is used.
  * 4. **No candidate at all: no spot**, and the owner is told there is no GPS fix yet.
+ * 5. **One fix, one spot.** The fix the trip's last spot was placed at counts as a fix the phone
+ *    delivered, like any other: a second tap the phone can't have moved [MAX_DRIFT_METERS] since -
+ *    a double tap, a bump in a jeep - ends on that same fix, and a fix the trip's newest spot
+ *    already uses is not saved again ([isSameFix]); the owner is told that spot is already there.
+ *    After the phone has moved on, a newer fix wins and the tap is a new spot.
  *
  * The spot keeps the fix's own time and height with its position, so the three always agree.
  */
@@ -71,6 +76,10 @@ object SpotFixRule {
      * [markedAtEpochSecond]; otherwise when the phone may have moved more than [MAX_DRIFT_METERS]
      * since [best], at the speed it reported (none counts as standing still).
      */
+    /** Whether [fix] is the fix a spot captured at [capturedAtEpochSecond], at [latitude], [longitude] was placed at - step 5. */
+    fun isSameFix(fix: RawLocationSample, capturedAtEpochSecond: Long, latitude: Double, longitude: Double): Boolean =
+        fix.capturedAtEpochSecond == capturedAtEpochSecond && fix.latitude == latitude && fix.longitude == longitude
+
     fun needsCloserFix(best: RawLocationSample?, markedAtEpochSecond: Long): Boolean {
         if (best == null) return true
         val secondsBefore = markedAtEpochSecond - best.capturedAtEpochSecond

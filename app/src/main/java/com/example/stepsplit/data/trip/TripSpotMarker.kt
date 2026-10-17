@@ -11,12 +11,17 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** What marking a spot did - the Trips screen's snackbar and the notification say it. */
 sealed interface SpotMarkResult {
     /** Saved as spot [number] of the trip. */
     data class Marked(val number: Int) : SpotMarkResult
+
+    /** The tap ended on the fix spot [number] already uses - a double tap, a bump - so nothing new was saved. */
+    data class AlreadyMarked(val number: Int) : SpotMarkResult
 
     /** No fix fits [SpotFixRule] - nothing saved. */
     data object NoFix : SpotMarkResult
@@ -37,6 +42,12 @@ sealed interface SpotMarkResult {
  * recording receives) and, when the newest isn't close enough, also from one fresh request to
  * [locationClient]. Only a trip [coordinator] is collecting for, in this process, can get a spot:
  * "actively recording", not an ACTIVE row whose recording died.
+ *
+ * One fix, one spot (SpotFixRule step 5): marks run one at a time, and the fix the last one was
+ * placed at is one more fix to choose from. In a jeep the first tap usually waits for a fresh fix
+ * the recording never sees, so without it a bump a moment later would ask for another one, ten
+ * metres on, and save a second spot; with it, that tap ends on the same fix, which
+ * [TripRepository.addSpot] doesn't save again.
  */
 class TripSpotMarker(
     private val repository: TripRepository,
@@ -47,6 +58,12 @@ class TripSpotMarker(
     private val scope: CoroutineScope,
     private val waitForFixMillis: Long = SpotFixRule.WAIT_FOR_FIX_MILLIS,
 ) {
+    /** One mark at a time, so a tap sees the fix the one before it used. */
+    private val marking = Mutex()
+
+    /** The trip and fix the last spot was marked (or found already marked) at - guarded by [marking]. */
+    private var lastMarked: Pair<Long, RawLocationSample>? = null
+
     /**
      * Marks a spot now and says how it went. The work runs on [scope], which outlives the caller:
      * leaving the Trips screen, or the service command for the notification action ending, while
@@ -58,9 +75,14 @@ class TripSpotMarker(
         val markedAtEpochSecond = clock.instant().epochSecond
         val tripId = coordinator.recordingTripId?.takeIf { coordinator.isActive } ?: return SpotMarkResult.NotRecording
         return try {
-            val trip = repository.getTrip(tripId)?.takeIf { it.state == TripState.ACTIVE.name } ?: return SpotMarkResult.NotRecording
-            val fix = chooseFix(markedAtEpochSecond, trip.startEpochSecond) ?: return SpotMarkResult.NoFix
-            repository.addSpot(tripId, fix)?.let { SpotMarkResult.Marked(it) } ?: SpotMarkResult.NotRecording
+            marking.withLock {
+                val trip = repository.getTrip(tripId)?.takeIf { it.state == TripState.ACTIVE.name } ?: return SpotMarkResult.NotRecording
+                val lastFix = lastMarked?.takeIf { it.first == tripId }?.second
+                val fix = chooseFix(markedAtEpochSecond, trip.startEpochSecond, lastFix) ?: return SpotMarkResult.NoFix
+                repository.addSpot(tripId, fix).also { result ->
+                    if (result is SpotMarkResult.Marked || result is SpotMarkResult.AlreadyMarked) lastMarked = tripId to fix
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -68,9 +90,14 @@ class TripSpotMarker(
         }
     }
 
-    /** Steps 2 and 3 of [SpotFixRule]: the newest fix if close enough, otherwise the closest that arrives within [waitForFixMillis]. */
-    private suspend fun chooseFix(markedAtEpochSecond: Long, tripStartEpochSecond: Long): RawLocationSample? {
-        var best = coordinator.latestFix.value?.let { SpotFixRule.closer(null, it, markedAtEpochSecond, tripStartEpochSecond) }
+    /**
+     * Steps 2, 3 and 5 of [SpotFixRule]: the newest fix if close enough, otherwise the closest that
+     * arrives within [waitForFixMillis]. [lastFix], the fix the trip's last spot used, counts as one
+     * of the fixes on hand, ahead of the recording's newest when both are as close in time.
+     */
+    private suspend fun chooseFix(markedAtEpochSecond: Long, tripStartEpochSecond: Long, lastFix: RawLocationSample?): RawLocationSample? {
+        var best = listOfNotNull(lastFix, coordinator.latestFix.value)
+            .fold(null as RawLocationSample?) { closest, fix -> SpotFixRule.closer(closest, fix, markedAtEpochSecond, tripStartEpochSecond) }
         if (!SpotFixRule.needsCloserFix(best, markedAtEpochSecond)) return best
         withTimeoutOrNull(waitForFixMillis) {
             merge(

@@ -92,4 +92,15 @@ class SpotFixRuleTest {
         assertEquals(50f, SpotFixRule.MAX_ACCURACY_METERS, 0f)
         assertEquals(10_000L, SpotFixRule.WAIT_FOR_FIX_MILLIS)
     }
+
+    @Test
+    fun `the same fix is the same time and the same place, nothing else`() {
+        val spotFix = RawLocationSample(31.7701, 35.2101, 6f, 1_000L, altitudeMeters = 812.0, speedMetersPerSecond = 11f)
+
+        assertTrue(SpotFixRule.isSameFix(spotFix, 1_000L, 31.7701, 35.2101))
+        assertTrue("accuracy, height and speed aren't stored with a spot", SpotFixRule.isSameFix(spotFix.copy(accuracyMeters = 9f, altitudeMeters = null, speedMetersPerSecond = null), 1_000L, 31.7701, 35.2101))
+        assertFalse("a second later", SpotFixRule.isSameFix(spotFix, 1_001L, 31.7701, 35.2101))
+        assertFalse("a metre away", SpotFixRule.isSameFix(spotFix, 1_000L, 31.7701 + 1e-5, 35.2101))
+        assertFalse(SpotFixRule.isSameFix(spotFix, 1_000L, 31.7701, 35.2102))
+    }
 }

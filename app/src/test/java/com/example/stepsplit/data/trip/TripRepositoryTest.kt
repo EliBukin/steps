@@ -1149,8 +1149,8 @@ class TripRepositoryTest {
     fun `spots are numbered per trip from 1 and keep their fix's time, place and height`() = runTest {
         val tripId = repository.startTrip()
 
-        assertEquals(1, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 10, lat = 31.771)))
-        assertEquals(2, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 20, altitude = null)))
+        assertEquals(SpotMarkResult.Marked(1), repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 10, lat = 31.771)))
+        assertEquals(SpotMarkResult.Marked(2), repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 20, altitude = null)))
 
         val spots = repository.getTripSpots(tripId)
         assertEquals(listOf(1, 2), spots.map { it.number })
@@ -1165,24 +1165,38 @@ class TripRepositoryTest {
         repository.finishTrip(tripId, fixedNow.epochSecond + 60)
         clock.instant = fixedNow.plusSeconds(3_600)
         val nextTripId = repository.startTrip()
-        assertEquals(1, repository.addSpot(nextTripId, spotFix(fixedNow.epochSecond + 3_610)))
+        assertEquals(SpotMarkResult.Marked(1), repository.addSpot(nextTripId, spotFix(fixedNow.epochSecond + 3_610)))
         assertEquals(listOf(1, 2), repository.observeTripSpots(tripId).first().map { it.number })
     }
 
     @Test
     fun `a spot is saved only while its trip records, and never from before it started or past a Finish cutoff`() = runTest {
         val tripId = repository.startTrip()
-        assertNull("before Start", repository.addSpot(tripId, spotFix(fixedNow.epochSecond - 1)))
+        assertEquals("before Start", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(fixedNow.epochSecond - 1)))
 
         repository.beginFinish(tripId, token = 7L, cutoffEpochSecond = fixedNow.epochSecond + 30)
-        assertNull("after the cutoff", repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 31)))
-        assertEquals(1, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 30)))
+        assertEquals("after the cutoff", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 31)))
+        assertEquals(SpotMarkResult.Marked(1), repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 30)))
         repository.cancelFinish(7L)
 
         repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
-        assertNull("interrupted", repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 40)))
-        assertNull("unknown trip", repository.addSpot(tripId + 99, spotFix(fixedNow.epochSecond + 40)))
+        assertEquals("interrupted", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 40)))
+        assertEquals("unknown trip", SpotMarkResult.NotRecording, repository.addSpot(tripId + 99, spotFix(fixedNow.epochSecond + 40)))
         assertEquals(1, repository.getTripSpots(tripId).size)
+    }
+
+    /** Two marks that end on one fix - a double tap - are one spot, even when both reach the repository. */
+    @Test
+    fun `the same fix as the trip's newest spot is not saved again`() = runTest {
+        val tripId = repository.startTrip()
+        val fix = spotFix(fixedNow.epochSecond + 10)
+
+        assertEquals(SpotMarkResult.Marked(1), repository.addSpot(tripId, fix))
+        assertEquals(SpotMarkResult.AlreadyMarked(1), repository.addSpot(tripId, fix))
+        // A fix at the same place but a later time is a new spot - standing at a spring, marking again later.
+        assertEquals(SpotMarkResult.Marked(2), repository.addSpot(tripId, fix.copy(capturedAtEpochSecond = fix.capturedAtEpochSecond + 40)))
+
+        assertEquals(listOf(1, 2), repository.getTripSpots(tripId).map { it.number })
     }
 
     @Test
@@ -1200,7 +1214,7 @@ class TripRepositoryTest {
         assertEquals("Ein Fawwar spring", spots[0].name)
         assertEquals(60, spots[1].name!!.length)
         // The next spot follows the highest number, so "Spot 3" is never reused for another place.
-        assertEquals(4, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 50)))
+        assertEquals(SpotMarkResult.Marked(4), repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 50)))
 
         repository.renameSpot(first.id, "   ")
         assertNull("blank goes back to Spot 1", repository.getTripSpots(tripId).first().name)

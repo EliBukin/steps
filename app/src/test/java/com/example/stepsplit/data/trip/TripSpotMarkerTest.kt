@@ -8,6 +8,7 @@ import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.trip.RawLocationSample
 import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -99,9 +100,11 @@ class TripSpotMarkerTest {
     fun `a recent fix marks the spot at once, numbered from 1`() = runBlocking {
         val tripId = recordingTrip()
         deliver(fix(now - 20, lat = 31.7701, speed = 1.2f))
+        val marker = marker()
 
-        assertEquals(SpotMarkResult.Marked(1), marker().markSpot())
-        assertEquals(SpotMarkResult.Marked(2), marker().markSpot())
+        assertEquals(SpotMarkResult.Marked(1), marker.markSpot())
+        deliver(fix(now - 2, lat = 31.7703, speed = 1.2f))
+        assertEquals(SpotMarkResult.Marked(2), marker.markSpot())
 
         val spots = repository.getTripSpots(tripId)
         assertEquals(listOf(1, 2), spots.map { it.number })
@@ -240,5 +243,80 @@ class TripSpotMarkerTest {
         coordinator.stop()
         assertNull(coordinator.latestFix.value)
         assertNull(coordinator.recordingTripId)
+    }
+
+    // ---- One fix, one spot ----
+
+    @Test
+    fun `a second tap that ends on the same fix marks nothing new`() = runBlocking {
+        val tripId = recordingTrip()
+        deliver(fix(now - 20, lat = 31.7701, speed = 1.2f))
+        val marker = marker()
+
+        assertEquals(SpotMarkResult.Marked(1), marker.markSpot())
+        assertEquals(SpotMarkResult.AlreadyMarked(1), marker.markSpot())
+
+        assertEquals(1, repository.getTripSpots(tripId).size)
+    }
+
+    /**
+     * In a jeep the first tap waits for a fresh fix, one the recording never sees. A bump a moment
+     * later must not ask for another one, ten metres on, and save a second spot.
+     */
+    @Test
+    fun `a bump right after a mark in a moving jeep marks nothing new`() = runBlocking {
+        val tripId = recordingTrip()
+        val fortyKmh = 40f / 3.6f
+        deliver(fix(now - 25, lat = 31.7600, speed = fortyKmh))
+        val answers = ArrayDeque(listOf(fix(now + 1, lat = 31.7625, speed = fortyKmh), fix(now + 2, lat = 31.7626, speed = fortyKmh)))
+        locationClient.currentLocationAnswer = { synchronized(answers) { answers.removeFirstOrNull() } }
+        val marker = marker(waitMillis = 2_000)
+
+        assertEquals(SpotMarkResult.Marked(1), marker.markSpot())
+        assertEquals(SpotMarkResult.AlreadyMarked(1), marker.markSpot())
+
+        assertEquals(1, repository.getTripSpots(tripId).size)
+        assertEquals(31.7625, repository.getTripSpots(tripId).single().latitude, 0.0)
+        assertEquals("no second fresh fix asked for", 1, locationClient.currentLocationRequests)
+    }
+
+    /** The notification's Mark spot tapped twice while the first tap still waits for its fix. */
+    @Test
+    fun `two taps at once in a moving jeep mark one spot`() = runBlocking {
+        val tripId = recordingTrip()
+        val fortyKmh = 40f / 3.6f
+        deliver(fix(now - 25, lat = 31.7600, speed = fortyKmh))
+        val answers = ArrayDeque(listOf(fix(now + 1, lat = 31.7625, speed = fortyKmh), fix(now + 2, lat = 31.7626, speed = fortyKmh)))
+        locationClient.currentLocationAnswer = { delay(100); synchronized(answers) { answers.removeFirstOrNull() } }
+        val marker = marker(waitMillis = 2_000)
+
+        val first = scope.async { marker.markSpot() }
+        val second = scope.async { marker.markSpot() }
+
+        assertEquals(setOf(SpotMarkResult.Marked(1), SpotMarkResult.AlreadyMarked(1)), setOf(first.await(), second.await()))
+        assertEquals(1, repository.getTripSpots(tripId).size)
+    }
+
+    @Test
+    fun `a deliberate second mark after moving on is a new spot`() = runBlocking {
+        val tripId = recordingTrip()
+        val fortyKmh = 40f / 3.6f
+        deliver(fix(now - 1, lat = 31.7600, speed = fortyKmh))
+        val clock = MutableClock(now)
+        val marker = TripSpotMarker(repository, coordinator, locationClient, clock, scope, waitForFixMillis = 2_000)
+        assertEquals(SpotMarkResult.Marked(1), marker.markSpot())
+
+        // Ten seconds on: about 110 m further, and the recording has no newer fix yet.
+        clock.epochSecond = now + 10
+        locationClient.currentLocationAnswer = { fix(now + 11, lat = 31.7610, speed = fortyKmh) }
+        assertEquals(SpotMarkResult.Marked(2), marker.markSpot())
+
+        assertEquals(listOf(31.7600, 31.7610), repository.getTripSpots(tripId).map { it.latitude })
+    }
+
+    private class MutableClock(@Volatile var epochSecond: Long) : Clock() {
+        override fun getZone(): ZoneId = ZoneOffset.UTC
+        override fun withZone(zone: ZoneId): Clock = this
+        override fun instant(): Instant = Instant.ofEpochSecond(epochSecond)
     }
 }

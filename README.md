@@ -129,6 +129,10 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
     second. This is also what makes a spot work while you stand still, when the recording gets no
     new points at all. If nothing closer comes, it uses the best point from those 30 seconds.
   - With no point at all, nothing is saved and the app says there's no GPS fix yet.
+  - One point, one spot. The point the last spot used counts as one of those points too, so a
+    second tap the phone can't have moved 40 m since (a double tap, a bump in the jeep) lands on
+    that same point: nothing new is saved, and the app says "Spot 3 is already marked here". Once
+    you've moved on, a tap is a new spot.
 
   The spot keeps that point's time and height, so they match its place. The notification's
   *Mark spot* doesn't ask you to unlock the phone. The recording notification makes no sound and

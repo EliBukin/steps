@@ -139,9 +139,11 @@ class TripsViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripsUiState())
 
     /**
-     * The Mark spot button: one tap marks a spot, with no dialog. A second tap while the first is
-     * still waiting for its fix does nothing (the button is disabled meanwhile), so a bump in a
-     * jeep can't mark the same place twice.
+     * The Mark spot button: one tap marks a spot, with no dialog. The button is disabled while a tap
+     * still waits for its fix, so a second tap meanwhile does nothing. A tap after that which ends
+     * on the same GPS fix as the trip's newest spot - a double tap, a bump in a jeep - saves nothing
+     * new and says so ("Spot 3 is already marked here"); see
+     * [com.example.stepsplit.data.trip.TripSpotMarker]. Once the phone has moved on, a tap is a new spot.
      */
     fun markSpot() {
         if (!markingSpot.compareAndSet(expect = false, update = true)) return

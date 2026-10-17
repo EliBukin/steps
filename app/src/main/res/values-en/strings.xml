@@ -176,6 +176,7 @@
     <string name="trip_spots_count_label">Spots marked: %1$d</string>
     <string name="trip_spot_default_name">Spot %1$d</string>
     <string name="trip_spot_marked_message">%1$s marked</string>
+    <string name="trip_spot_already_marked_message">%1$s is already marked here</string>
     <string name="trip_spot_no_fix_message">No GPS fix yet – spot not marked</string>
     <string name="trip_spot_not_recording_message">No trip is recording – spot not marked</string>
     <string name="trip_spot_failed_message">Couldn\'t save the spot</string>

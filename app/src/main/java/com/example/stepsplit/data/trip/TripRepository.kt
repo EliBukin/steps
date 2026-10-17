@@ -18,6 +18,7 @@ import com.example.stepsplit.domain.trip.RouteSampleDecision
 import com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.SpotFixRule
 import com.example.stepsplit.domain.trip.TripName
 import com.example.stepsplit.domain.trip.TripTypeRule
 import com.example.stepsplit.domain.trip.finishedTripDurationSeconds
@@ -632,22 +633,30 @@ class TripRepository(
     }
 
     /**
-     * Saves [fix] as [tripId]'s next spot and returns its number: one more than the highest so far,
-     * so the first spot is 1. [fix] was already chosen by [TripSpotMarker] (see
+     * Saves [fix] as [tripId]'s next spot, [SpotMarkResult.Marked] with its number: one more than the
+     * highest so far, so the first spot is 1. [fix] was already chosen by [TripSpotMarker] (see
      * [com.example.stepsplit.domain.trip.SpotFixRule]); the spot keeps its time, position and height.
      *
      * Under [tripMutex], like every route write, and with the same backstops as
-     * [recordAcceptedBatch]: null, saving nothing, when the trip is no longer ACTIVE (it finished or
-     * was interrupted while the marker waited for a fix), when [fix] was captured before the trip
-     * started, or after a Finish already in progress cut the route off.
+     * [recordAcceptedBatch]: [SpotMarkResult.NotRecording], saving nothing, when the trip is no
+     * longer ACTIVE (it finished or was interrupted while the marker waited for a fix), when [fix] was
+     * captured before the trip started, or after a Finish already in progress cut the route off.
+     *
+     * [SpotMarkResult.AlreadyMarked], saving nothing, when [fix] is the very fix the trip's newest
+     * spot was placed at (SpotFixRule step 5): a double tap is one spot. Checked here, under
+     * [tripMutex], so two taps that reach this at once still make one spot.
      */
-    suspend fun addSpot(tripId: Long, fix: RawLocationSample): Int? = tripMutex.withLock {
-        val trip = database.tripDao().getById(tripId) ?: return@withLock null
-        if (trip.state != TripState.ACTIVE.name) return@withLock null
-        if (fix.capturedAtEpochSecond < trip.startEpochSecond) return@withLock null
+    suspend fun addSpot(tripId: Long, fix: RawLocationSample): SpotMarkResult = tripMutex.withLock {
+        val trip = database.tripDao().getById(tripId) ?: return@withLock SpotMarkResult.NotRecording
+        if (trip.state != TripState.ACTIVE.name) return@withLock SpotMarkResult.NotRecording
+        if (fix.capturedAtEpochSecond < trip.startEpochSecond) return@withLock SpotMarkResult.NotRecording
         val cutoffEpochSecond = finishCutoff?.takeIf { it.tripId == tripId }?.cutoffEpochSecond
-        if (cutoffEpochSecond != null && fix.capturedAtEpochSecond > cutoffEpochSecond) return@withLock null
-        val number = (database.tripSpotDao().maxNumber(tripId) ?: 0) + 1
+        if (cutoffEpochSecond != null && fix.capturedAtEpochSecond > cutoffEpochSecond) return@withLock SpotMarkResult.NotRecording
+        val newest = database.tripSpotDao().newest(tripId)
+        if (newest != null && SpotFixRule.isSameFix(fix, newest.capturedAtEpochSecond, newest.latitude, newest.longitude)) {
+            return@withLock SpotMarkResult.AlreadyMarked(newest.number)
+        }
+        val number = (newest?.number ?: 0) + 1
         database.tripSpotDao().insert(
             TripSpotEntity(
                 tripId = tripId,
@@ -658,7 +667,7 @@ class TripRepository(
                 altitudeMeters = fix.altitudeMeters,
             ),
         )
-        number
+        SpotMarkResult.Marked(number)
     }
 
     /** [tripId]'s spots, by number. */
