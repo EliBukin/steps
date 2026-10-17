@@ -26,6 +26,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -479,6 +483,51 @@ class TripDetailViewModelTest {
 
         assertEquals(TripMotion.measure(drive.points, TripType.DRIVE), drive.motion)
         assertEquals(1, geoid.calls)
+    }
+
+    /**
+     * Room tells a query that its table changed, not which rows did: while another trip records,
+     * every fix it keeps makes this finished trip's points query run again and return the same
+     * list. Looking at an old trip during a recording must not redo its whole route (cleanup,
+     * smoothing, sea-level heights, colors, heights) every few seconds.
+     */
+    @Test
+    fun `another trip recording doesn't redo this trip's route`() = runTest {
+        val geoid = FixedGeoid(20.0)
+        val repository = TripRepository(database, clock)
+        val viewModel = TripDetailViewModel(repository, insertHillWalk(), flowOf(false), geoid)
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.uiState.first { !it.isLoading }
+        val recording = database.tripDao().insert(
+            TripEntity(
+                startEpochSecond = fixedNow.epochSecond,
+                endEpochSecond = null,
+                startZoneId = "UTC",
+                state = TripState.ACTIVE.name,
+                distanceMeters = 0.0,
+                lastAcceptedPointEpochSecond = null,
+                createdAtEpochSecond = fixedNow.epochSecond,
+            ),
+        )
+
+        for (i in 1..3) {
+            database.tripPointDao().insert(
+                TripPointEntity(
+                    tripId = recording,
+                    capturedAtEpochSecond = fixedNow.epochSecond + i * 10L,
+                    latitude = 32.0 + i * 1e-4,
+                    longitude = 35.0,
+                    accuracyMeters = 5f,
+                    altitudeMeters = 500.0,
+                    speedMetersPerSecond = 1.2f,
+                ),
+            )
+            // The recording's own query sees the new fix, so the invalidation has gone out.
+            repository.observeTripPoints(recording).first { it.size == i }
+        }
+        withContext(Dispatchers.Default) { withTimeoutOrNull(2_000) { while (geoid.calls == 1) delay(10) } }
+
+        assertEquals("the route was worked out once", 1, geoid.calls)
     }
 
     @Test

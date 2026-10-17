@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -101,7 +102,9 @@ class TripDetailViewModel(
         val heightsAboveSeaLevel: Boolean,
     )
 
-    private val displayedRoute: Flow<DisplayedRoute> = repository.observeTripPoints(tripId).map { rawPoints ->
+    // distinctUntilChanged: Room re-runs this trip's points query whenever any trip's points change,
+    // so while another trip records, every fix it keeps hands back this same list again.
+    private val displayedRoute: Flow<DisplayedRoute> = repository.observeTripPoints(tripId).distinctUntilChanged().map { rawPoints ->
         val smoothed = RouteSmoother.smooth(RouteSanitizer.sanitize(rawPoints).points)
         val seaLevelPoints = seaLevelHeights.toSeaLevel(smoothed.points)
         val points = seaLevelPoints ?: smoothed.points
@@ -116,7 +119,7 @@ class TripDetailViewModel(
     }.flowOn(Dispatchers.Default)
 
     /** The spots, with their heights above sea level where the phone can convert them, and whether it could. */
-    private val displayedSpots: Flow<Pair<List<TripSpot>, Boolean>> = repository.observeTripSpots(tripId).map { spots ->
+    private val displayedSpots: Flow<Pair<List<TripSpot>, Boolean>> = repository.observeTripSpots(tripId).distinctUntilChanged().map { spots ->
         if (spots.isEmpty()) return@map spots to false
         val converted = seaLevelHeights.toSeaLevel(spots.map { it.asPoint() })
         if (converted == null) {
@@ -127,7 +130,8 @@ class TripDetailViewModel(
     }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<TripDetailUiState> = combine(
-        repository.observeTrip(tripId),
+        // The same for the trips table: the recording trip's row changes with every fix.
+        repository.observeTrip(tripId).distinctUntilChanged(),
         displayedRoute,
         displayedSpots,
         keepDeletedTripsInStats,
