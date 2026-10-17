@@ -737,12 +737,19 @@ private fun TripEntity.toSummary() = TripSummary(
     startEpochSecond = startEpochSecond,
     endEpochSecond = endEpochSecond,
     startZoneId = startZoneId,
-    state = TripState.valueOf(state),
+    state = tripStateOrFinished(state),
     distanceMeters = distanceMeters,
     lastAcceptedPointEpochSecond = lastAcceptedPointEpochSecond,
     name = name,
     typeOverride = tripTypeOrNull(typeOverride),
 )
+
+/**
+ * A stored [TripState.name] - or, for a state this version doesn't know (a newer version's, after a
+ * downgrade), [TripState.FINISHED], rather than crashing every screen that lists trips: it shows
+ * with the past trips, where it can be opened, shared and deleted. The row itself is left as it is.
+ */
+private fun tripStateOrFinished(stored: String): TripState = TripState.entries.firstOrNull { it.name == stored } ?: TripState.FINISHED
 
 /** A stored [TripType.name], or null for none - or for a value this version doesn't know, rather than crashing on it. */
 private fun tripTypeOrNull(stored: String?): TripType? = stored?.let { value -> TripType.entries.firstOrNull { it.name == value } }

@@ -503,7 +503,8 @@ class StepRepository(
         ) { buckets, bouts ->
             val dated = buckets.map { DatedBucket(LocalDate.parse(it.localDate), it.startEpochSecond, it.steps) }
             val workoutIntervals = bouts
-                .filter { it.classifierVersion == CLASSIFIER_VERSION && BoutClassification.valueOf(it.autoClassification) == BoutClassification.WORKOUT }
+                // By name, so a label this version doesn't know counts as incidental instead of throwing.
+                .filter { it.classifierVersion == CLASSIFIER_VERSION && it.autoClassification == BoutClassification.WORKOUT.name }
                 .map { EpochInterval(it.startEpochSecond, it.endEpochSecond) }
             val breakdowns = StepAggregator.aggregateByDate(dated, workoutIntervals)
             dates.associateWith { date -> breakdowns[date] ?: DateStepBreakdown(date, 0L, 0L, 0L) }

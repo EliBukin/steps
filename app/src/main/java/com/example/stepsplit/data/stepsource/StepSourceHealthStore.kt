@@ -2,6 +2,7 @@ package com.example.stepsplit.data.stepsource
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -103,9 +104,12 @@ interface StepSourceHealthSink {
  * separate means a future "reset app settings" action can't accidentally wipe out (or be
  * complicated by) health history, and vice versa.
  */
-class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
+class StepSourceHealthStore internal constructor(
+    /** The app's own diagnostics file in production; a test hands in a store of its own. */
+    private val dataStore: DataStore<Preferences>,
+) : StepSourceHealthRecorder {
 
-    private val dataStore = context.stepSourceHealthDataStore
+    constructor(context: Context) : this(context.stepSourceHealthDataStore)
 
     private object Keys {
         val EVER_OBSERVED_SAMPLE = booleanPreferencesKey("ever_observed_sample")
@@ -137,16 +141,16 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
             consecutiveEmptyReads = prefs[Keys.CONSECUTIVE_EMPTY_READS] ?: 0,
             latestSubscriptionAtEpochSecond = prefs[Keys.LATEST_SUBSCRIPTION_AT_EPOCH_SECOND],
             latestSubscriptionSucceeded = prefs[Keys.LATEST_SUBSCRIPTION_SUCCEEDED],
-            latestSubscriptionFailureCategory = prefs[Keys.LATEST_SUBSCRIPTION_FAILURE_CATEGORY]?.let { ApiFailureCategory.valueOf(it) },
+            latestSubscriptionFailureCategory = apiFailureCategoryOrNull(prefs[Keys.LATEST_SUBSCRIPTION_FAILURE_CATEGORY]),
             latestSubscriptionFailureStatusCode = prefs[Keys.LATEST_SUBSCRIPTION_FAILURE_STATUS_CODE],
             latestReadFailureAtEpochSecond = prefs[Keys.LATEST_READ_FAILURE_AT_EPOCH_SECOND],
-            latestReadFailureCategory = prefs[Keys.LATEST_READ_FAILURE_CATEGORY]?.let { ApiFailureCategory.valueOf(it) },
+            latestReadFailureCategory = apiFailureCategoryOrNull(prefs[Keys.LATEST_READ_FAILURE_CATEGORY]),
             latestReadFailureStatusCode = prefs[Keys.LATEST_READ_FAILURE_STATUS_CODE],
         )
     }
 
     override suspend fun recordSubscriptionSuccess(atEpochSecond: Long) {
-        dataStore.edit { prefs ->
+        record { prefs ->
             prefs[Keys.LATEST_SUBSCRIPTION_AT_EPOCH_SECOND] = atEpochSecond
             prefs[Keys.LATEST_SUBSCRIPTION_SUCCEEDED] = true
             prefs.remove(Keys.LATEST_SUBSCRIPTION_FAILURE_CATEGORY)
@@ -155,7 +159,7 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
     }
 
     override suspend fun recordSubscriptionFailure(failure: ApiFailure, atEpochSecond: Long) {
-        dataStore.edit { prefs ->
+        record { prefs ->
             prefs[Keys.LATEST_SUBSCRIPTION_AT_EPOCH_SECOND] = atEpochSecond
             prefs[Keys.LATEST_SUBSCRIPTION_SUCCEEDED] = false
             prefs[Keys.LATEST_SUBSCRIPTION_FAILURE_CATEGORY] = failure.category.name
@@ -168,7 +172,7 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
     }
 
     override suspend fun recordReadAttempt(atEpochSecond: Long, windowStartEpochSecond: Long, windowEndEpochSecond: Long) {
-        dataStore.edit { prefs ->
+        record { prefs ->
             prefs[Keys.LATEST_READ_ATTEMPT_EPOCH_SECOND] = atEpochSecond
             prefs[Keys.LATEST_REQUESTED_WINDOW_START_EPOCH_SECOND] = windowStartEpochSecond
             prefs[Keys.LATEST_REQUESTED_WINDOW_END_EPOCH_SECOND] = windowEndEpochSecond
@@ -190,7 +194,7 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
      * one silently erasing the other.
      */
     override suspend fun recordReadSuccess(intervalCount: Int, latestSampleEpochSecond: Long?, atEpochSecond: Long) {
-        dataStore.edit { prefs ->
+        record { prefs ->
             prefs[Keys.LATEST_SUCCESSFUL_READ_EPOCH_SECOND] = atEpochSecond
             prefs[Keys.LATEST_READ_INTERVAL_COUNT] = intervalCount
             if (intervalCount > 0) {
@@ -199,6 +203,20 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
                 if (latestSampleEpochSecond != null) prefs[Keys.LATEST_SAMPLE_EPOCH_SECOND] = latestSampleEpochSecond
             } else {
                 prefs[Keys.CONSECUTIVE_EMPTY_READS] = (prefs[Keys.CONSECUTIVE_EMPTY_READS] ?: 0) + 1
+            }
+        }
+    }
+
+    /**
+     * [dataStore]'s `edit`, which also drops a failure category this version doesn't know (written
+     * by an older or newer one - see [apiFailureCategoryOrNull]), so one never lingers: every sync
+     * records something here.
+     */
+    private suspend fun record(change: (MutablePreferences) -> Unit) {
+        dataStore.edit { prefs ->
+            change(prefs)
+            for (key in listOf(Keys.LATEST_SUBSCRIPTION_FAILURE_CATEGORY, Keys.LATEST_READ_FAILURE_CATEGORY)) {
+                if (prefs[key] != null && apiFailureCategoryOrNull(prefs[key]) == null) prefs.remove(key)
             }
         }
     }
@@ -227,7 +245,7 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
      * fields only ever reflect a completed, successful read.
      */
     override suspend fun recordReadFailure(failure: ApiFailure, atEpochSecond: Long) {
-        dataStore.edit { prefs ->
+        record { prefs ->
             prefs[Keys.LATEST_READ_FAILURE_AT_EPOCH_SECOND] = atEpochSecond
             prefs[Keys.LATEST_READ_FAILURE_CATEGORY] = failure.category.name
             if (failure.statusCode != null) {
@@ -238,3 +256,6 @@ class StepSourceHealthStore(context: Context) : StepSourceHealthRecorder {
         }
     }
 }
+
+/** A stored [ApiFailureCategory] name, or null for none - or for a name this version doesn't know, rather than throwing on every read. */
+private fun apiFailureCategoryOrNull(stored: String?): ApiFailureCategory? = stored?.let { name -> ApiFailureCategory.entries.firstOrNull { it.name == name } }

@@ -56,9 +56,12 @@ data class AppSettings(
  * is a scalar preference, so Preferences DataStore (not proto DataStore or Room) is the right
  * fit - no schema migration machinery needed for a handful of numbers.
  */
-class SettingsRepository(context: Context) {
+class SettingsRepository internal constructor(
+    /** The app's own settings file in production; a test hands in a store of its own. */
+    private val dataStore: DataStore<Preferences>,
+) {
 
-    private val dataStore = context.settingsDataStore
+    constructor(context: Context) : this(context.settingsDataStore)
 
     private object Keys {
         val DAILY_GOAL = longPreferencesKey("daily_goal_steps")
@@ -91,10 +94,13 @@ class SettingsRepository(context: Context) {
             lastSuccessfulSync = prefs[Keys.LAST_SYNC_EPOCH_SECOND]?.let { Instant.ofEpochSecond(it) },
             lastSyncFailure = prefs[Keys.SYNC_FAILURE_CATEGORY]?.let { categoryName ->
                 val atEpochSecond = prefs[Keys.SYNC_FAILURE_EPOCH_SECOND]
-                if (atEpochSecond == null) {
+                // A name this version doesn't know (written by an older or newer one) reads as no
+                // failure rather than throwing on every launch; the next sync replaces or removes it.
+                val category = SyncFailureCategory.entries.firstOrNull { it.name == categoryName }
+                if (atEpochSecond == null || category == null) {
                     null
                 } else {
-                    SyncFailure(SyncFailureCategory.valueOf(categoryName), atEpochSecond)
+                    SyncFailure(category, atEpochSecond)
                 }
             },
             keepDeletedTripsInStats = prefs[Keys.KEEP_DELETED_TRIPS_IN_STATS] ?: false,
