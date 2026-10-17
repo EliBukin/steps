@@ -1,8 +1,12 @@
 package com.example.stepsplit.domain.trip
 
 import com.example.stepsplit.domain.model.TripPoint
+import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.sin
+import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -354,6 +358,92 @@ class RouteSmootherTest {
             "a precise (5m accuracy) neighbor must pull the center point more than a poor (28m accuracy) one at the same position (tight=$tightDisplacement, poor=$poorDisplacement)",
             tightDisplacement > poorDisplacement,
         )
+    }
+
+    // ---- Long routes ----
+
+    /**
+     * A long hike or drive is one segment of many thousands of points (a fix every 5-10 s, no
+     * minute-long gap). Each point is averaged only with those within 20 s of it, so the work has to
+     * grow with the route's length, not its square: the Trips tab smooths the whole recording again
+     * on every new fix, and the trip screen, its list card and Stats smooth it too. Checking every
+     * point of the segment against every other took 0.8 s for 20,000 points on a desktop JVM, and
+     * several times that on a phone.
+     */
+    @Test(timeout = 1_000)
+    fun `a 30,000-point route is smoothed quickly`() {
+        val route = jitteryRoute(Random(7), count = 30_000, maxStepSeconds = 5)
+
+        val smoothed = RouteSmoother.smooth(route)
+
+        assertEquals(route.size, smoothed.points.size)
+    }
+
+    /** Only which neighbors are visited changed for speed, not what they add up to: every point comes out exactly as before. */
+    @Test
+    fun `the result is exactly the same as averaging over every point of the segment`() {
+        val random = Random(11)
+        val route = jitteryRoute(random, count = 1_500, maxStepSeconds = 12) +
+            // A gap of more than a minute starts a new segment.
+            jitteryRoute(random, count = 400, maxStepSeconds = 8, startEpochSecond = 2_000_000L)
+
+        assertEquals(referenceSmooth(route), RouteSmoother.smooth(route).points)
+    }
+
+    /** Points [maxStepSeconds] or fewer apart (at least 1 s), each a few metres off a straight walk north. */
+    private fun jitteryRoute(random: Random, count: Int, maxStepSeconds: Int, startEpochSecond: Long = 1_000_000L): List<TripPoint> {
+        var t = startEpochSecond
+        return List(count) { i ->
+            t += 1 + random.nextInt(maxStepSeconds)
+            point(
+                lat = 31.77 + degreesLatFor(i * 1.3 + random.nextDouble(-4.0, 4.0)),
+                lon = 35.21 + degreesLonFor(random.nextDouble(-4.0, 4.0), 31.77),
+                t = t,
+                accuracy = 4f + random.nextFloat() * 20f,
+            )
+        }
+    }
+
+    /** The smoothing as first written: every point of the segment is checked against the 20 s window, in order. */
+    private fun referenceSmooth(points: List<TripPoint>): List<TripPoint> {
+        val segments = mutableListOf(mutableListOf(points[0]))
+        for (i in 1 until points.size) {
+            if (points[i].capturedAtEpochSecond - points[i - 1].capturedAtEpochSecond > 60L) segments += mutableListOf(points[i]) else segments.last() += points[i]
+        }
+        val smoothed = segments.flatMap { segment ->
+            if (segment.size < 3) return@flatMap segment
+            segment.map { center ->
+                val cosOrigin = cos(Math.toRadians(center.latitude)).let { if (abs(it) < 1e-6) 1e-6 else it }
+                var sumWeight = 0.0
+                var sumEast = 0.0
+                var sumNorth = 0.0
+                for (neighbor in segment) {
+                    val dt = (neighbor.capturedAtEpochSecond - center.capturedAtEpochSecond).toDouble()
+                    if (abs(dt) > 20.0) continue
+                    val north = if (neighbor === center) 0.0 else Math.toRadians(neighbor.latitude - center.latitude) * EARTH_RADIUS_METERS
+                    val east = if (neighbor === center) 0.0 else Math.toRadians(neighbor.longitude - center.longitude) * EARTH_RADIUS_METERS * cosOrigin
+                    val weight = 1.0 / (neighbor.accuracyMeters.toDouble() * neighbor.accuracyMeters.toDouble()) * exp(-(dt * dt) / (2.0 * 10.0 * 10.0))
+                    sumWeight += weight
+                    sumEast += weight * east
+                    sumNorth += weight * north
+                }
+                var east = sumEast / sumWeight
+                var north = sumNorth / sumWeight
+                val displacement = hypot(east, north)
+                val maxDisplacement = center.accuracyMeters.toDouble()
+                if (displacement > maxDisplacement) {
+                    east *= maxDisplacement / displacement
+                    north *= maxDisplacement / displacement
+                }
+                center.copy(
+                    latitude = center.latitude + Math.toDegrees(north / EARTH_RADIUS_METERS),
+                    longitude = center.longitude + Math.toDegrees(east / (EARTH_RADIUS_METERS * cosOrigin)),
+                )
+            }
+        }.toMutableList()
+        smoothed[0] = points.first()
+        smoothed[smoothed.size - 1] = points.last()
+        return smoothed
     }
 
     private companion object {

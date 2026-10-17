@@ -149,12 +149,26 @@ object RouteSmoother {
         return segments
     }
 
+    /**
+     * The points are in chronological order, so the ones within [TIME_WINDOW_SECONDS] of each point
+     * are one run around it, `[first, end)`, whose two ends only ever move forward. Visiting just
+     * that run keeps a long trip linear; checking every point of the segment for every point took
+     * seconds on a phone for a day-long recording. Same neighbors, in the same order, so the same
+     * result to the last bit.
+     */
     private fun smoothSegment(segment: List<TripPoint>): List<TripPoint> {
         if (segment.size < 3) return segment
-        return segment.indices.map { index -> smoothPoint(segment, index) }
+        var first = 0
+        var end = 0
+        return segment.indices.map { index ->
+            val centerSeconds = segment[index].capturedAtEpochSecond
+            while ((centerSeconds - segment[first].capturedAtEpochSecond).toDouble() > TIME_WINDOW_SECONDS) first++
+            while (end < segment.size && (segment[end].capturedAtEpochSecond - centerSeconds).toDouble() <= TIME_WINDOW_SECONDS) end++
+            smoothPoint(segment, index, first, end)
+        }
     }
 
-    private fun smoothPoint(segment: List<TripPoint>, index: Int): TripPoint {
+    private fun smoothPoint(segment: List<TripPoint>, index: Int, windowStart: Int, windowEnd: Int): TripPoint {
         val center = segment[index]
         val cosOrigin = cos(Math.toRadians(center.latitude)).let {
             if (abs(it) < MIN_ABS_COS_LATITUDE) MIN_ABS_COS_LATITUDE else it
@@ -163,7 +177,8 @@ object RouteSmoother {
         var sumWeight = 0.0
         var sumWeightedEast = 0.0
         var sumWeightedNorth = 0.0
-        for (neighbor in segment) {
+        for (neighborIndex in windowStart until windowEnd) {
+            val neighbor = segment[neighborIndex]
             val dtSeconds = (neighbor.capturedAtEpochSecond - center.capturedAtEpochSecond).toDouble()
             if (abs(dtSeconds) > TIME_WINDOW_SECONDS) continue
 
