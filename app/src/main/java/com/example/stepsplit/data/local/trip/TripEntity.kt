@@ -14,6 +14,13 @@ import androidx.room.PrimaryKey
  * [com.example.stepsplit.data.local.bout.WalkBoutEntity.autoClassification]).
  * [distanceMeters] and [lastAcceptedPointEpochSecond] are updated atomically together with each
  * newly accepted [TripPointEntity] insert - see [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch].
+ *
+ * [name] and [typeOverride] are the owner's own edits (schema v9), null until they make one:
+ * [name] is already normalized by [com.example.stepsplit.domain.trip.TripName], and
+ * [typeOverride] is a [com.example.stepsplit.domain.model.TripType.name]. The automatic type is
+ * never stored - see [com.example.stepsplit.domain.trip.TripTypeRule]. Only
+ * [com.example.stepsplit.data.trip.TripRepository.updateTripDetails] writes them, with a targeted
+ * update; every other write copies the row it read, so they are carried along.
  */
 @Entity(tableName = "trips")
 data class TripEntity(
@@ -25,4 +32,6 @@ data class TripEntity(
     val distanceMeters: Double,
     val lastAcceptedPointEpochSecond: Long?,
     val createdAtEpochSecond: Long,
+    val name: String? = null,
+    val typeOverride: String? = null,
 )

@@ -120,4 +120,41 @@ class GpxExportTest {
         assertEquals("1.1", root.getAttribute("version"))
         assertEquals("http://www.topografix.com/GPX/1/1", root.getAttribute("xmlns"))
     }
+
+    @Test
+    fun `a trip name goes into both the file's and the track's name`() {
+        val root = parse(GpxExport.toGpx(listOf(point(1_000L, 31.8, 35.4)), name = "Wadi Qelt hike"))
+        val metadata = root.getElementsByTagName("metadata").item(0) as Element
+        val track = root.getElementsByTagName("trk").item(0) as Element
+        assertEquals("Wadi Qelt hike", metadata.getElementsByTagName("name").item(0).textContent)
+        assertEquals("Wadi Qelt hike", (track.firstChildElement()).textContent)
+        assertEquals("name", track.firstChildElement().tagName)
+        assertEquals("metadata comes first, as GPX 1.1 requires", "metadata", root.firstChildElement().tagName)
+    }
+
+    @Test
+    fun `a trip name is XML-escaped and keeps Hebrew as UTF-8`() {
+        val name = "Tom & Jerry's <\"hike\"> בוואדי קלט"
+        val gpx = GpxExport.toGpx(emptyList(), name = name)
+        val names = parse(gpx).getElementsByTagName("name")
+        assertEquals(2, names.length)
+        assertEquals(name, names.item(0).textContent)
+        assertEquals(name, names.item(1).textContent)
+        assertFalse(gpx.contains("<hike>"))
+    }
+
+    @Test
+    fun `no name, or a blank one, adds no metadata and no name`() {
+        for (name in listOf(null, "", "  ")) {
+            val root = parse(GpxExport.toGpx(listOf(point(1_000L, 31.8, 35.4)), name = name))
+            assertEquals(0, root.getElementsByTagName("metadata").length)
+            assertEquals(0, root.getElementsByTagName("name").length)
+        }
+    }
+
+    private fun Element.firstChildElement(): Element {
+        var node = firstChild
+        while (node != null && node !is Element) node = node.nextSibling
+        return node as Element
+    }
 }

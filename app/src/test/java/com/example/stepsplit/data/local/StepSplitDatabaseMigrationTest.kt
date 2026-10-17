@@ -1051,6 +1051,144 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v8 -> v9 migration (`MIGRATION_8_9`: trip names and Walk/Drive types) keeps every
+     * trip, point and kept deleted-trip row, as on the owner's phone:
+     * - every trip keeps all its values, with no name and no type override (its type stays the
+     *   automatic one, worked out from its route);
+     * - every kept deleted trip gets a type from its average speed: a 20 km/h one is a drive, a
+     *   4.5 km/h one and one with no time are walks.
+     */
+    @Test
+    fun `v8 to v9 adds trip names and types and keeps every trip`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v8_v9.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildV8Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                val tripCursor = migrated.query(
+                    "SELECT id, state, startEpochSecond, endEpochSecond, startZoneId, distanceMeters, lastAcceptedPointEpochSecond, " +
+                        "name, typeOverride FROM trips ORDER BY id",
+                )
+                assertEquals(2, tripCursor.count)
+                tripCursor.moveToFirst()
+                assertEquals(1L, tripCursor.getLong(0))
+                assertEquals("FINISHED", tripCursor.getString(1))
+                assertEquals(1_000L, tripCursor.getLong(2))
+                assertEquals(4_600L, tripCursor.getLong(3))
+                assertEquals("Asia/Jerusalem", tripCursor.getString(4))
+                assertEquals(4_490.0, tripCursor.getDouble(5), 1e-9)
+                assertEquals(4_590L, tripCursor.getLong(6))
+                assertTrue("no name yet", tripCursor.isNull(7))
+                assertTrue("no type override yet", tripCursor.isNull(8))
+                tripCursor.moveToNext()
+                assertEquals(2L, tripCursor.getLong(0))
+                assertEquals("INTERRUPTED", tripCursor.getString(1))
+                assertTrue(tripCursor.isNull(7))
+                assertTrue(tripCursor.isNull(8))
+                tripCursor.close()
+
+                val pointCursor = migrated.query("SELECT COUNT(*) FROM trip_points WHERE tripId = 1")
+                assertTrue(pointCursor.moveToFirst())
+                assertEquals(2, pointCursor.getInt(0))
+                pointCursor.close()
+
+                val keptCursor = migrated.query("SELECT id, startEpochSecond, durationSeconds, distanceMeters, type FROM deleted_trip_totals ORDER BY id")
+                val kept = buildList {
+                    while (keptCursor.moveToNext()) add(keptCursor.getLong(0) to keptCursor.getString(4))
+                }
+                keptCursor.moveToFirst()
+                assertEquals(500L, keptCursor.getLong(1))
+                assertEquals(3_600L, keptCursor.getLong(2))
+                assertEquals(4_500.0, keptCursor.getDouble(3), 1e-9)
+                keptCursor.close()
+                assertEquals(listOf(1L to "WALK", 2L to "DRIVE", 3L to "WALK", 4L to "DRIVE"), kept)
+
+                val bucketCursor = migrated.query("SELECT steps FROM step_buckets WHERE id = 1")
+                assertTrue(bucketCursor.moveToFirst())
+                assertEquals(42L, bucketCursor.getLong(0))
+                bucketCursor.close()
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /**
+     * Same approach as [buildV7Database], from `8.json`. Seeds a finished trip with two points, an
+     * interrupted trip, a step bucket, and four kept deleted trips: a 4.5 km/h walk, a 20 km/h
+     * drive, one with no time, and one at exactly 10 km/h (the line, so a drive).
+     */
+    private fun buildV8Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/8.json")
+        check(schemaFile.exists()) { "Expected the exported v8 schema at ${schemaFile.absolutePath}" }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(8) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                db.execSQL(indices.getJSONObject(j).getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) VALUES (1, 1000, 4600, 'Asia/Jerusalem', 'FINISHED', 4490.0, 4590, 1000)",
+            )
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) VALUES (2, 9000, NULL, 'UTC', 'INTERRUPTED', 120.0, 9100, 9000)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_points (id, tripId, capturedAtEpochSecond, latitude, longitude, accuracyMeters, " +
+                    "altitudeMeters, speedMetersPerSecond) VALUES (1, 1, 1000, 31.8, 35.4, 5.0, 120.0, 1.2), (2, 1, 4590, 31.84, 35.4, 6.0, NULL, NULL)",
+            )
+            db.execSQL(
+                "INSERT INTO deleted_trip_totals (id, startEpochSecond, durationSeconds, distanceMeters) VALUES " +
+                    "(1, 500, 3600, 4500.0), (2, 600, 5400, 30000.0), (3, 700, 0, 800.0), (4, 800, 3600, 10000.0)",
+            )
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

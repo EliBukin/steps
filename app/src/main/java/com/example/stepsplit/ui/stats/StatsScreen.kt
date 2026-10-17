@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.stats
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,16 +18,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.stats.LifetimeWalkingStats
 import com.example.stepsplit.domain.trip.TripTotals
+import com.example.stepsplit.domain.trip.TripTotalsByType
 import com.example.stepsplit.ui.common.PlainProgressBar
 import com.example.stepsplit.ui.common.ScreenHeader
 import com.example.stepsplit.ui.common.formatDateLabel
+import com.example.stepsplit.ui.trips.TripTypeIcon
 import com.example.stepsplit.ui.trips.formatDistance
 import com.example.stepsplit.ui.trips.formatElapsed
 
@@ -39,7 +44,8 @@ private const val BURGER_ICON = "🍔"
 
 /**
  * Lifetime stats as a summary list: one row per stat (label on one side, value on the other) in two
- * sections, steps and GPS trips. Percentage rows keep a progress bar under them.
+ * sections, steps and GPS trips. Percentage rows keep a progress bar under them. GPS trips have a
+ * card for walks and one for drives, each shown only when it has trips.
  */
 @Composable
 fun StatsScreen(
@@ -134,61 +140,103 @@ private fun StepsSection(stats: LifetimeWalkingStats) {
 }
 
 @Composable
-private fun TripsSection(trips: TripTotals) {
-    val unavailable = stringResource(R.string.stats_value_unavailable)
-    StatsSection(
-        title = stringResource(R.string.stats_section_trips),
-        footnote = stringResource(R.string.stats_trips_note),
-        rows = if (!trips.hasTrips) {
-            listOf({ EmptyRow(stringResource(R.string.trips_history_empty)) })
+private fun TripsSection(trips: TripTotalsByType) {
+    StatsSection(title = stringResource(R.string.stats_section_trips), footnote = stringResource(R.string.stats_trips_note)) {
+        if (!trips.hasTrips) {
+            StatsCard(rows = listOf({ EmptyRow(stringResource(R.string.trips_history_empty)) }))
         } else {
-            listOf(
-                {
-                    StatRow(
-                        stringResource(R.string.stats_trips_count_label),
-                        number(trips.tripCount.toLong()),
-                        caption = if (trips.deletedTripCount > 0) {
-                            pluralStringResource(R.plurals.stats_trips_deleted_included, trips.deletedTripCount, trips.deletedTripCount)
-                        } else {
-                            null
-                        },
-                    )
-                },
-                { StatRow(stringResource(R.string.stats_trips_time_label), formatElapsed(trips.totalDurationSeconds)) },
-                { StatRow(stringResource(R.string.stats_trips_distance_label), formatDistance(trips.totalDistanceMeters)) },
-                {
-                    StatRow(
-                        stringResource(R.string.stats_trips_speed_label),
-                        trips.averageSpeedKmh?.let { stringResource(R.string.stats_speed_format, it) } ?: unavailable,
-                    )
-                },
-                {
-                    StatRow(
-                        stringResource(R.string.stats_trips_pace_label),
-                        trips.averagePaceSecondsPerKm?.let {
-                            stringResource(R.string.stats_pace_format, (it / 60).toInt(), (it % 60).toInt())
-                        } ?: unavailable,
-                    )
+            if (trips.walks.hasTrips) TripTypeCard(TripType.WALK, trips.walks)
+            if (trips.drives.hasTrips) TripTypeCard(TripType.DRIVE, trips.drives)
+        }
+    }
+}
+
+/** One trip type's totals, under its icon and name. Pace (minutes per km) only means something on foot, so drives show speed alone. */
+@Composable
+private fun TripTypeCard(type: TripType, totals: TripTotals) {
+    val unavailable = stringResource(R.string.stats_value_unavailable)
+    val rows = buildList<@Composable () -> Unit> {
+        add {
+            StatRow(
+                stringResource(R.string.stats_trips_count_label),
+                number(totals.tripCount.toLong()),
+                caption = if (totals.deletedTripCount > 0) {
+                    pluralStringResource(R.plurals.stats_trips_deleted_included, totals.deletedTripCount, totals.deletedTripCount)
+                } else {
+                    null
                 },
             )
+        }
+        add { StatRow(stringResource(R.string.stats_trips_time_label), formatElapsed(totals.totalDurationSeconds)) }
+        add { StatRow(stringResource(R.string.stats_trips_distance_label), formatDistance(totals.totalDistanceMeters)) }
+        add {
+            StatRow(
+                stringResource(R.string.stats_trips_speed_label),
+                totals.averageSpeedKmh?.let { stringResource(R.string.stats_speed_format, it) } ?: unavailable,
+            )
+        }
+        if (type == TripType.WALK) {
+            add {
+                StatRow(
+                    stringResource(R.string.stats_trips_pace_label),
+                    totals.averagePaceSecondsPerKm?.let {
+                        stringResource(R.string.stats_pace_format, (it / 60).toInt(), (it % 60).toInt())
+                    } ?: unavailable,
+                )
+            }
+        }
+    }
+    StatsCard(
+        header = {
+            Row(
+                modifier = Modifier.padding(top = 12.dp, bottom = 8.dp).semantics(mergeDescendants = true) { heading() },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TripTypeIcon(type, contentDescription = null)
+                Text(
+                    text = stringResource(
+                        when (type) {
+                            TripType.WALK -> R.string.stats_trips_walks_title
+                            TripType.DRIVE -> R.string.stats_trips_drives_title
+                        },
+                    ),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
         },
+        rows = rows,
     )
 }
 
 /** A section title, then its rows in one card with thin dividers between them, then a small note. */
 @Composable
 private fun StatsSection(title: String, footnote: String, rows: List<@Composable () -> Unit>) {
+    StatsSection(title, footnote) { StatsCard(rows) }
+}
+
+/** A section title, then its cards, then a small note. */
+@Composable
+private fun StatsSection(title: String, footnote: String, cards: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text = title, style = MaterialTheme.typography.titleMedium)
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                rows.forEachIndexed { index, row ->
-                    if (index > 0) HorizontalDivider()
-                    row()
-                }
+        cards()
+        Text(text = footnote, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Rows in one card with thin dividers between them, under an optional [header]. */
+@Composable
+private fun StatsCard(rows: List<@Composable () -> Unit>, header: (@Composable () -> Unit)? = null) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            header?.invoke()
+            rows.forEachIndexed { index, row ->
+                if (index > 0) HorizontalDivider()
+                row()
             }
         }
-        Text(text = footnote, style = MaterialTheme.typography.bodySmall)
     }
 }
 

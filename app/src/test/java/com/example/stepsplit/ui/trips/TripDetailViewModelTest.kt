@@ -7,6 +7,7 @@ import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripState
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
@@ -28,6 +29,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -290,5 +292,70 @@ class TripDetailViewModelTest {
 
         assertTrue(viewModel.uiState.first { it.deleted }.deleted)
         assertTrue(repository.observeDeletedTripTotals().first().isEmpty())
+    }
+
+    /** A FINISHED 20-minute drive heading north at 36 km/h, a point every 5 s. */
+    private suspend fun insertFinishedDrive(): Long {
+        val start = fixedNow.epochSecond - 1_200
+        val tripId = database.tripDao().insert(
+            TripEntity(
+                startEpochSecond = start,
+                endEpochSecond = fixedNow.epochSecond,
+                startZoneId = "UTC",
+                state = TripState.FINISHED.name,
+                distanceMeters = 0.0,
+                lastAcceptedPointEpochSecond = fixedNow.epochSecond,
+                createdAtEpochSecond = start,
+            ),
+        )
+        for (i in 0..240) {
+            database.tripPointDao().insert(
+                TripPointEntity(
+                    tripId = tripId,
+                    capturedAtEpochSecond = start + i * 5L,
+                    latitude = 31.0 + i * 50.0 / 111_195.0,
+                    longitude = 35.0,
+                    accuracyMeters = 5f,
+                    altitudeMeters = null,
+                    speedMetersPerSecond = 10f,
+                ),
+            )
+        }
+        return tripId
+    }
+
+    @Test
+    fun `the suggested type comes from the displayed route`() = runTest {
+        val walk = TripDetailViewModel(TripRepository(database, clock), insertFinishedTrip(), flowOf(false))
+        val drive = TripDetailViewModel(TripRepository(database, clock), insertFinishedDrive(), flowOf(false))
+
+        val walkState = walk.uiState.first { !it.isLoading }
+        val driveState = drive.uiState.first { !it.isLoading }
+
+        assertEquals(TripType.WALK, walkState.suggestedType)
+        assertEquals(TripType.WALK, walkState.type)
+        assertEquals(TripType.DRIVE, driveState.suggestedType)
+        assertEquals(TripType.DRIVE, driveState.type)
+    }
+
+    @Test
+    fun `saving a name and the other type overrides the suggestion, saving the suggested type clears the override`() = runTest {
+        val viewModel = TripDetailViewModel(TripRepository(database, clock), insertFinishedDrive(), flowOf(false))
+        viewModel.uiState.first { !it.isLoading }
+
+        viewModel.saveTripDetails("  Jeep to the spring ", TripType.WALK)
+        val overridden = viewModel.uiState.first { it.trip?.name != null }
+        assertEquals("Jeep to the spring", overridden.trip!!.name)
+        assertEquals(TripType.WALK, overridden.trip!!.typeOverride)
+        assertEquals(TripType.WALK, overridden.type)
+        assertEquals(TripType.DRIVE, overridden.suggestedType)
+
+        viewModel.saveTripDetails("Jeep to the spring", TripType.DRIVE)
+        val automatic = viewModel.uiState.first { it.trip?.typeOverride == null }
+        assertEquals("Jeep to the spring", automatic.trip!!.name)
+        assertEquals(TripType.DRIVE, automatic.type)
+
+        viewModel.saveTripDetails("", TripType.DRIVE)
+        assertNull(viewModel.uiState.first { it.trip?.name == null }.trip!!.name)
     }
 }

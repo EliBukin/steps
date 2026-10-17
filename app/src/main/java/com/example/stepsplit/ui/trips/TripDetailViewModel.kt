@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
+import com.example.stepsplit.domain.trip.TripTypeRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,10 +24,15 @@ data class TripDetailUiState(
     val points: List<TripPoint> = emptyList(),
     /** [points] split into speed-colored runs and gaps for the map - see [RouteSpeedColoring]. */
     val speedColoring: RouteSpeedColoring.SpeedColoredRoute? = null,
+    /** [TripTypeRule.suggest] on [points] - the type the Edit trip dialog marks as suggested. */
+    val suggestedType: TripType = TripType.WALK,
     val deleted: Boolean = false,
     /** Whether deleting this trip keeps its time and distance in Stats - the delete dialog says which. */
     val keepDeletedTripsInStats: Boolean = false,
-)
+) {
+    /** What the trip counts as: the owner's choice when they made one, otherwise [suggestedType]. */
+    val type: TripType get() = trip?.typeOverride ?: suggestedType
+}
 
 /**
  * [uiState.points] and [uiState.trip]'s own `distanceMeters` are both derived from the *same*
@@ -62,10 +69,22 @@ class TripDetailViewModel(
             trip = trip?.copy(distanceMeters = smoothed.distanceMeters),
             points = smoothed.points,
             speedColoring = RouteSpeedColoring.colorize(smoothed.points),
+            suggestedType = TripTypeRule.suggest(smoothed.points),
             deleted = trip == null,
             keepDeletedTripsInStats = keepInStats,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripDetailUiState())
+
+    /**
+     * Saves the Edit trip dialog: [name] (blank clears it) and the [type] the owner picked. Picking
+     * the suggested type stores no override, so the trip goes back to following the suggestion.
+     */
+    fun saveTripDetails(name: String, type: TripType) {
+        val state = uiState.value
+        if (state.trip == null) return
+        val override = type.takeIf { it != state.suggestedType }
+        viewModelScope.launch { repository.updateTripDetails(tripId, name, override) }
+    }
 
     fun deleteTrip() {
         viewModelScope.launch { repository.deleteTrip(tripId, keepInStats = keepDeletedTripsInStats.first()) }

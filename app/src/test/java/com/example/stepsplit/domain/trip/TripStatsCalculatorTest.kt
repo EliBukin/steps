@@ -2,6 +2,7 @@ package com.example.stepsplit.domain.trip
 
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.model.TripType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -115,5 +116,38 @@ class TripStatsCalculatorTest {
         assertEquals(600L, finishedTripDurationSeconds(1_000L, 1_600L))
         assertEquals(0L, finishedTripDurationSeconds(1_000L, null))
         assertEquals(0L, finishedTripDurationSeconds(1_000L, 900L))
+    }
+
+    @Test
+    fun `walks and drives are totalled separately, each with its own averages`() {
+        val hike = finishedTrip(1, durationSeconds = 2 * 3600, distanceMeters = 8_000.0)
+        val drive = finishedTrip(2, durationSeconds = 3600, distanceMeters = 30_000.0).copy(typeOverride = TripType.DRIVE)
+        val walk = finishedTrip(3, durationSeconds = 3600, distanceMeters = 4_000.0)
+
+        val totals = TripStatsCalculator.calculateByType(
+            finishedTrips = listOf(hike, drive, walk),
+            typeOf = { it.typeOverride ?: TripType.WALK },
+            deletedTrips = listOf(DeletedTripTotals(1800, 15_000.0, TripType.DRIVE), DeletedTripTotals(1800, 2_000.0, TripType.WALK)),
+        )
+
+        assertEquals(3, totals.walks.tripCount)
+        assertEquals(1, totals.walks.deletedTripCount)
+        assertEquals(14_000.0, totals.walks.totalDistanceMeters, 1e-9)
+        assertEquals(4.0, totals.walks.averageSpeedKmh!!, 1e-9)
+        assertEquals(2, totals.drives.tripCount)
+        assertEquals(1, totals.drives.deletedTripCount)
+        assertEquals(45_000.0, totals.drives.totalDistanceMeters, 1e-9)
+        assertEquals(30.0, totals.drives.averageSpeedKmh!!, 1e-9)
+    }
+
+    @Test
+    fun `with only walks, the drives group is empty`() {
+        val totals = TripStatsCalculator.calculateByType(listOf(finishedTrip(1, 600, 800.0)), typeOf = { TripType.WALK })
+
+        assertTrue(totals.hasTrips)
+        assertTrue(totals.walks.hasTrips)
+        assertEquals(TripTotals.EMPTY, totals.drives)
+        assertEquals(TripTotalsByType.EMPTY, TripStatsCalculator.calculateByType(emptyList(), typeOf = { TripType.WALK }))
+        assertFalse(TripTotalsByType.EMPTY.hasTrips)
     }
 }

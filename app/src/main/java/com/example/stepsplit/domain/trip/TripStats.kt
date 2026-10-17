@@ -1,6 +1,7 @@
 package com.example.stepsplit.domain.trip
 
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.model.TripType
 
 /**
  * Lifetime totals over finished GPS trips, for the Stats screen. [averageSpeedKmh] and
@@ -22,12 +23,21 @@ data class TripTotals(
     }
 }
 
+/** [TripTotals] for walks and for drives separately, for the Stats screen's two trip groups. */
+data class TripTotalsByType(val walks: TripTotals, val drives: TripTotals) {
+    val hasTrips: Boolean get() = walks.hasTrips || drives.hasTrips
+
+    companion object {
+        val EMPTY = TripTotalsByType(TripTotals.EMPTY, TripTotals.EMPTY)
+    }
+}
+
 /**
- * The time and displayed distance of a finished trip that was deleted while "Keep deleted trips in
- * Stats" was on - all that is kept of it. See
+ * The time, displayed distance and Walk/Drive type of a finished trip that was deleted while "Keep
+ * deleted trips in Stats" was on - all that is kept of it. See
  * [com.example.stepsplit.data.local.trip.DeletedTripTotalsEntity].
  */
-data class DeletedTripTotals(val durationSeconds: Long, val distanceMeters: Double)
+data class DeletedTripTotals(val durationSeconds: Long, val distanceMeters: Double, val type: TripType = TripType.WALK)
 
 /** A finished trip's duration as the Stats screen counts it: start to end, pauses included, never negative. */
 fun finishedTripDurationSeconds(startEpochSecond: Long, endEpochSecond: Long?): Long =
@@ -59,5 +69,20 @@ object TripStatsCalculator {
             averagePaceSecondsPerKm = if (totalSeconds > 0 && totalMeters > 0.0) Math.round(totalSeconds / kilometers) else null,
             deletedTripCount = deletedTrips.size,
         )
+    }
+
+    /**
+     * [calculate] for walks and drives separately, so a jeep drive's speed never mixes into a
+     * hike's. [typeOf] gives each finished trip's type (the owner's choice, or the suggestion);
+     * kept deleted trips carry their own.
+     */
+    fun calculateByType(
+        finishedTrips: List<TripSummary>,
+        typeOf: (TripSummary) -> TripType,
+        deletedTrips: List<DeletedTripTotals> = emptyList(),
+    ): TripTotalsByType {
+        val (walks, drives) = finishedTrips.partition { typeOf(it) == TripType.WALK }
+        val (deletedWalks, deletedDrives) = deletedTrips.partition { it.type == TripType.WALK }
+        return TripTotalsByType(walks = calculate(walks, deletedWalks), drives = calculate(drives, deletedDrives))
     }
 }

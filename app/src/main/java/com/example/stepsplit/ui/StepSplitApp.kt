@@ -132,6 +132,7 @@ fun StepSplitApp(
                 val uiState by viewModel.uiState.collectAsState()
                 TripDetailScreen(
                     uiState = uiState,
+                    onSaveTripDetails = viewModel::saveTripDetails,
                     onDeleteTrip = viewModel::deleteTrip,
                     onBack = { navController.popBackStack() },
                 )

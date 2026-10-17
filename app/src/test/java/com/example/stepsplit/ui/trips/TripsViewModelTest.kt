@@ -8,6 +8,7 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
@@ -188,5 +189,32 @@ class TripsViewModelTest {
         assertEquals(displayed.first().longitude, preview.first().longitude, 1e-12)
         assertEquals(displayed.last().latitude, preview.last().latitude, 1e-12)
         assertEquals(displayed.last().longitude, preview.last().longitude, 1e-12)
+    }
+
+    @Test
+    fun `a finished trip shows its name and type, and editing them never re-reads its route`() = runTest {
+        val start = fixedNow.epochSecond - 7200
+        val tripId = database.tripDao().insert(tripEntity(start, TripState.FINISHED))
+        (0 until 20).forEach { database.tripPointDao().insert(pointEntity(tripId, start + it * 10L, it)) }
+        val routeComputations = AtomicInteger()
+        val repository = TripRepository(database, clock)
+        val viewModel = TripsViewModel(repository, clock) { points ->
+            if (points.firstOrNull()?.capturedAtEpochSecond == start) routeComputations.incrementAndGet()
+            RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
+        }
+
+        val unnamed = viewModel.uiState.first { it.history.isNotEmpty() }.history.single()
+        assertEquals(null, unnamed.summary.name)
+        assertEquals(TripType.WALK, unnamed.suggestedType)
+        assertEquals(TripType.WALK, unnamed.type)
+
+        repository.updateTripDetails(tripId, name = "Wadi Qelt hike", typeOverride = TripType.DRIVE)
+        val named = viewModel.uiState.first { it.history.singleOrNull()?.summary?.name != null }.history.single()
+
+        assertEquals("Wadi Qelt hike", named.summary.name)
+        assertEquals(TripType.WALK, named.suggestedType)
+        assertEquals(TripType.DRIVE, named.type)
+        assertEquals(unnamed.summary.distanceMeters, named.summary.distanceMeters, 1e-9)
+        assertEquals(1, routeComputations.get())
     }
 }

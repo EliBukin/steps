@@ -193,7 +193,8 @@ object RouteSpeedColoring {
 
     private class Stretch(val start: Double, val end: Double, val meters: Double, val isGap: Boolean)
 
-    private fun percentile(sorted: List<Double>, p: Double): Double {
+    /** The [p] percentile (0..1) of [sorted], linearly interpolated between neighbouring values. [sorted] must not be empty. */
+    internal fun percentile(sorted: List<Double>, p: Double): Double {
         val position = p * (sorted.size - 1)
         val lower = position.toInt()
         val upper = min(lower + 1, sorted.size - 1)

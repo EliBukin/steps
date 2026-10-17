@@ -46,9 +46,9 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 |---|---|
 | **Today** | Today's steps inside a ring that fills toward the daily goal, with the workout and incidental steps below it. This week's total against the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
 | **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
-| **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** number of trips, total time and distance, average speed and average pace. |
-| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route. |
-| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again; the trash icon at the top deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** a card for **Walks** and one for **Drives**, each with the number of trips, total time and distance, and average speed; walks also show average pace. A card with no trips is hidden. |
+| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route, a walk or car icon for its type, and its name, or its day, date and start time if it has none. |
+| **Trip detail** | The trip's type icon and its name, with the date under it (an unnamed trip is titled by its date). When the trip started and ended, its duration and distance, and the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. At the top, the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked) and the trash icon deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
 | **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
@@ -106,11 +106,25 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   and the line is smoothed. The map, the distance and the GPX file all use this same route, so
   they always agree.
 - **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
-  sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app.
+  sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app. A
+  named trip's name goes into the file too (as the GPX file's and track's name), so other apps
+  show it.
+- **Walk or drive.** Every finished trip is a *walk* (walks, hikes, jogs) or a *drive*, so Stats can
+  keep hikes and jeep drives apart. The app suggests one from the route's speed: each stretch's
+  speed, the same one the speed colors use, and the trip is a drive when at least a tenth of its
+  stretches are faster than 15 km/h. That is faster than anyone walks or jogs, and slower than a
+  jeep on a dirt road. Stops don't count against a drive, since a stop is one long stretch. A trip
+  with fewer than 5 stretches is a walk. You can change the type in *Edit trip*; your choice always
+  wins, and picking the suggested type again goes back to the suggestion. The suggestion isn't
+  stored: it's worked out from the route each time, so an improved rule also applies to old trips.
+  It can be wrong: a 4x4 crawl that never goes over 15 km/h is suggested as a walk.
+- **Names.** A trip can have a name of up to 60 characters, like "Wadi Qelt hike". Leave it empty
+  and the trip is titled by its date, as before.
 - **Deleting a trip.** Deleting removes the trip and its route. If *Keep deleted trips in Stats*
-  is on (it's off by default), the app first keeps the trip's date, duration and distance, with
-  no location, and Stats keeps counting it. Turning the setting off hides those trips from Stats
-  until you turn it on again. Trips deleted while it's off are gone from Stats for good.
+  is on (it's off by default), the app first keeps the trip's date, duration, distance and type
+  (walk or drive), with no location and no name, and Stats keeps counting it in the right card.
+  Turning the setting off hides those trips from Stats until you turn it on again. Trips deleted
+  while it's off are gone from Stats for good.
 - **Speed colors.** Each stretch between two points of that same route is colored by its speed:
   distance over time, averaged over about 30 seconds so the color doesn't flicker. Each trip has
   its own scale. Its slowest 5% of stretches are red and its fastest 5% green, so a walk at
@@ -215,7 +229,7 @@ with platform 36.
 ./gradlew lintDebug
 ```
 
-- **Tests.** About 480 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
+- **Tests.** About 590 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
   run under Robolectric. There are no instrumented (on-device) tests.
 - **Step separation.** `ArchitectureInvariantsTest` scans the code to make sure step and trip code
   don't import each other, and `StepGpsSeparationTest` runs both features together.
@@ -234,10 +248,12 @@ with platform 36.
 
 ### Database
 
-- **Version.** Room schema version **8**. Each version's schema is exported to `app/schemas/` and
+- **Version.** Room schema version **9**. The 8→9 migration added trip names and types: existing
+  trips get no name and keep the suggested type, and deleted trips kept in Stats from before then
+  get their type from their average speed (10 km/h or more is a drive; their route is gone). Each version's schema is exported to `app/schemas/` and
   committed. Migrations never delete steps or change step counts; the 5→6 migration did drop the
   old manual-relabelling table (`session_overrides`).
-- **Migration tests.** Each step from 1→8 has a test in `StepSplitDatabaseMigrationTest`. It
+- **Migration tests.** Each step from 1→9 has a test in `StepSplitDatabaseMigrationTest`. It
   builds the old schema from its exported JSON, migrates, and lets Room validate the result.
 - **Unused leftovers.** Some tables and columns from removed features are kept but unused:
   `manual_walks`, `activity_intervals`, `motion_evidence`, `temporal_continuity_state`,

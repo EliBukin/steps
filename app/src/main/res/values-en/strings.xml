@@ -154,6 +154,15 @@
     <string name="trip_detail_delete_confirm_message_keep_stats">This deletes the trip and its recorded route. Its time and distance stay in Stats, as \"Keep deleted trips in Stats\" is on in Settings.</string>
     <string name="trip_detail_delete_confirm_action">Delete</string>
     <string name="trip_detail_route_empty">No route points were recorded for this trip</string>
+    <string name="trip_type_walk">Walk</string>
+    <string name="trip_type_drive">Drive</string>
+    <string name="trip_detail_edit_action">Edit trip</string>
+    <string name="trip_edit_title">Edit trip</string>
+    <string name="trip_edit_name_label">Name</string>
+    <string name="trip_edit_type_label">Type</string>
+    <string name="trip_edit_type_suggested">Suggested</string>
+    <string name="trip_edit_type_note">Suggested from the trip\'s speed.</string>
+    <string name="trip_edit_save_action">Save</string>
 
     <string name="trip_unit_kilometers_format">%1$.2f km</string>
     <string name="trip_unit_meters_format">%1$d m</string>
@@ -222,5 +231,7 @@
     <string name="stats_trips_pace_label">Average pace</string>
     <string name="stats_pace_format">%1$d:%2$02d /km</string>
     <string name="stats_trips_note">Measured by GPS on your recorded trips.</string>
+    <string name="stats_trips_walks_title">Walks</string>
+    <string name="stats_trips_drives_title">Drives</string>
     <string name="stats_value_unavailable">–</string>
 </resources>

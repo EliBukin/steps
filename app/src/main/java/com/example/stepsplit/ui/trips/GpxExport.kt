@@ -22,12 +22,22 @@ internal object GpxExport {
      * [Locale.ROOT] so a device locale that uses a comma decimal separator can never produce
      * invalid GPX, and its timestamp as a UTC ISO-8601 instant (e.g. `2026-08-17T14:23:00Z`).
      * Elevation is only included when [TripPoint.altitudeMeters] is present.
+     *
+     * A trip [name], when there is one, goes XML-escaped into both `<metadata><name>` (the file's
+     * name) and `<trk><name>` (the track's), since apps differ in which one they show. GPX 1.1
+     * orders `<metadata>` first, then any waypoints, then the track.
      */
-    fun toGpx(points: List<TripPoint>): String = buildString {
+    fun toGpx(points: List<TripPoint>, name: String? = null): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
         append("<gpx version=\"1.1\" creator=\"").append(escapeXml(CREATOR)).append("\" ")
         append("xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
-        append("  <trk>\n    <trkseg>\n")
+        val escapedName = name?.takeIf { it.isNotBlank() }?.let(::escapeXml)
+        if (escapedName != null) {
+            append("  <metadata>\n    <name>").append(escapedName).append("</name>\n  </metadata>\n")
+        }
+        append("  <trk>\n")
+        if (escapedName != null) append("    <name>").append(escapedName).append("</name>\n")
+        append("    <trkseg>\n")
         for (point in points) {
             append("      <trkpt lat=\"").append(formatDecimal(point.latitude))
             append("\" lon=\"").append(formatDecimal(point.longitude)).append("\">\n")

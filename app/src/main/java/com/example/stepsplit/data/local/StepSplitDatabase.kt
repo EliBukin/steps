@@ -25,6 +25,8 @@ import com.example.stepsplit.data.local.trip.TripDao
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointDao
 import com.example.stepsplit.data.local.trip.TripPointEntity
+import com.example.stepsplit.domain.model.TripType
+import com.example.stepsplit.domain.trip.TripTypeRule
 
 /**
  * Deliberately no `fallbackToDestructiveMigration()`: this is a single-user local health/fitness
@@ -58,7 +60,7 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
         StepCounterSampleEntity::class,
         DeletedTripTotalsEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -277,8 +279,33 @@ abstract class StepSplitDatabase : RoomDatabase() {
                 )
             }
         }
+
+        /**
+         * v8 -> v9: trip names and Walk/Drive types. Purely additive - no row is deleted and no
+         * existing value changes:
+         * - `trips` gets `name` and `typeOverride`, both nullable and null for every existing trip:
+         *   it keeps its date as its title, and its type is the automatic suggestion from its route
+         *   (which is never stored, so existing trips need no backfill - see [TripTypeRule]).
+         * - `deleted_trip_totals` gets `type`. Its rows have no route left to classify, so each
+         *   existing row gets its type from its average speed, the same rule as
+         *   [TripTypeRule.fromAverageSpeed]: a drive at [TripTypeRule.DRIVE_AVERAGE_SPEED_KMH] or
+         *   faster, otherwise a walk.
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE trips ADD COLUMN name TEXT")
+                db.execSQL("ALTER TABLE trips ADD COLUMN typeOverride TEXT")
+                db.execSQL("ALTER TABLE deleted_trip_totals ADD COLUMN type TEXT NOT NULL DEFAULT '${TripType.WALK.name}'")
+                db.execSQL(
+                    "UPDATE deleted_trip_totals SET type = '${TripType.DRIVE.name}' " +
+                        "WHERE durationSeconds > 0 AND distanceMeters > 0 " +
+                        "AND distanceMeters * 3.6 / durationSeconds >= ${TripTypeRule.DRIVE_AVERAGE_SPEED_KMH}",
+                )
+            }
+        }
+
         internal val MIGRATIONS = arrayOf<Migration>(
-            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8,
+            MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
         )
 
         fun build(context: Context): StepSplitDatabase =

@@ -19,6 +19,11 @@ import kotlinx.coroutines.launch
  * stay separate underneath (see the README's "The two features are separate"): this screen only
  * reads each one's own repository and never mixes their numbers.
  *
+ * Trip totals are split into walks and drives. Each finished trip's type comes from
+ * [FinishedTripHistory], which works it out off the main thread from the same smoothed route it
+ * already reads for the displayed distance (or takes the owner's choice); each kept deleted trip
+ * carries the type it had when it was deleted.
+ *
  * Trip totals include the trips deleted while [keepDeletedTripsInStats] was on, but only while it
  * is still on: turning it off hides them, and turning it back on shows them again.
  */
@@ -30,14 +35,19 @@ class StatsViewModel(
 
     val uiState: StateFlow<StatsUiState> = combine(
         stepRepository.observeLifetimeStats(),
-        FinishedTripHistory(tripRepository).trips,
+        FinishedTripHistory(tripRepository).finishedTrips,
         tripRepository.observeDeletedTripTotals(),
         keepDeletedTripsInStats,
     ) { lifetime, finishedTrips, deletedTrips, keepDeleted ->
+        val typeById = finishedTrips.associate { it.summary.id to it.type }
         StatsUiState(
             isLoading = false,
             stats = LifetimeStatsCalculator.calculate(lifetime),
-            trips = TripStatsCalculator.calculate(finishedTrips, if (keepDeleted) deletedTrips else emptyList()),
+            trips = TripStatsCalculator.calculateByType(
+                finishedTrips = finishedTrips.map { it.summary },
+                typeOf = { typeById.getValue(it.id) },
+                deletedTrips = if (keepDeleted) deletedTrips else emptyList(),
+            ),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsUiState())
 

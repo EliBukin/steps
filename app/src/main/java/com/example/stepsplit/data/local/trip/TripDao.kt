@@ -28,6 +28,10 @@ interface TripDao {
     @Query("SELECT * FROM trips ORDER BY startEpochSecond DESC")
     fun observeAll(): Flow<List<TripEntity>>
 
+    /** Only the owner's own edits - see [TripEntity.name]. Returns how many rows changed (0 for an unknown trip). */
+    @Query("UPDATE trips SET name = :name, typeOverride = :typeOverride WHERE id = :id")
+    suspend fun updateDetails(id: Long, name: String?, typeOverride: String?): Int
+
     /** Cascades to every [TripPointEntity] for this trip - see that entity's foreign key. */
     @Query("DELETE FROM trips WHERE id = :id")
     suspend fun deleteById(id: Long)

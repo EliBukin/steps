@@ -154,6 +154,15 @@
     <string name="trip_detail_delete_confirm_message_keep_stats">פעולה זו תמחק את הטיול ואת המסלול שנרשם. הזמן והמרחק שלו יישארו בסטטיסטיקה, כי ההגדרה \"שמירת טיולים שנמחקו בסטטיסטיקה\" פעילה.</string>
     <string name="trip_detail_delete_confirm_action">מחיקה</string>
     <string name="trip_detail_route_empty">לא נרשמו נקודות מסלול עבור טיול זה</string>
+    <string name="trip_type_walk">הליכה</string>
+    <string name="trip_type_drive">נסיעה</string>
+    <string name="trip_detail_edit_action">עריכת טיול</string>
+    <string name="trip_edit_title">עריכת טיול</string>
+    <string name="trip_edit_name_label">שם</string>
+    <string name="trip_edit_type_label">סוג</string>
+    <string name="trip_edit_type_suggested">מוצע</string>
+    <string name="trip_edit_type_note">ההצעה מבוססת על מהירות הטיול.</string>
+    <string name="trip_edit_save_action">שמירה</string>
 
     <string name="trip_unit_kilometers_format">%1$.2f ק״מ</string>
     <string name="trip_unit_meters_format">%1$d מ׳</string>
@@ -223,5 +232,7 @@
     <string name="stats_trips_pace_label">קצב ממוצע</string>
     <string name="stats_pace_format">%1$d:%2$02d לק״מ</string>
     <string name="stats_trips_note">נמדד ב-GPS בטיולים שהקלטת.</string>
+    <string name="stats_trips_walks_title">הליכות</string>
+    <string name="stats_trips_drives_title">נסיעות</string>
     <string name="stats_value_unavailable">–</string>
 </resources>

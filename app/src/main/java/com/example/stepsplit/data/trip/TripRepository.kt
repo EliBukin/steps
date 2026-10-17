@@ -8,6 +8,7 @@ import com.example.stepsplit.data.local.trip.TripPointEntity
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.DeletedTripTotals
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
@@ -15,6 +16,8 @@ import com.example.stepsplit.domain.trip.RouteSampleDecision
 import com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.TripName
+import com.example.stepsplit.domain.trip.TripTypeRule
 import com.example.stepsplit.domain.trip.finishedTripDurationSeconds
 import java.time.Clock
 import kotlinx.coroutines.flow.Flow
@@ -607,28 +610,44 @@ class TripRepository(
     suspend fun getTripPoints(tripId: Long): List<TripPoint> =
         database.tripPointDao().getAllForTrip(tripId).map { it.toDomain() }
 
-    /** The kept time and distance of trips deleted while "Keep deleted trips in Stats" was on - see [deleteTrip]. */
+    /** The kept time, distance and type of trips deleted while "Keep deleted trips in Stats" was on - see [deleteTrip]. */
     fun observeDeletedTripTotals(): Flow<List<DeletedTripTotals>> =
-        database.deletedTripTotalsDao().observeAll().map { rows -> rows.map { DeletedTripTotals(it.durationSeconds, it.distanceMeters) } }
+        database.deletedTripTotalsDao().observeAll().map { rows ->
+            rows.map { DeletedTripTotals(it.durationSeconds, it.distanceMeters, tripTypeOrNull(it.type) ?: TripType.WALK) }
+        }
+
+    /**
+     * Saves the owner's edits to [tripId]: its [name] (normalized by [TripName.normalize], so blank
+     * clears it) and its [typeOverride] (null leaves the type to the automatic suggestion). A
+     * targeted update of just those two columns, under [tripMutex] like every other trip write, so
+     * it can never undo a concurrent change to anything else. Does nothing for an unknown trip.
+     */
+    suspend fun updateTripDetails(tripId: Long, name: String?, typeOverride: TripType?) = tripMutex.withLock {
+        database.tripDao().updateDetails(tripId, TripName.normalize(name), typeOverride?.name)
+        Unit
+    }
 
     /**
      * Deletes [tripId] with its route (the delete cascades to every point - see [TripPointEntity]'s
      * foreign key).
      *
-     * With [keepInStats], a FINISHED trip's start, duration and distance are first kept in
+     * With [keepInStats], a FINISHED trip's start, duration, distance and type are first kept in
      * `deleted_trip_totals`, in the same transaction as the delete, so Stats can keep counting it.
      * The distance is the one the app displays, from the same `RouteSanitizer -> RouteSmoother`
-     * pipeline as the Trips list and the trip screen, so Stats doesn't change when the trip is
-     * deleted. The transaction checks the trip still exists, so a second delete of the same trip
+     * pipeline as the Trips list and the trip screen, and the type is the one it shows (the owner's
+     * choice, or [TripTypeRule.suggest] on that same route), so Stats doesn't change when the trip
+     * is deleted. The transaction checks the trip still exists, so a second delete of the same trip
      * (a double tap) can never keep it twice.
      */
     suspend fun deleteTrip(tripId: Long, keepInStats: Boolean = false) {
         val trip = database.tripDao().getById(tripId) ?: return
         val kept = if (keepInStats && trip.state == TripState.FINISHED.name) {
+            val route = RouteSmoother.smooth(RouteSanitizer.sanitize(getTripPoints(tripId)).points)
             DeletedTripTotalsEntity(
                 startEpochSecond = trip.startEpochSecond,
                 durationSeconds = finishedTripDurationSeconds(trip.startEpochSecond, trip.endEpochSecond),
-                distanceMeters = RouteSmoother.smooth(RouteSanitizer.sanitize(getTripPoints(tripId)).points).distanceMeters,
+                distanceMeters = route.distanceMeters,
+                type = (tripTypeOrNull(trip.typeOverride) ?: TripTypeRule.suggest(route.points)).name,
             )
         } else {
             null
@@ -657,7 +676,12 @@ private fun TripEntity.toSummary() = TripSummary(
     state = TripState.valueOf(state),
     distanceMeters = distanceMeters,
     lastAcceptedPointEpochSecond = lastAcceptedPointEpochSecond,
+    name = name,
+    typeOverride = tripTypeOrNull(typeOverride),
 )
+
+/** A stored [TripType.name], or null for none - or for a value this version doesn't know, rather than crashing on it. */
+private fun tripTypeOrNull(stored: String?): TripType? = stored?.let { value -> TripType.entries.firstOrNull { it.name == value } }
 
 private fun TripPointEntity.toDomain() = TripPoint(
     capturedAtEpochSecond = capturedAtEpochSecond,

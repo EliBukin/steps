@@ -55,6 +55,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -383,7 +384,11 @@ private fun InterruptedTripCard(onResume: () -> Unit, onFinishAtLastPoint: () ->
     }
 }
 
-/** One finished trip: a small picture of its route, then its day, date and start time, distance and duration. */
+/**
+ * One finished trip: a small picture of its route, then its type icon and its name, or its day,
+ * date and start time when it has no name (a named trip shows those under the name), then its
+ * distance and duration.
+ */
 @Composable
 private fun TripHistoryCard(trip: FinishedTrip, onClick: () -> Unit) {
     val summary = trip.summary
@@ -396,15 +401,24 @@ private fun TripHistoryCard(trip: FinishedTrip, onClick: () -> Unit) {
             RouteThumbnail(points = trip.routePreview)
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val date = tripStartDate(summary)
-                Text(
-                    text = stringResource(
-                        R.string.trip_card_title_format,
-                        formatDayLabel(date),
-                        formatDateLabel(date),
-                        formatClockTimeInZone(summary.startEpochSecond, ZoneId.of(summary.startZoneId)),
-                    ),
-                    style = MaterialTheme.typography.titleSmall,
+                val dateLine = stringResource(
+                    R.string.trip_card_title_format,
+                    formatDayLabel(date),
+                    formatDateLabel(date),
+                    formatClockTimeInZone(summary.startEpochSecond, ZoneId.of(summary.startZoneId)),
                 )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TripTypeIcon(trip.type, size = 18.dp)
+                    Text(
+                        text = summary.name ?: dateLine,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (summary.name != null) {
+                    Text(text = dateLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Text(
                     text = stringResource(
                         R.string.trip_card_distance_duration_format,

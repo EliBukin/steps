@@ -3,7 +3,10 @@ package com.example.stepsplit.data.trip
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.local.trip.TripEntity
+import com.example.stepsplit.data.local.trip.TripPointEntity
 import com.example.stepsplit.domain.model.TripState
+import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.DeletedTripTotals
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
@@ -464,6 +467,102 @@ class TripRepositoryTest {
         }
 
         assertEquals(1, repository.observeDeletedTripTotals().first().size)
+    }
+
+    /** A FINISHED 20-minute jeep drive heading north at 36 km/h, a point every 5 s, written straight to Room. */
+    private suspend fun finishedDrive(): Long {
+        val start = fixedNow.epochSecond
+        val tripId = database.tripDao().insert(
+            TripEntity(
+                startEpochSecond = start,
+                endEpochSecond = start + 1_200,
+                startZoneId = "UTC",
+                state = TripState.FINISHED.name,
+                distanceMeters = 12_000.0,
+                lastAcceptedPointEpochSecond = start + 1_200,
+                createdAtEpochSecond = start,
+            ),
+        )
+        for (i in 0..240) {
+            database.tripPointDao().insert(
+                TripPointEntity(
+                    tripId = tripId,
+                    capturedAtEpochSecond = start + i * 5L,
+                    latitude = 31.0 + i * 50.0 / 111_195.0,
+                    longitude = 35.0,
+                    accuracyMeters = 5f,
+                    altitudeMeters = null,
+                    speedMetersPerSecond = 10f,
+                ),
+            )
+        }
+        return tripId
+    }
+
+    @Test
+    fun `a trip's name and type are saved, shown, and blank clears the name`() = runTest {
+        val tripId = finishedTripWithRoute()
+        val before = repository.observeTrip(tripId).first()!!
+        assertNull(before.name)
+        assertNull(before.typeOverride)
+
+        repository.updateTripDetails(tripId, name = "  Wadi   Qelt hike ", typeOverride = TripType.DRIVE)
+
+        val named = repository.observeTrip(tripId).first()!!
+        assertEquals("Wadi Qelt hike", named.name)
+        assertEquals(TripType.DRIVE, named.typeOverride)
+        assertEquals("only the edits change", before.copy(name = "Wadi Qelt hike", typeOverride = TripType.DRIVE), named)
+        assertEquals(named, repository.observeTrips().first().single())
+
+        repository.updateTripDetails(tripId, name = "   ", typeOverride = null)
+
+        assertEquals(before, repository.observeTrip(tripId).first())
+    }
+
+    @Test
+    fun `a name longer than 60 characters is cut`() = runTest {
+        val tripId = finishedTripWithRoute()
+
+        repository.updateTripDetails(tripId, name = "x".repeat(80), typeOverride = null)
+
+        assertEquals("x".repeat(60), repository.getTrip(tripId)!!.name)
+    }
+
+    @Test
+    fun `editing an unknown trip does nothing`() = runTest {
+        repository.updateTripDetails(tripId = 42L, name = "Nowhere", typeOverride = TripType.WALK)
+
+        assertTrue(repository.observeTrips().first().isEmpty())
+    }
+
+    @Test
+    fun `a stored type this version doesn't know reads as no override`() = runTest {
+        val tripId = finishedTripWithRoute()
+        database.tripDao().updateDetails(tripId, name = null, typeOverride = "BIKE")
+
+        assertNull(repository.observeTrip(tripId).first()!!.typeOverride)
+    }
+
+    @Test
+    fun `deleting with keepInStats keeps the suggested type when the owner chose none`() = runTest {
+        val walkId = finishedTripWithRoute()
+        val driveId = finishedDrive()
+
+        repository.deleteTrip(walkId, keepInStats = true)
+        repository.deleteTrip(driveId, keepInStats = true)
+
+        assertEquals(listOf(TripType.DRIVE, TripType.WALK).sorted(), repository.observeDeletedTripTotals().first().map { it.type }.sorted())
+        assertEquals(setOf("WALK", "DRIVE"), database.deletedTripTotalsDao().observeAll().first().map { it.type }.toSet())
+    }
+
+    @Test
+    fun `deleting with keepInStats keeps the owner's type over the suggestion`() = runTest {
+        val driveId = finishedDrive()
+        repository.updateTripDetails(driveId, name = "Not really a drive", typeOverride = TripType.WALK)
+
+        repository.deleteTrip(driveId, keepInStats = true)
+
+        assertEquals(TripType.WALK, repository.observeDeletedTripTotals().first().single().type)
     }
 
     @Test
