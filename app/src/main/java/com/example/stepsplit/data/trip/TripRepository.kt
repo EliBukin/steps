@@ -22,10 +22,12 @@ import com.example.stepsplit.domain.trip.TripName
 import com.example.stepsplit.domain.trip.TripTypeRule
 import com.example.stepsplit.domain.trip.finishedTripDurationSeconds
 import java.time.Clock
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Owns every read/write path over manually recorded GPS trips - entirely separate from
@@ -686,18 +688,22 @@ class TripRepository(
      * pipeline as the Trips list and the trip screen, and the type is the one it shows (the owner's
      * choice, or [TripTypeRule.suggest] on that same route), so Stats doesn't change when the trip
      * is deleted. The transaction checks the trip still exists, so a second delete of the same trip
-     * (a double tap) can never keep it twice.
+     * (a double tap) can never keep it twice. That route is worked out on [Dispatchers.Default]:
+     * the trip screen calls this from the main thread, and a long trip has thousands of points.
      */
     suspend fun deleteTrip(tripId: Long, keepInStats: Boolean = false) {
         val trip = database.tripDao().getById(tripId) ?: return
         val kept = if (keepInStats && trip.state == TripState.FINISHED.name) {
-            val route = RouteSmoother.smooth(RouteSanitizer.sanitize(getTripPoints(tripId)).points)
-            DeletedTripTotalsEntity(
-                startEpochSecond = trip.startEpochSecond,
-                durationSeconds = finishedTripDurationSeconds(trip.startEpochSecond, trip.endEpochSecond),
-                distanceMeters = route.distanceMeters,
-                type = (tripTypeOrNull(trip.typeOverride) ?: TripTypeRule.suggest(route.points)).name,
-            )
+            val points = getTripPoints(tripId)
+            withContext(Dispatchers.Default) {
+                val route = RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
+                DeletedTripTotalsEntity(
+                    startEpochSecond = trip.startEpochSecond,
+                    durationSeconds = finishedTripDurationSeconds(trip.startEpochSecond, trip.endEpochSecond),
+                    distanceMeters = route.distanceMeters,
+                    type = (tripTypeOrNull(trip.typeOverride) ?: TripTypeRule.suggest(route.points)).name,
+                )
+            }
         } else {
             null
         }
