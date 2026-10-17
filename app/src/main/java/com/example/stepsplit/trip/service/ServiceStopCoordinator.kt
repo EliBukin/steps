@@ -25,3 +25,50 @@ fun stopServiceIfOwned(
     if (owned) removeForegroundNotification()
     return owned
 }
+
+/**
+ * Which startId [TripRecordingService]'s stop must name. The notification's Mark spot reaches the
+ * service as a start command too, so it gets a startId of its own, but it is not a recording
+ * command and must not make the recording's own stop look stale: naming the recording command's
+ * startId after a Mark spot was delivered would make [android.app.Service.stopSelfResult] refuse
+ * the stop, leaving the service and its "recording" notification up with nothing recording - after
+ * a Finish, or after the recording failed.
+ *
+ * So a stop for the newest recording command names the newest startId of all, Mark spots
+ * included; a stop for an older recording command keeps its own, which Android refuses, as it
+ * should, because a newer recording command owns the service now. If a Mark spot was already on its
+ * way when that stop was refused (Android counts a start before it reaches the service), the Mark
+ * spot stops the service once it is done - see [stopAfterMarkSpot].
+ *
+ * Called from the main thread ([onStart], [stopAfterMarkSpot]) and from a command's coroutine
+ * ([stopForRecordingCommand]), so one lock guards it all.
+ */
+class ServiceStartIds {
+    private val lock = Any()
+    private var latestStartId = 0
+    private var latestRecordingStartId = 0
+    private var recordingStopRequested = false
+
+    /** Call at the very start of every `onStartCommand`, Mark spot included. */
+    fun onStart(startId: Int, isRecordingCommand: Boolean) = synchronized(lock) {
+        latestStartId = startId
+        if (isRecordingCommand) {
+            latestRecordingStartId = startId
+            recordingStopRequested = false
+        }
+    }
+
+    /** The stop a recording command asked for; [stop] is the actual stop, given the startId to name. Returns what [stop] returned. */
+    fun stopForRecordingCommand(startId: Int, stop: (startId: Int) -> Boolean): Boolean = synchronized(lock) {
+        if (startId != latestRecordingStartId) return@synchronized stop(startId)
+        recordingStopRequested = true
+        stop(latestStartId)
+    }
+
+    /** Call when Mark spot [startId] is done: stops the service if the recording already asked to stop. Returns whether it tried. */
+    fun stopAfterMarkSpot(startId: Int, stop: (startId: Int) -> Boolean): Boolean = synchronized(lock) {
+        if (!recordingStopRequested) return@synchronized false
+        stop(startId)
+        true
+    }
+}

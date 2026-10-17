@@ -189,6 +189,41 @@ class TripRecordingServiceSpotTest {
         waitUntil("the service to stop") { shadowOf(service).isStoppedBySelf }
     }
 
+    /**
+     * Android honors `stopSelfResult(startId)` only for the newest start it has delivered, and the
+     * notification's Mark spot reaches the service as a start too. Robolectric's `stopSelfResult`
+     * always succeeds, so these check which startId the stop names: one older than the last Mark
+     * spot would be refused on a phone, leaving the service and its "recording" notification up
+     * with nothing recording.
+     */
+    @Test
+    fun `a recording that fails after a Mark spot from the notification still stops the service`() {
+        val service = recordingService()
+        deliverFix(lat = 31.7701)
+        service.onStartCommand(command(TripRecordingService.ACTION_MARK_SPOT), 0, 2)
+        waitUntil("the spot") { ShadowToast.getTextOfLatestToast() == "Spot 1 marked" }
+
+        locationClient.failActiveCollection(SecurityException("location permission revoked"))
+
+        waitUntil("the service to stop") { shadowOf(service).isStoppedBySelf }
+        assertEquals("the stop names the newest start", 2, shadowOf(service).stopSelfResultId)
+    }
+
+    @Test
+    fun `a Mark spot from the notification while a Finish is in progress doesn't keep the service up`() {
+        val service = recordingService()
+        deliverFix(lat = 31.7701)
+        val tripId = container.tripRecordingCoordinator.recordingTripId!!
+
+        service.onStartCommand(command(TripRecordingService.ACTION_FINISH), 0, 2)
+        waitUntil("the Finish to start waiting for late fixes") { locationClient.flushInvoked }
+        service.onStartCommand(command(TripRecordingService.ACTION_MARK_SPOT), 0, 3)
+
+        waitUntil("the trip to finish") { runBlocking { container.tripRepository.getTrip(tripId) }?.state == TripState.FINISHED.name }
+        waitUntil("the service to stop") { shadowOf(service).isStoppedBySelf }
+        assertEquals("the stop names the newest start", 3, shadowOf(service).stopSelfResultId)
+    }
+
     @Test
     fun `Mark spot with nothing recording says so and stops the service again`() {
         val service = createService()

@@ -1,5 +1,6 @@
 package com.example.stepsplit.trip.service
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -84,5 +85,80 @@ class ServiceStopCoordinatorTest {
 
         assertTrue(owned)
         assertTrue(notificationRemoved)
+    }
+
+    /**
+     * Android's side of [ServiceStartIds]: it counts every start (Mark spot included) when it
+     * schedules it, possibly before `onStartCommand` sees it, and `stopSelfResult` stops the
+     * service only when it names the newest one counted.
+     */
+    private class FakeAndroid {
+        var countedStartId = 0
+        var stopped = false
+        val ids = ServiceStartIds()
+
+        fun deliver(isRecordingCommand: Boolean): Int {
+            countedStartId++
+            ids.onStart(countedStartId, isRecordingCommand)
+            return countedStartId
+        }
+
+        fun stopSelfResult(startId: Int): Boolean = (startId == countedStartId).also { if (it) stopped = true }
+    }
+
+    @Test
+    fun `a Mark spot delivered after the recording command doesn't make its stop look stale`() {
+        val android = FakeAndroid()
+        val start = android.deliver(isRecordingCommand = true)
+        android.deliver(isRecordingCommand = false) // Mark spot from the notification
+
+        assertTrue(android.ids.stopForRecordingCommand(start, android::stopSelfResult))
+        assertTrue(android.stopped)
+    }
+
+    @Test
+    fun `a newer recording command still makes an older one's stop be refused`() {
+        val android = FakeAndroid()
+        val start = android.deliver(isRecordingCommand = true)
+        android.deliver(isRecordingCommand = false) // Mark spot
+        android.deliver(isRecordingCommand = true) // Finish
+
+        assertFalse(android.ids.stopForRecordingCommand(start, android::stopSelfResult))
+        assertFalse(android.stopped)
+    }
+
+    @Test
+    fun `a Mark spot counted but not yet delivered when the stop came stops the service once it is done`() {
+        val android = FakeAndroid()
+        val finish = android.deliver(isRecordingCommand = true)
+        android.countedStartId++ // Mark spot counted by Android, not yet in onStartCommand
+        assertFalse(android.ids.stopForRecordingCommand(finish, android::stopSelfResult))
+
+        android.ids.onStart(android.countedStartId, isRecordingCommand = false)
+        assertTrue(android.ids.stopAfterMarkSpot(android.countedStartId, android::stopSelfResult))
+        assertTrue(android.stopped)
+    }
+
+    @Test
+    fun `a Mark spot during a recording that goes on doesn't stop it`() {
+        val android = FakeAndroid()
+        android.deliver(isRecordingCommand = true)
+        val markSpot = android.deliver(isRecordingCommand = false)
+
+        assertFalse(android.ids.stopAfterMarkSpot(markSpot, android::stopSelfResult))
+        assertFalse(android.stopped)
+    }
+
+    @Test
+    fun `a recording command after a refused stop starts over`() {
+        val android = FakeAndroid()
+        val start = android.deliver(isRecordingCommand = true)
+        android.countedStartId++ // a Resume, counted but not yet delivered
+        assertFalse(android.ids.stopForRecordingCommand(start, android::stopSelfResult))
+        android.ids.onStart(android.countedStartId, isRecordingCommand = true)
+
+        val markSpot = android.deliver(isRecordingCommand = false)
+        assertFalse("the Resume is recording now", android.ids.stopAfterMarkSpot(markSpot, android::stopSelfResult))
+        assertEquals(false, android.stopped)
     }
 }

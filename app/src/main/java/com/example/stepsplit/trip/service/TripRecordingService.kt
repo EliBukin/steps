@@ -77,6 +77,9 @@ class TripRecordingService : Service() {
     /** Whether this service instance has had a recording command (anything but [ACTION_MARK_SPOT]) - see [handleMarkSpot]. */
     private var hadRecordingCommand = false
 
+    /** Which startId a stop names, so a Mark spot from the notification never makes the recording's own stop look stale - see [ServiceStartIds]. */
+    private val startIds = ServiceStartIds()
+
     private val commandController: TripRecordingCommandController by lazy {
         TripRecordingCommandController(
             repository = container.tripRepository,
@@ -94,7 +97,9 @@ class TripRecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_MARK_SPOT) return handleMarkSpot(startId)
+        val isMarkSpot = intent?.action == ACTION_MARK_SPOT
+        startIds.onStart(startId, isRecordingCommand = !isMarkSpot)
+        if (isMarkSpot) return handleMarkSpot(startId)
         hadRecordingCommand = true
         val generation = commandController.beginCommand()
 
@@ -153,19 +158,23 @@ class TripRecordingService : Service() {
      * been delivered since - *before* the foreground notification is removed. Removing the
      * notification unconditionally first (the previous, buggy ordering) could leave the service
      * alive with no foreground notification, if a newer start had already superseded this one.
+     * [startIds] picks the startId to name, so a Mark spot delivered after this recording command
+     * doesn't count as such a newer start.
      */
     private fun stopServiceForStartId(startId: Int) {
-        stopServiceIfOwned(
-            startId = startId,
-            stopSelfResult = ::stopSelfResult,
-            removeForegroundNotification = {
-                synchronized(notificationLock) {
-                    notificationShown = false
-                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                }
-            },
-        )
+        startIds.stopForRecordingCommand(startId, ::stopOwnedStart)
     }
+
+    private fun stopOwnedStart(startId: Int): Boolean = stopServiceIfOwned(
+        startId = startId,
+        stopSelfResult = ::stopSelfResult,
+        removeForegroundNotification = {
+            synchronized(notificationLock) {
+                notificationShown = false
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
+        },
+    )
 
     /**
      * The notification's Mark spot action, sent as a plain `startService` by its [PendingIntent]
@@ -178,6 +187,8 @@ class TripRecordingService : Service() {
      *
      * Normally the service is already recording. If this action alone started it (a notification
      * left over from a recording that is gone), there is nothing to mark: it says so and stops again.
+     * If the recording asked to stop while this was on its way (a Finish), it stops now - see
+     * [ServiceStartIds.stopAfterMarkSpot].
      */
     private fun handleMarkSpot(startId: Int): Int {
         val startedForThisAlone = !hadRecordingCommand
@@ -185,7 +196,7 @@ class TripRecordingService : Service() {
             val result = container.tripSpotMarker.markSpot()
             withContext(Dispatchers.Main) {
                 showSpotFeedback(result)
-                if (startedForThisAlone) stopSelf(startId)
+                if (startedForThisAlone) stopSelf(startId) else startIds.stopAfterMarkSpot(startId, ::stopOwnedStart)
             }
         }
         return if (startedForThisAlone) START_NOT_STICKY else START_STICKY
