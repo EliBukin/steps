@@ -204,11 +204,14 @@ class StepRepository(
      * First import ever: read the full retained history. Later imports: re-read a rolling
      * overlap window ending at the last known bucket so late/corrected data reconciles, clamped
      * to a conservative retention floor so a long-overdue sync never requests an unbounded window.
+     * A last bucket in the future (stored while the phone's clock ran ahead, before it was put
+     * right) counts as ending now, so the window never starts after now and skips what was walked
+     * meanwhile.
      */
     private fun computeWindowStart(latestBucketEnd: Long?, now: Instant): Instant {
         val retentionFloor = now.minus(RETENTION_WINDOW)
         if (latestBucketEnd == null) return retentionFloor
-        val overlapStart = Instant.ofEpochSecond(latestBucketEnd).minus(SYNC_OVERLAP)
+        val overlapStart = Instant.ofEpochSecond(minOf(latestBucketEnd, now.epochSecond)).minus(SYNC_OVERLAP)
         return if (overlapStart.isBefore(retentionFloor)) retentionFloor else overlapStart
     }
 

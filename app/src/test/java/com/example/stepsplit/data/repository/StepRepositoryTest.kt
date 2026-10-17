@@ -449,6 +449,36 @@ class StepRepositoryTest {
         assertEquals(25L, database.stepBucketDao().getAllActive().sumOf { it.steps })
     }
 
+    /**
+     * The phone's clock ran two days ahead for a while (set by hand), so minutes stamped two days
+     * in the future were stored, and then it was put right. The re-read window must still end up
+     * covering the last hours before now, not start after now: otherwise nothing is imported until
+     * real time catches up, and the steps walked in between are never read at all.
+     */
+    @Test
+    fun `steps are still imported after the clock is put back behind the newest stored minute`() = runTest {
+        val twoDaysAhead = fixedNow.epochSecond + Duration.ofDays(2).seconds
+        database.stepBucketDao().upsertAll(
+            listOf(
+                StepBucketEntity(
+                    source = fakeSource.id,
+                    startEpochSecond = twoDaysAhead,
+                    endEpochSecond = twoDaysAhead + 60,
+                    steps = 10,
+                    zoneId = "UTC",
+                    localDate = "2026-03-12",
+                    importedAtEpochSecond = twoDaysAhead,
+                ),
+            ),
+        )
+        fakeSource.addInterval(baseEpoch, baseEpoch + 60, 25)
+
+        val result = repository.syncNow()
+
+        assertTrue(result is SyncResult.Success)
+        assertEquals("the minute walked an hour ago is imported", 35L, database.stepBucketDao().getAllActive().sumOf { it.steps })
+    }
+
     @Test
     fun `after a gap longer than the retention window, a sync catches up exactly 30 days`() = runTest {
         // Last imported minute 45 days ago - the overlap start (that minus 6 hours) is clamped to
