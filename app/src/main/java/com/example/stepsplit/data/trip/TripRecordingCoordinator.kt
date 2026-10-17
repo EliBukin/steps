@@ -2,11 +2,17 @@ package com.example.stepsplit.data.trip
 
 import android.util.Log
 import com.example.stepsplit.BuildConfig
+import com.example.stepsplit.domain.trip.RawLocationSample
+import com.example.stepsplit.domain.trip.SpotFixRule
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -23,6 +29,9 @@ import kotlinx.coroutines.flow.onEach
  * create a second subscription to [locationClient] - see [isActive]. [stop] is idempotent too, and
  * is what removes the location subscription (via [locationClient]'s cold-flow cancellation) on
  * every terminal path - normal finish, error, or the service's own onDestroy as a safety net.
+ *
+ * It also keeps [latestFix], the newest fix it has received for the trip, for [TripSpotMarker]:
+ * this is the one place that sees every fix, the ones the route then drops included.
  */
 class TripRecordingCoordinator(
     private val repository: TripRepository,
@@ -36,6 +45,20 @@ class TripRecordingCoordinator(
     private val collectingJob = AtomicReference<Job?>(null)
 
     val isActive: Boolean get() = collectingJob.get()?.isActive == true
+
+    /** The trip being collected for, or null when nothing is - set by [start], cleared by [stop]. */
+    @Volatile
+    var recordingTripId: Long? = null
+        private set
+
+    private val latestFixState = MutableStateFlow<RawLocationSample?>(null)
+
+    /**
+     * The newest fix (by capture time) received since [start] that [SpotFixRule.isUsable] accepts,
+     * whether or not the route kept it; null before the first one and after [stop]. Updated before
+     * the batch is handed to the repository, so a spot never waits on a Room write.
+     */
+    val latestFix: StateFlow<RawLocationSample?> = latestFixState.asStateFlow()
 
     /**
      * [onFailure] runs at most once if [locationClient]'s flow itself terminates with a
@@ -52,8 +75,13 @@ class TripRecordingCoordinator(
      */
     fun start(tripId: Long, onFailure: suspend (Throwable) -> Unit = {}) {
         if (isActive) return
+        latestFixState.value = null
+        recordingTripId = tripId
         val job = locationClient.locationUpdates()
-            .onEach { batch -> repository.recordAcceptedBatch(tripId, batch) }
+            .onEach { batch ->
+                rememberLatestFix(batch)
+                repository.recordAcceptedBatch(tripId, batch)
+            }
             .catch { throwable ->
                 // Clear only this collector's own reference. By the time a failure lands here, a
                 // newer start() may already have replaced it; clearing that one would orphan a live
@@ -73,6 +101,15 @@ class TripRecordingCoordinator(
 
     fun stop() {
         collectingJob.getAndSet(null)?.cancel()
+        recordingTripId = null
+        latestFixState.value = null
+    }
+
+    private fun rememberLatestFix(batch: List<RawLocationSample>) {
+        val newest = batch.filter(SpotFixRule::isUsable).maxByOrNull { it.capturedAtEpochSecond } ?: return
+        latestFixState.update { current ->
+            if (current == null || newest.capturedAtEpochSecond >= current.capturedAtEpochSecond) newest else current
+        }
     }
 
     private companion object {

@@ -172,6 +172,24 @@
     <string name="trip_edit_type_note">ההצעה מבוססת על מהירות הטיול.</string>
     <string name="trip_edit_save_action">שמירה</string>
 
+    <string name="trip_mark_spot_button">סימון מקום</string>
+    <string name="trip_spots_count_label">מקומות שסומנו: %1$d</string>
+    <string name="trip_spot_default_name">מקום %1$d</string>
+    <string name="trip_spot_marked_message">%1$s סומן</string>
+    <string name="trip_spot_no_fix_message">אין עדיין מיקום GPS – המקום לא סומן</string>
+    <string name="trip_spot_not_recording_message">אין טיול בהקלטה – המקום לא סומן</string>
+    <string name="trip_spot_failed_message">לא ניתן היה לשמור את המקום</string>
+    <string name="trip_spot_time_format">סומן בשעה %1$s</string>
+    <string name="trip_spot_height_above_format">%1$s מ׳ מעל פני הים</string>
+    <string name="trip_spot_height_below_format">%1$s מ׳ מתחת לפני הים</string>
+    <string name="trip_spot_rename_action">שינוי שם</string>
+    <string name="trip_spot_delete_action">מחיקה</string>
+    <string name="trip_spot_close_action">סגירה</string>
+    <string name="trip_spot_rename_title">שינוי שם המקום</string>
+    <string name="trip_spot_delete_confirm_title">למחוק את %1$s?</string>
+    <string name="trip_spot_delete_confirm_message">המקום יוסר מהטיול ומקובץ ה-GPX שלו. לא ניתן לבטל פעולה זו.</string>
+    <string name="cd_trip_map_spots">מקומות מסומנים: %1$d. הקש/י על אחד לפרטים.</string>
+
     <string name="trip_unit_kilometers_format">%1$.2f ק״מ</string>
     <string name="trip_unit_meters_format">%1$d מ׳</string>
     <string name="trip_duration_hours_minutes_format">%1$dש\' %2$dד\'</string>
@@ -181,6 +199,7 @@
     <string name="trip_notification_title">מקליט/ה את הטיול שלך</string>
     <string name="trip_notification_text">הקש/י לצפייה בהתקדמות</string>
     <string name="trip_notification_finish_action">סיום</string>
+    <string name="trip_notification_mark_spot_action">סימון מקום</string>
 
     <string name="cd_trip_recording_active">הקלטת טיול פעילה</string>
     <string name="cd_trip_route_trace">מפת המסלול שנרשם</string>

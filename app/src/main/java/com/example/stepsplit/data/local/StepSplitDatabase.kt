@@ -25,6 +25,8 @@ import com.example.stepsplit.data.local.trip.TripDao
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointDao
 import com.example.stepsplit.data.local.trip.TripPointEntity
+import com.example.stepsplit.data.local.trip.TripSpotDao
+import com.example.stepsplit.data.local.trip.TripSpotEntity
 import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.TripTypeRule
 
@@ -59,8 +61,9 @@ import com.example.stepsplit.domain.trip.TripTypeRule
         MotionEvidenceEntity::class,
         StepCounterSampleEntity::class,
         DeletedTripTotalsEntity::class,
+        TripSpotEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -68,6 +71,7 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun walkBoutDao(): WalkBoutDao
     abstract fun tripDao(): TripDao
     abstract fun tripPointDao(): TripPointDao
+    abstract fun tripSpotDao(): TripSpotDao
     abstract fun deletedTripTotalsDao(): DeletedTripTotalsDao
     abstract fun activityIntervalDao(): ActivityIntervalDao
     abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
@@ -304,8 +308,26 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 -> v10: adds the empty `trip_spots` table ([TripSpotEntity]) for the spots marked during
+         * a trip. Purely additive: no existing table or row is touched, so every trip, point and
+         * step survives as it is. Its rows cascade with their trip, like `trip_points`.
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `trip_spots` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`tripId` INTEGER NOT NULL, `number` INTEGER NOT NULL, `capturedAtEpochSecond` INTEGER NOT NULL, " +
+                        "`latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `altitudeMeters` REAL, `name` TEXT, " +
+                        "FOREIGN KEY(`tripId`) REFERENCES `trips`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_trip_spots_tripId_number` ON `trip_spots` (`tripId`, `number`)")
+            }
+        }
+
         internal val MIGRATIONS = arrayOf<Migration>(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+            MIGRATION_9_10,
         )
 
         fun build(context: Context): StepSplitDatabase =

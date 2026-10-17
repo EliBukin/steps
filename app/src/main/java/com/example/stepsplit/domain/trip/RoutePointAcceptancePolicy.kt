@@ -127,7 +127,8 @@ object RoutePointAcceptancePolicy {
         return RouteSampleDecision.Accepted(candidate)
     }
 
-    private fun isValidCoordinate(latitude: Double, longitude: Double): Boolean =
+    /** Also what [SpotFixRule] asks of a spot's fix. */
+    internal fun isValidCoordinate(latitude: Double, longitude: Double): Boolean =
         latitude.isFinite() && longitude.isFinite() &&
             latitude >= -90.0 && latitude <= 90.0 &&
             longitude >= -180.0 && longitude <= 180.0 &&

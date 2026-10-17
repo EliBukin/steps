@@ -172,6 +172,24 @@
     <string name="trip_edit_type_note">Suggested from the trip\'s speed.</string>
     <string name="trip_edit_save_action">Save</string>
 
+    <string name="trip_mark_spot_button">Mark spot</string>
+    <string name="trip_spots_count_label">Spots marked: %1$d</string>
+    <string name="trip_spot_default_name">Spot %1$d</string>
+    <string name="trip_spot_marked_message">%1$s marked</string>
+    <string name="trip_spot_no_fix_message">No GPS fix yet – spot not marked</string>
+    <string name="trip_spot_not_recording_message">No trip is recording – spot not marked</string>
+    <string name="trip_spot_failed_message">Couldn\'t save the spot</string>
+    <string name="trip_spot_time_format">Marked at %1$s</string>
+    <string name="trip_spot_height_above_format">%1$s m above sea level</string>
+    <string name="trip_spot_height_below_format">%1$s m below sea level</string>
+    <string name="trip_spot_rename_action">Rename</string>
+    <string name="trip_spot_delete_action">Delete</string>
+    <string name="trip_spot_close_action">Close</string>
+    <string name="trip_spot_rename_title">Rename spot</string>
+    <string name="trip_spot_delete_confirm_title">Delete %1$s?</string>
+    <string name="trip_spot_delete_confirm_message">The spot is removed from the trip and from its GPX file. This cannot be undone.</string>
+    <string name="cd_trip_map_spots">Marked spots: %1$d. Tap one for its details.</string>
+
     <string name="trip_unit_kilometers_format">%1$.2f km</string>
     <string name="trip_unit_meters_format">%1$d m</string>
     <string name="trip_duration_hours_minutes_format">%1$dh %2$dm</string>
@@ -181,6 +199,7 @@
     <string name="trip_notification_title">Recording your trip</string>
     <string name="trip_notification_text">Tap to view progress</string>
     <string name="trip_notification_finish_action">Finish</string>
+    <string name="trip_notification_mark_spot_action">Mark spot</string>
 
     <string name="cd_trip_recording_active">Trip recording is active</string>
     <string name="cd_trip_route_trace">Map of the recorded route</string>

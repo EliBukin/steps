@@ -25,4 +25,12 @@ interface TripLocationClient {
      * all) through a still-active [locationUpdates] collection.
      */
     suspend fun flush() {}
+
+    /**
+     * One fresh fix, asked for right now, for marking a spot - see [TripSpotMarker]. Needed because
+     * [locationUpdates] delivers nothing while the phone stands still. Null when none came in time
+     * or the request failed; never throws. Default null, so a fake without special behavior doesn't
+     * need to implement it. Callers bound it with their own timeout and may cancel it.
+     */
+    suspend fun currentLocation(): RawLocationSample? = null
 }

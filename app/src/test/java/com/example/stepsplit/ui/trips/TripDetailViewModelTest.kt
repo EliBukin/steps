@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
+import com.example.stepsplit.data.local.trip.TripSpotEntity
 import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
@@ -499,5 +500,44 @@ class TripDetailViewModelTest {
 
         assertNull(state.motion)
         assertNull(state.elevation)
+    }
+
+    private suspend fun insertSpots(tripId: Long) {
+        database.tripSpotDao().insert(
+            TripSpotEntity(tripId = tripId, number = 1, capturedAtEpochSecond = fixedNow.epochSecond - 3_000, latitude = 31.775, longitude = 35.2, altitudeMeters = 760.0),
+        )
+        database.tripSpotDao().insert(
+            TripSpotEntity(tripId = tripId, number = 2, capturedAtEpochSecond = fixedNow.epochSecond - 1_000, latitude = 31.78, longitude = 35.2, altitudeMeters = null),
+        )
+    }
+
+    @Test
+    fun `spots come by number with their heights converted like the route's, and can be renamed and deleted`() = runTest {
+        val tripId = insertHillWalk()
+        insertSpots(tripId)
+        val viewModel = TripDetailViewModel(TripRepository(database, clock), tripId, flowOf(false), FixedGeoid(20.0))
+
+        val state = viewModel.uiState.first { it.spots.size == 2 }
+        assertTrue(state.spotHeightsAboveSeaLevel)
+        assertEquals(listOf(1, 2), state.spots.map { it.number })
+        assertEquals(740.0, state.spots[0].altitudeMeters!!, 1e-9)
+        assertNull(state.spots[1].altitudeMeters)
+
+        viewModel.renameSpot(state.spots[0].id, "  Viewpoint ")
+        assertEquals("Viewpoint", viewModel.uiState.first { it.spots.firstOrNull()?.name != null }.spots[0].name)
+
+        viewModel.deleteSpot(state.spots[0].id)
+        assertEquals(listOf(2), viewModel.uiState.first { it.spots.size == 1 }.spots.map { it.number })
+    }
+
+    @Test
+    fun `where the phone can't convert, spot heights are kept but not called above sea level`() = runTest {
+        val tripId = insertHillWalk()
+        insertSpots(tripId)
+        val viewModel = TripDetailViewModel(TripRepository(database, clock), tripId, flowOf(false), StoredHeightsOnly)
+
+        val state = viewModel.uiState.first { it.spots.size == 2 }
+        assertFalse(state.spotHeightsAboveSeaLevel)
+        assertEquals(760.0, state.spots[0].altitudeMeters!!, 1e-9)
     }
 }

@@ -47,8 +47,8 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 | **Today** | Today's steps inside a ring that fills toward the daily goal, with the workout and incidental steps below it. This week's total against the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
 | **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
 | **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** a card for **Walks** and one for **Drives**, each with the number of trips, total time and distance, and average speed; walks also show average pace. A card with no trips is hidden. |
-| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route, a walk or car icon for its type, and its name, or its day, date and start time if it has none. |
-| **Trip detail** | The trip's type icon and its name, with the date under it (an unnamed trip is titled by its date). A card with when the trip started and ended, its duration and distance, and under those the total climb (↑) and descent (↓), the moving time (the duration without stops) and the top speed. Then the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. Under the map, a small height chart along the trip, with the highest and lowest point above sea level next to its top and bottom (Android 14 and newer; older phones show the chart's shape only). The chart is left out on a short phone, where the map needs the room, and a trip recorded without heights has no climb, descent or chart. The screen doesn't scroll, so the map's gestures always work. At the top, the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked) and the trash icon deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. *Mark spot* saves where you are with one tap (a spring, a viewpoint, a tricky passage) and confirms with "Spot 3 marked"; the recording notification has the same action, which also works from the lock screen. Below that, your finished trips, each with a small picture of its route, a walk or car icon for its type, and its name, or its day, date and start time if it has none. |
+| **Trip detail** | The trip's type icon and its name, with the date under it (an unnamed trip is titled by its date). A card with when the trip started and ended, its duration and distance, and under those the total climb (↑) and descent (↓), the moving time (the duration without stops) and the top speed. Then the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. Spots you marked are white discs with their number (where two overlap, the newer one is on top; zoom in to separate them); tapping one shows its name (or "Spot 3"), when it was marked and its height above sea level (Android 14 and newer), with *Rename* and *Delete*. Under the map, a small height chart along the trip, with the highest and lowest point above sea level next to its top and bottom (Android 14 and newer; older phones show the chart's shape only). The chart is left out on a short phone, where the map needs the room, and a trip recorded without heights has no climb, descent or chart. The screen doesn't scroll, so the map's gestures always work. At the top, the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked) and the trash icon deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
 | **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
@@ -81,7 +81,7 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 
 - **Recording.** You start a trip yourself. While it records, Android shows an ongoing
   notification, and recording continues with the screen off or while you use other apps. You can
-  finish from the notification or from the app.
+  mark spots and finish from the notification or from the app.
 - **Interruptions.** If Android stops the app during a trip, the next time you open it the trip is
   marked *interrupted*. You can resume it (the route will have a gap) or finish it at its last
   point.
@@ -108,8 +108,33 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 - **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
   sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app. A
   named trip's name goes into the file too (as the GPX file's and track's name), so other apps
-  show it. Each point's height (`<ele>`) is above sea level, as GPX means it, on Android 14 and
-  newer; see *Heights* below.
+  show it. Each marked spot becomes a waypoint (`<wpt>`) with its height, time and name; an
+  unnamed spot is called "Spot 3" in the app's language, as the app shows it, so the other app
+  calls it the same. Each point's and spot's height (`<ele>`) is above sea level, as GPX means it,
+  on Android 14 and newer; see *Heights* below.
+- **Marked spots.** While a trip records, *Mark spot* on the Trips screen or in the notification
+  saves where you are, at once and with no questions, so it works from a moving jeep. Spots are
+  numbered per trip (Spot 1, 2, 3...); a number stays with its spot, so deleting Spot 2 doesn't
+  turn Spot 3 into Spot 2. A name is optional and can be set later by tapping the spot on the map.
+  Which GPS point a spot uses:
+  - Any point the phone delivered from within 30 seconds of the tap (before or after), with an
+    accuracy of 50 m or better, counts, including points the route itself skips, such as drift
+    while standing still. The spot uses the one closest in time to the tap.
+  - The newest point is used at once, unless the phone may have moved more than 40 m since it,
+    judged by the speed it reported. On foot any point from the last 30 seconds will do; in a jeep
+    at 40 km/h only one from the last 3-4 seconds, since the newest point is often 5-25 seconds
+    old there, which would put the spot a few hundred meters back down the track.
+  - Otherwise the app asks the GPS for a fresh point and also takes the recording's next one,
+    whichever comes first, for up to 10 seconds; with the GPS already on that normally takes a
+    second. This is also what makes a spot work while you stand still, when the recording gets no
+    new points at all. If nothing closer comes, it uses the best point from those 30 seconds.
+  - With no point at all, nothing is saved and the app says there's no GPS fix yet.
+
+  The spot keeps that point's time and height, so they match its place. The notification's
+  *Mark spot* doesn't ask you to unlock the phone. The recording notification makes no sound and
+  doesn't vibrate, but it isn't a "silent" notification in Android's sense (those are hidden on
+  the lock screen by default), so it shows there in full, actions included. The answer ("Spot 3 marked", or "No GPS fix yet") shows as a short message and,
+  for a few seconds, as the notification's text.
 - **Walk or drive.** Every finished trip is a *walk* (walks, hikes, jogs) or a *drive*, so Stats can
   keep hikes and jeep drives apart. The app suggests one from the route's speed: each stretch's
   speed, the same one the speed colors use, and the trip is a drive when at least a tenth of its
@@ -121,9 +146,9 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   It can be wrong: a 4x4 crawl that never goes over 15 km/h is suggested as a walk.
 - **Names.** A trip can have a name of up to 60 characters, like "Wadi Qelt hike". Leave it empty
   and the trip is titled by its date, as before.
-- **Deleting a trip.** Deleting removes the trip and its route. If *Keep deleted trips in Stats*
+- **Deleting a trip.** Deleting removes the trip, its route and its marked spots. If *Keep deleted trips in Stats*
   is on (it's off by default), the app first keeps the trip's date, duration, distance and type
-  (walk or drive), with no location and no name, and Stats keeps counting it in the right card.
+  (walk or drive), with no location, no name and no spots, and Stats keeps counting it in the right card.
   Turning the setting off hides those trips from Stats until you turn it on again. Trips deleted
   while it's off are gone from Stats for good.
 - **Speed colors.** Each stretch between two points of that same route is colored by its speed:
@@ -216,6 +241,9 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
 - **Android 14+ only for steps.** Older phones get no step counting.
 - **Workout vs. incidental is a guess.** A long, brisk walk to the shop counts as a workout.
 - **A trip stops if Android closes the app.** It stays *interrupted* until you resume it.
+- **Spots on the map only.** Spots show on the online map, not on the offline outline, and
+  TalkBack can't reach a single spot on the map: the map's description only says how many there
+  are. Their heights show only on Android 14 and newer.
 - **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
   tap *Start trip* again.
 
@@ -236,11 +264,13 @@ app/src/main/java/com/example/stepsplit/
   di/               AppContainer and ViewModelFactory
   domain/           Pure Kotlin, no Android: walk classification, aggregation, time,
                     lifetime stats, and the trip route logic (point acceptance, cleanup, smoothing,
-                    speed colors, walk/drive, moving time and top speed, elevation)
+                    speed colors, walk/drive, moving time and top speed, elevation, which GPS
+                    point a marked spot uses)
   data/
     stepsource/     Health Connect step source (+ a fake for tests and debug data)
     repository/     StepRepository: imports, stores and classifies steps
-    trip/           TripRepository, GPS location client, recording coordinator, sea-level heights
+    trip/           TripRepository, GPS location client, recording coordinator, spot marker,
+                    sea-level heights
     local/          Room database, entities and DAOs
     settings/       DataStore settings (goal, thresholds, last sync, keep deleted trips)
   trip/service/     The trip recording foreground service and its command handling
@@ -263,7 +293,7 @@ with platform 36.
 ./gradlew lintDebug
 ```
 
-- **Tests.** About 590 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
+- **Tests.** About 670 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
   run under Robolectric. There are no instrumented (on-device) tests.
 - **Step separation.** `ArchitectureInvariantsTest` scans the code to make sure step and trip code
   don't import each other, and `StepGpsSeparationTest` runs both features together.
@@ -282,12 +312,14 @@ with platform 36.
 
 ### Database
 
-- **Version.** Room schema version **9**. The 8→9 migration added trip names and types: existing
-  trips get no name and keep the suggested type, and deleted trips kept in Stats from before then
-  get their type from their average speed (10 km/h or more is a drive; their route is gone). Each version's schema is exported to `app/schemas/` and
+- **Version.** Room schema version **10**. The 9→10 migration added the empty `trip_spots` table
+  for marked spots, which are deleted with their trip. The 8→9 migration added trip names and
+  types: existing trips get no name and keep the suggested type, and deleted trips kept in Stats
+  from before then get their type from their average speed (10 km/h or more is a drive; their
+  route is gone). Each version's schema is exported to `app/schemas/` and
   committed. Migrations never delete steps or change step counts; the 5→6 migration did drop the
   old manual-relabelling table (`session_overrides`).
-- **Migration tests.** Each step from 1→9 has a test in `StepSplitDatabaseMigrationTest`. It
+- **Migration tests.** Each step from 1→10 has a test in `StepSplitDatabaseMigrationTest`. It
   builds the old schema from its exported JSON, migrates, and lets Room validate the result.
 - **Unused leftovers.** Some tables and columns from removed features are kept but unused:
   `manual_walks`, `activity_intervals`, `motion_evidence`, `temporal_continuity_state`,

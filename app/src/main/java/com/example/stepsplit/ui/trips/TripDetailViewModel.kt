@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
+import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.RouteSanitizer
@@ -43,6 +44,10 @@ data class TripDetailUiState(
      * show those.
      */
     val heightsAboveSeaLevel: Boolean = false,
+    /** The spots marked during the trip, by number, with their heights converted like [points]'. */
+    val spots: List<TripSpot> = emptyList(),
+    /** Whether [spots]' heights are above sea level - see [heightsAboveSeaLevel]. */
+    val spotHeightsAboveSeaLevel: Boolean = false,
     val deleted: Boolean = false,
     /** Whether deleting this trip keeps its time and distance in Stats - the delete dialog says which. */
     val keepDeletedTripsInStats: Boolean = false,
@@ -70,7 +75,8 @@ data class TripDetailUiState(
  *
  * The same goes for heights: on Android 14 and newer [seaLevelHeights] converts the stored heights
  * (above the WGS84 ellipsoid) to above sea level right here, so the elevation numbers, the height
- * chart and the GPX `<ele>` values all read the same converted [uiState.points].
+ * chart and the GPX `<ele>` values all read the same converted [uiState.points]. The spots' heights
+ * go through the same conversion, for the spot dialog and the GPX waypoints.
  *
  * Everything derived from the route is worked out off the main thread, once per points-flow
  * emission: renaming a trip or changing its type doesn't redo it. Only the moving time, which
@@ -109,11 +115,23 @@ class TripDetailViewModel(
         )
     }.flowOn(Dispatchers.Default)
 
+    /** The spots, with their heights above sea level where the phone can convert them, and whether it could. */
+    private val displayedSpots: Flow<Pair<List<TripSpot>, Boolean>> = repository.observeTripSpots(tripId).map { spots ->
+        if (spots.isEmpty()) return@map spots to false
+        val converted = seaLevelHeights.toSeaLevel(spots.map { it.asPoint() })
+        if (converted == null) {
+            spots to false
+        } else {
+            spots.mapIndexed { index, spot -> spot.copy(altitudeMeters = converted[index].altitudeMeters) } to true
+        }
+    }.flowOn(Dispatchers.Default)
+
     val uiState: StateFlow<TripDetailUiState> = combine(
         repository.observeTrip(tripId),
         displayedRoute,
+        displayedSpots,
         keepDeletedTripsInStats,
-    ) { trip, route, keepInStats ->
+    ) { trip, route, (spots, spotHeightsAboveSeaLevel), keepInStats ->
         val type = trip?.typeOverride ?: route.suggestedType
         TripDetailUiState(
             isLoading = false,
@@ -124,6 +142,8 @@ class TripDetailViewModel(
             motion = if (route.points.size >= 2) TripMotion.measure(route.points, type) else null,
             elevation = route.elevation,
             heightsAboveSeaLevel = route.heightsAboveSeaLevel,
+            spots = spots,
+            spotHeightsAboveSeaLevel = spotHeightsAboveSeaLevel,
             deleted = trip == null,
             keepDeletedTripsInStats = keepInStats,
         )
@@ -143,4 +163,23 @@ class TripDetailViewModel(
     fun deleteTrip() {
         viewModelScope.launch { repository.deleteTrip(tripId, keepInStats = keepDeletedTripsInStats.first()) }
     }
+
+    /** Names a spot; blank goes back to "Spot N". */
+    fun renameSpot(spotId: Long, name: String) {
+        viewModelScope.launch { repository.renameSpot(spotId, name) }
+    }
+
+    fun deleteSpot(spotId: Long) {
+        viewModelScope.launch { repository.deleteSpot(spotId) }
+    }
 }
+
+/** A spot as a point, only for [SeaLevelHeights], which converts points' heights. */
+private fun TripSpot.asPoint() = TripPoint(
+    capturedAtEpochSecond = capturedAtEpochSecond,
+    latitude = latitude,
+    longitude = longitude,
+    accuracyMeters = 0f,
+    altitudeMeters = altitudeMeters,
+    speedMetersPerSecond = null,
+)

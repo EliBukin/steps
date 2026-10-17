@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -35,12 +36,18 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +58,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -60,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import com.example.stepsplit.R
+import com.example.stepsplit.data.trip.SpotMarkResult
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.trip.service.TripRecordingService
@@ -70,6 +79,8 @@ import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 
 /** What the current permission/location-enabled flow will do once it succeeds - Start and Resume share every dialog/check below, differing only in which command they ultimately send. */
 private sealed interface PendingRecordingAction {
@@ -83,9 +94,21 @@ fun TripsScreen(
     onOpenTrip: (Long) -> Unit,
     onFinishInterruptedTripAtLastPoint: (Long) -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
+    onMarkSpot: () -> Unit,
+    /** Each Mark spot outcome, once - shown as a snackbar. */
+    spotMarkResults: Flow<SpotMarkResult>,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    // A newer outcome replaces the one showing, so "Spot 4 marked" never waits behind "Spot 3 marked".
+    LaunchedEffect(spotMarkResults) {
+        spotMarkResults.collect { result ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            launch { snackbarHostState.showSnackbar(spotMarkMessage(resources, result)) }
+        }
+    }
 
     var pendingAction by remember { mutableStateOf<PendingRecordingAction?>(null) }
     var showRationale by remember { mutableStateOf(false) }
@@ -126,45 +149,49 @@ fun TripsScreen(
         showRationale = true
     }
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item { ScreenHeader(title = stringResource(R.string.trips_title)) }
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item { ScreenHeader(title = stringResource(R.string.trips_title)) }
 
-        uiState.interruptedTrip?.let { trip ->
-            item {
-                InterruptedTripCard(
-                    onResume = { beginRecording(PendingRecordingAction.Resume(trip.id)) },
-                    onFinishAtLastPoint = { onFinishInterruptedTripAtLastPoint(trip.id) },
-                )
+            uiState.interruptedTrip?.let { trip ->
+                item {
+                    InterruptedTripCard(
+                        onResume = { beginRecording(PendingRecordingAction.Resume(trip.id)) },
+                        onFinishAtLastPoint = { onFinishInterruptedTripAtLastPoint(trip.id) },
+                    )
+                }
+            }
+
+            if (uiState.activeTrip != null) {
+                item {
+                    ActiveRecordingCard(
+                        uiState = uiState,
+                        notificationPermissionDenied = notificationPermissionDenied,
+                        onMarkSpotClick = onMarkSpot,
+                        onFinishClick = { showFinishConfirm = true },
+                    )
+                }
+            } else if (uiState.interruptedTrip == null) {
+                item {
+                    IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) })
+                }
+            }
+
+            item { Text(text = stringResource(R.string.trips_history_title), style = MaterialTheme.typography.titleMedium) }
+
+            if (uiState.history.isEmpty()) {
+                item { Text(text = stringResource(R.string.trips_history_empty), style = MaterialTheme.typography.bodyMedium) }
+            } else {
+                items(uiState.history, key = { it.summary.id }) { trip ->
+                    TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
+                }
             }
         }
-
-        if (uiState.activeTrip != null) {
-            item {
-                ActiveRecordingCard(
-                    uiState = uiState,
-                    notificationPermissionDenied = notificationPermissionDenied,
-                    onFinishClick = { showFinishConfirm = true },
-                )
-            }
-        } else if (uiState.interruptedTrip == null) {
-            item {
-                IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) })
-            }
-        }
-
-        item { Text(text = stringResource(R.string.trips_history_title), style = MaterialTheme.typography.titleMedium) }
-
-        if (uiState.history.isEmpty()) {
-            item { Text(text = stringResource(R.string.trips_history_empty), style = MaterialTheme.typography.bodyMedium) }
-        } else {
-            items(uiState.history, key = { it.summary.id }) { trip ->
-                TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
-            }
-        }
+        SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp))
     }
 
     if (showRationale) {
@@ -247,11 +274,16 @@ private fun IdleStatusCard(onStartClick: () -> Unit) {
 /**
  * The live trip: a calm card (recording is the normal, wanted state - the red error colors are kept
  * for an interrupted trip), a blinking dot, the GPS signal, and a clock that ticks every second.
+ *
+ * Mark spot and Finish sit side by side, tall enough to hit in a moving jeep. Mark spot is the
+ * filled one: it is tapped again and again during a trip, Finish once (and asks first). Mark spot
+ * saves at once, with no dialog, and is disabled only while a tap is still waiting for its fix.
  */
 @Composable
 private fun ActiveRecordingCard(
     uiState: TripsUiState,
     notificationPermissionDenied: Boolean,
+    onMarkSpotClick: () -> Unit,
     onFinishClick: () -> Unit,
 ) {
     val recordingActiveDescription = stringResource(R.string.cd_trip_recording_active)
@@ -286,6 +318,9 @@ private fun ActiveRecordingCard(
                 text = stringResource(R.string.trip_points_count_label, uiState.acceptedPointCount),
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (uiState.spotCount > 0) {
+                Text(text = stringResource(R.string.trip_spots_count_label, uiState.spotCount), style = MaterialTheme.typography.bodySmall)
+            }
             Text(text = stringResource(R.string.trip_screen_off_message), style = MaterialTheme.typography.bodySmall)
             if (notificationPermissionDenied) {
                 Text(
@@ -293,14 +328,36 @@ private fun ActiveRecordingCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Button(onClick = onFinishClick, modifier = Modifier.fillMaxWidth()) {
-                Icon(painterResource(R.drawable.ic_stop_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                Text(stringResource(R.string.trip_finish_button))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onMarkSpotClick,
+                    enabled = !uiState.isMarkingSpot,
+                    modifier = Modifier.weight(1f).heightIn(min = RECORDING_BUTTON_HEIGHT),
+                ) {
+                    if (uiState.isMarkingSpot) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(ButtonDefaults.IconSize),
+                            color = LocalContentColor.current,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(painterResource(R.drawable.ic_mark_spot_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    }
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.trip_mark_spot_button), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                OutlinedButton(onClick = onFinishClick, modifier = Modifier.weight(1f).heightIn(min = RECORDING_BUTTON_HEIGHT)) {
+                    Icon(painterResource(R.drawable.ic_stop_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.trip_finish_button), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }
 }
+
+/** Taller than a usual button: Mark spot gets tapped in a moving jeep. */
+private val RECORDING_BUTTON_HEIGHT = 56.dp
 
 /**
  * A red dot that slowly fades in and out while a trip records. It fades *up* to fully red: with

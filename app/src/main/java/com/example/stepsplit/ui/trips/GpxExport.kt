@@ -17,6 +17,20 @@ internal object GpxExport {
     private const val CREATOR = "Steps GPS Route"
 
     /**
+     * One marked spot as a GPX waypoint. [name] is already the name the app shows: the owner's, or
+     * "Spot 3" in the app's language (see `spotDisplayName`), so the spot is called the same in the
+     * app and in whatever app opens the file. [altitudeMeters] follows the same sea-level rule as the
+     * track points' (see [toGpx]).
+     */
+    data class Waypoint(
+        val latitude: Double,
+        val longitude: Double,
+        val altitudeMeters: Double?,
+        val epochSecond: Long,
+        val name: String,
+    )
+
+    /**
      * Serializes [points] as a single GPX 1.1 track (`<trk><trkseg>`), preserving their given
      * order exactly. Each point's latitude/longitude/elevation is formatted with
      * [Locale.ROOT] so a device locale that uses a comma decimal separator can never produce
@@ -30,14 +44,28 @@ internal object GpxExport {
      * A trip [name], when there is one, goes XML-escaped into both `<metadata><name>` (the file's
      * name) and `<trk><name>` (the track's), since apps differ in which one they show. GPX 1.1
      * orders `<metadata>` first, then any waypoints, then the track.
+     *
+     * Each of [waypoints] - the spots marked during the trip, in the order given - becomes a
+     * `<wpt lat lon>` with `<ele>` (when it has a height), `<time>` and its XML-escaped `<name>`, in
+     * the order GPX 1.1 requires inside a waypoint.
      */
-    fun toGpx(points: List<TripPoint>, name: String? = null): String = buildString {
+    fun toGpx(points: List<TripPoint>, name: String? = null, waypoints: List<Waypoint> = emptyList()): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
         append("<gpx version=\"1.1\" creator=\"").append(escapeXml(CREATOR)).append("\" ")
         append("xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
         val escapedName = name?.takeIf { it.isNotBlank() }?.let(::escapeXml)
         if (escapedName != null) {
             append("  <metadata>\n    <name>").append(escapedName).append("</name>\n  </metadata>\n")
+        }
+        for (waypoint in waypoints) {
+            append("  <wpt lat=\"").append(formatDecimal(waypoint.latitude))
+            append("\" lon=\"").append(formatDecimal(waypoint.longitude)).append("\">\n")
+            waypoint.altitudeMeters?.let { altitude ->
+                append("    <ele>").append(formatDecimal(altitude)).append("</ele>\n")
+            }
+            append("    <time>").append(formatTimestamp(waypoint.epochSecond)).append("</time>\n")
+            append("    <name>").append(escapeXml(waypoint.name)).append("</name>\n")
+            append("  </wpt>\n")
         }
         append("  <trk>\n")
         if (escapedName != null) append("    <name>").append(escapedName).append("</name>\n")

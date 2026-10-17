@@ -120,6 +120,8 @@ fun StepSplitApp(
                     onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
                     onFinishInterruptedTripAtLastPoint = viewModel::finishInterruptedTripAtLastPoint,
                     onRequestTripPermissions = onRequestTripPermissions,
+                    onMarkSpot = viewModel::markSpot,
+                    spotMarkResults = viewModel.spotMarkResults,
                 )
             }
             composable(
@@ -134,6 +136,8 @@ fun StepSplitApp(
                     uiState = uiState,
                     onSaveTripDetails = viewModel::saveTripDetails,
                     onDeleteTrip = viewModel::deleteTrip,
+                    onRenameSpot = viewModel::renameSpot,
+                    onDeleteSpot = viewModel::deleteSpot,
                     onBack = { navController.popBackStack() },
                 )
             }

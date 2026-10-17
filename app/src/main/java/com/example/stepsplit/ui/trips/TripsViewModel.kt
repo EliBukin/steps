@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.trips
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.stepsplit.data.trip.SpotMarkResult
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
@@ -11,7 +12,9 @@ import com.example.stepsplit.trip.service.TripRecordingService
 import java.time.Clock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -42,12 +46,19 @@ import kotlinx.coroutines.launch
  * afterward. The service is what actually creates/finishes/resumes the trip in Room, atomically and
  * with its own generation-safety guarantees; this ViewModel's flows pick that up automatically once
  * it does. This ViewModel only owns [finishInterruptedTripAtLastPoint] and [deleteTrip], which are
- * plain repository calls with no service interaction at all.
+ * plain repository calls with no service interaction at all, and [markSpot].
+ *
+ * Mark spot doesn't go through the service either: the recording runs in this same process, and
+ * [com.example.stepsplit.data.trip.TripSpotMarker] does the work on its own process-lifetime scope,
+ * so a spot still waiting for its fix is saved even if this screen goes away. Its outcome comes back
+ * through [spotMarkResults] for the snackbar.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripsViewModel(
     private val repository: TripRepository,
     private val clock: Clock,
+    /** Marks a spot on the trip being recorded - [com.example.stepsplit.data.trip.TripSpotMarker.markSpot] in the app. */
+    private val markSpotOnTrip: suspend () -> SpotMarkResult,
     /** The displayed route for a list of raw points - a parameter only so a test can count how often it runs. */
     private val smoothRoute: (List<TripPoint>) -> SmoothedRoute = ::smoothedRoute,
 ) : ViewModel() {
@@ -58,10 +69,22 @@ class TripsViewModel(
         viewModelScope.launch { repository.reconcileActiveTripOnLaunch(TripRecordingService.isRunning) }
     }
 
-    private val activeTripPoints: Flow<List<TripPoint>> = repository.observeTrips()
+    private val activeTripId: Flow<Long?> = repository.observeTrips()
         .map { trips -> trips.firstOrNull { it.state == TripState.ACTIVE }?.id }
         .distinctUntilChanged()
-        .flatMapLatest { activeId -> if (activeId == null) flowOf(emptyList()) else repository.observeTripPoints(activeId) }
+
+    private val activeTripPoints: Flow<List<TripPoint>> =
+        activeTripId.flatMapLatest { activeId -> if (activeId == null) flowOf(emptyList()) else repository.observeTripPoints(activeId) }
+
+    private val activeTripSpotCount: Flow<Int> =
+        activeTripId.flatMapLatest { activeId -> if (activeId == null) flowOf(0) else repository.observeTripSpots(activeId).map { it.size } }
+
+    private val markingSpot = MutableStateFlow(false)
+
+    private val spotResults = Channel<SpotMarkResult>(Channel.BUFFERED)
+
+    /** The outcome of each [markSpot], once - the Trips screen shows it in a snackbar. */
+    val spotMarkResults: Flow<SpotMarkResult> = spotResults.receiveAsFlow()
 
     /**
      * The active trip's displayed distance, from the same `RouteSanitizer -> RouteSmoother`
@@ -90,7 +113,7 @@ class TripsViewModel(
         }
     }
 
-    val uiState: StateFlow<TripsUiState> = combine(
+    private val recordingState: Flow<TripsUiState> = combine(
         repository.observeTrips(),
         activeTripPoints,
         activeTripSanitizedDistance,
@@ -109,7 +132,27 @@ class TripsViewModel(
             acceptedPointCount = points.size,
             gpsStatus = gpsStatusFor(lastPoint, nowEpochSecond),
         )
+    }
+
+    val uiState: StateFlow<TripsUiState> = combine(recordingState, activeTripSpotCount, markingSpot) { state, spotCount, marking ->
+        state.copy(spotCount = spotCount, isMarkingSpot = marking)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripsUiState())
+
+    /**
+     * The Mark spot button: one tap marks a spot, with no dialog. A second tap while the first is
+     * still waiting for its fix does nothing (the button is disabled meanwhile), so a bump in a
+     * jeep can't mark the same place twice.
+     */
+    fun markSpot() {
+        if (!markingSpot.compareAndSet(expect = false, update = true)) return
+        viewModelScope.launch {
+            try {
+                spotResults.send(markSpotOnTrip())
+            } finally {
+                markingSpot.value = false
+            }
+        }
+    }
 
     fun finishInterruptedTripAtLastPoint(tripId: Long) {
         viewModelScope.launch { repository.finishInterruptedTripAtLastPoint(tripId) }

@@ -5,10 +5,12 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
+import com.example.stepsplit.data.trip.SpotMarkResult
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripType
+import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
@@ -16,6 +18,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -25,6 +28,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -97,7 +101,7 @@ class TripsViewModelTest {
         rawEntities.forEach { database.tripPointDao().insert(it) }
 
         val repository = TripRepository(database, clock)
-        val viewModel = TripsViewModel(repository, clock)
+        val viewModel = TripsViewModel(repository, clock, { SpotMarkResult.NotRecording })
 
         val uiState = viewModel.uiState.first { it.history.isNotEmpty() }
 
@@ -153,7 +157,7 @@ class TripsViewModelTest {
 
         val finishedTripComputations = AtomicInteger()
         val repository = TripRepository(database, clock)
-        val viewModel = TripsViewModel(repository, clock) { points ->
+        val viewModel = TripsViewModel(repository, clock, { SpotMarkResult.NotRecording }) { points ->
             if (points.firstOrNull()?.capturedAtEpochSecond == finishedStart) finishedTripComputations.incrementAndGet()
             RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
         }
@@ -175,7 +179,7 @@ class TripsViewModelTest {
         val rawEntities = (0 until 200).map { pointEntity(tripId, start + it * 10L, it) }
         rawEntities.forEach { database.tripPointDao().insert(it) }
 
-        val viewModel = TripsViewModel(TripRepository(database, clock), clock)
+        val viewModel = TripsViewModel(TripRepository(database, clock), clock, { SpotMarkResult.NotRecording })
         val preview = viewModel.uiState.first { it.history.isNotEmpty() }.history.single().routePreview
 
         val displayed = RouteSmoother.smooth(
@@ -198,7 +202,7 @@ class TripsViewModelTest {
         (0 until 20).forEach { database.tripPointDao().insert(pointEntity(tripId, start + it * 10L, it)) }
         val routeComputations = AtomicInteger()
         val repository = TripRepository(database, clock)
-        val viewModel = TripsViewModel(repository, clock) { points ->
+        val viewModel = TripsViewModel(repository, clock, { SpotMarkResult.NotRecording }) { points ->
             if (points.firstOrNull()?.capturedAtEpochSecond == start) routeComputations.incrementAndGet()
             RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
         }
@@ -216,5 +220,38 @@ class TripsViewModelTest {
         assertEquals(TripType.DRIVE, named.type)
         assertEquals(unnamed.summary.distanceMeters, named.summary.distanceMeters, 1e-9)
         assertEquals(1, routeComputations.get())
+    }
+
+    @Test
+    fun `Mark spot reports its outcome once, ignores a second tap while waiting, and counts the active trip's spots`() = runTest {
+        val repository = TripRepository(database, clock)
+        val answer = CompletableDeferred<SpotMarkResult>()
+        val calls = AtomicInteger()
+        val viewModel = TripsViewModel(repository, clock, {
+            calls.incrementAndGet()
+            answer.await()
+        })
+        // After the launch-time reconciliation, which would mark an ACTIVE trip with no service INTERRUPTED.
+        viewModel.uiState.first { !it.isLoading }
+        val tripId = database.tripDao().insert(tripEntity(fixedNow.epochSecond - 600, TripState.ACTIVE))
+        val idle = viewModel.uiState.first { it.activeTrip != null }
+        assertEquals(0, idle.spotCount)
+        assertFalse(idle.isMarkingSpot)
+
+        viewModel.markSpot()
+        viewModel.markSpot()
+        assertTrue(viewModel.uiState.first { it.isMarkingSpot }.isMarkingSpot)
+        repository.addSpot(tripId, RawLocationSample(31.77, 35.21, 6f, fixedNow.epochSecond - 5))
+        answer.complete(SpotMarkResult.Marked(1))
+
+        assertEquals(SpotMarkResult.Marked(1), viewModel.spotMarkResults.first())
+        val marked = viewModel.uiState.first { !it.isMarkingSpot && it.spotCount == 1 }
+        assertEquals(1, marked.spotCount)
+        assertEquals("the second tap while waiting did nothing", 1, calls.get())
+
+        // The button works again once the first tap is done.
+        viewModel.markSpot()
+        assertEquals(SpotMarkResult.Marked(1), viewModel.spotMarkResults.first())
+        assertEquals(2, calls.get())
     }
 }

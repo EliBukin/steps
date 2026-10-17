@@ -40,6 +40,18 @@ class FakeTripLocationClient(
     @Volatile var flushInvoked: Boolean = false
         private set
 
+    /** What [currentLocation] answers - a test can make it wait, or never answer, to drive [TripSpotMarker]'s timing. */
+    @Volatile var currentLocationAnswer: suspend () -> RawLocationSample? = { null }
+
+    /** How many times [currentLocation] was asked. */
+    @Volatile var currentLocationRequests: Int = 0
+        private set
+
+    override suspend fun currentLocation(): RawLocationSample? {
+        currentLocationRequests++
+        return currentLocationAnswer()
+    }
+
     fun emit(batch: List<RawLocationSample>) {
         channels.toList().forEach { it.trySend(batch) }
     }

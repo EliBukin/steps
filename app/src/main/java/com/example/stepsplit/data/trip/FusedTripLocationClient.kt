@@ -5,12 +5,15 @@ import android.content.Context
 import android.location.Location
 import android.os.Looper
 import com.example.stepsplit.domain.trip.RawLocationSample
+import com.example.stepsplit.domain.trip.SpotFixRule
+import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.example.stepsplit.util.await
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -101,6 +104,32 @@ class FusedTripLocationClient(private val context: Context) : TripLocationClient
             // No location permission (shouldn't happen - see class doc comment) - nothing to flush.
         } catch (e: Exception) {
             // Best-effort only; a flush failure must never block or fail finishing a trip.
+        }
+    }
+
+    /**
+     * A fix taken now (no cached one: `maxUpdateAge` 0), at high accuracy, given up after
+     * [SpotFixRule.WAIT_FOR_FIX_MILLIS]. The GPS is already on for the recording, so this normally
+     * takes about a second. Cancelling the caller cancels the request. Allowed with the screen off
+     * or locked: the recording's foreground service has location access.
+     */
+    @SuppressLint("MissingPermission")
+    override suspend fun currentLocation(): RawLocationSample? {
+        val request = CurrentLocationRequest.Builder()
+            .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+            .setMaxUpdateAgeMillis(0)
+            .setDurationMillis(SpotFixRule.WAIT_FOR_FIX_MILLIS)
+            .build()
+        val cancellation = CancellationTokenSource()
+        return try {
+            client.getCurrentLocation(request, cancellation.token).await()?.toRawLocationSample()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // No permission (shouldn't happen while recording) or no fix: the caller says there is no fix.
+            null
+        } finally {
+            cancellation.cancel()
         }
     }
 

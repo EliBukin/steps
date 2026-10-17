@@ -18,6 +18,7 @@ import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripLocationClient
 import com.example.stepsplit.data.trip.TripRecordingCoordinator
 import com.example.stepsplit.data.trip.TripRepository
+import com.example.stepsplit.data.trip.TripSpotMarker
 import com.example.stepsplit.debug.DeviceDiagnostics
 import com.example.stepsplit.debug.DeviceDiagnosticsSnapshot
 import com.example.stepsplit.domain.time.DeviceZoneClock
@@ -38,7 +39,11 @@ import kotlinx.coroutines.SupervisorJob
  * everything below it). Neither reads, writes, or otherwise influences the other - see each
  * section's own doc comment.
  */
-class AppContainer(context: Context) {
+class AppContainer(
+    context: Context,
+    /** Live GPS fixes for trip recording; only tests pass another (a [com.example.stepsplit.data.trip.FakeTripLocationClient]). */
+    val locationClient: TripLocationClient = FusedTripLocationClient(context),
+) {
     // Not Clock.systemDefaultZone(): that freezes the zone at construction time, so a device
     // timezone change while the process stays alive would go unnoticed until restart.
     val clock: Clock = DeviceZoneClock()
@@ -121,8 +126,6 @@ class AppContainer(context: Context) {
         clock = clock,
     )
 
-    val locationClient: TripLocationClient = FusedTripLocationClient(context)
-
     // Converts a trip's stored heights (above the WGS84 ellipsoid) to above sea level for the trip
     // detail screen and GPX, on Android 14 and newer - see SeaLevelHeights.
     val seaLevelHeights: SeaLevelHeights = PlatformSeaLevelHeights(context)
@@ -140,6 +143,17 @@ class AppContainer(context: Context) {
     val tripRecordingCoordinator: TripRecordingCoordinator = TripRecordingCoordinator(
         repository = tripRepository,
         locationClient = locationClient,
+        scope = tripRecordingScope,
+    )
+
+    // Marks a spot on the trip being recorded, for the Trips screen's button and the recording
+    // notification's action alike. Its work runs on tripRecordingScope, so a spot that is waiting
+    // for a GPS fix isn't lost when the screen or the service command that asked for it goes away.
+    val tripSpotMarker: TripSpotMarker = TripSpotMarker(
+        repository = tripRepository,
+        coordinator = tripRecordingCoordinator,
+        locationClient = locationClient,
+        clock = clock,
         scope = tripRecordingScope,
     )
 }

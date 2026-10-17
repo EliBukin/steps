@@ -5,7 +5,9 @@ import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.local.trip.DeletedTripTotalsEntity
 import com.example.stepsplit.data.local.trip.TripEntity
 import com.example.stepsplit.data.local.trip.TripPointEntity
+import com.example.stepsplit.data.local.trip.TripSpotEntity
 import com.example.stepsplit.domain.model.TripPoint
+import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.model.TripType
@@ -29,8 +31,8 @@ import kotlinx.coroutines.sync.withLock
  * Owns every read/write path over manually recorded GPS trips - entirely separate from
  * [com.example.stepsplit.data.repository.StepRepository]: a trip never inserts or edits
  * `walk_bouts`, creates a session override, or changes daily step totals, and never reads
- * `step_buckets` either. This MVP only persists a trip's own timestamps/route/distance; a
- * read-only association with step data is left for a future version.
+ * `step_buckets` either. This MVP only persists a trip's own timestamps/route/distance and the
+ * spots marked along it; a read-only association with step data is left for a future version.
  *
  * A single [tripMutex] serializes start/finish/point-recording/recovery the same way
  * [com.example.stepsplit.data.repository.StepRepository.syncMutex] does for step sync, so a
@@ -628,8 +630,55 @@ class TripRepository(
     }
 
     /**
-     * Deletes [tripId] with its route (the delete cascades to every point - see [TripPointEntity]'s
-     * foreign key).
+     * Saves [fix] as [tripId]'s next spot and returns its number: one more than the highest so far,
+     * so the first spot is 1. [fix] was already chosen by [TripSpotMarker] (see
+     * [com.example.stepsplit.domain.trip.SpotFixRule]); the spot keeps its time, position and height.
+     *
+     * Under [tripMutex], like every route write, and with the same backstops as
+     * [recordAcceptedBatch]: null, saving nothing, when the trip is no longer ACTIVE (it finished or
+     * was interrupted while the marker waited for a fix), when [fix] was captured before the trip
+     * started, or after a Finish already in progress cut the route off.
+     */
+    suspend fun addSpot(tripId: Long, fix: RawLocationSample): Int? = tripMutex.withLock {
+        val trip = database.tripDao().getById(tripId) ?: return@withLock null
+        if (trip.state != TripState.ACTIVE.name) return@withLock null
+        if (fix.capturedAtEpochSecond < trip.startEpochSecond) return@withLock null
+        val cutoffEpochSecond = finishCutoff?.takeIf { it.tripId == tripId }?.cutoffEpochSecond
+        if (cutoffEpochSecond != null && fix.capturedAtEpochSecond > cutoffEpochSecond) return@withLock null
+        val number = (database.tripSpotDao().maxNumber(tripId) ?: 0) + 1
+        database.tripSpotDao().insert(
+            TripSpotEntity(
+                tripId = tripId,
+                number = number,
+                capturedAtEpochSecond = fix.capturedAtEpochSecond,
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                altitudeMeters = fix.altitudeMeters,
+            ),
+        )
+        number
+    }
+
+    /** [tripId]'s spots, by number. */
+    fun observeTripSpots(tripId: Long): Flow<List<TripSpot>> =
+        database.tripSpotDao().observeForTrip(tripId).map { spots -> spots.map { it.toDomain() } }
+
+    suspend fun getTripSpots(tripId: Long): List<TripSpot> = database.tripSpotDao().getAllForTrip(tripId).map { it.toDomain() }
+
+    /** Names spot [spotId] - normalized by [TripName.normalize], like a trip's name, so blank goes back to "Spot N". Does nothing for an unknown spot. */
+    suspend fun renameSpot(spotId: Long, name: String?) = tripMutex.withLock {
+        database.tripSpotDao().updateName(spotId, TripName.normalize(name))
+        Unit
+    }
+
+    /** Deletes spot [spotId]. The other spots keep their numbers. */
+    suspend fun deleteSpot(spotId: Long) = tripMutex.withLock {
+        database.tripSpotDao().deleteById(spotId)
+    }
+
+    /**
+     * Deletes [tripId] with its route and spots (the delete cascades to every point and spot - see
+     * [TripPointEntity]'s and [TripSpotEntity]'s foreign keys).
      *
      * With [keepInStats], a FINISHED trip's start, duration, distance and type are first kept in
      * `deleted_trip_totals`, in the same transaction as the delete, so Stats can keep counting it.
@@ -690,6 +739,16 @@ private fun TripPointEntity.toDomain() = TripPoint(
     accuracyMeters = accuracyMeters,
     altitudeMeters = altitudeMeters,
     speedMetersPerSecond = speedMetersPerSecond,
+)
+
+private fun TripSpotEntity.toDomain() = TripSpot(
+    id = id,
+    number = number,
+    capturedAtEpochSecond = capturedAtEpochSecond,
+    latitude = latitude,
+    longitude = longitude,
+    altitudeMeters = altitudeMeters,
+    name = name,
 )
 
 private fun TripPointEntity.toSample() = RawLocationSample(

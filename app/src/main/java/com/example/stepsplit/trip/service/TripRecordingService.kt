@@ -9,17 +9,23 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.widget.Toast
+import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.stepsplit.R
 import com.example.stepsplit.StepSplitApplication
+import com.example.stepsplit.data.trip.SpotMarkResult
 import com.example.stepsplit.ui.MainActivity
+import com.example.stepsplit.ui.trips.spotMarkMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Thin Android [Service] shell around [TripRecordingCommandController], which owns the actual
@@ -39,6 +45,9 @@ import kotlinx.coroutines.launch
  * - A **null** [Intent]: Android itself restarting an already-running `START_STICKY` service after
  *   process death - may only *recover* an existing ACTIVE trip, never create or resume one.
  *
+ * [ACTION_MARK_SPOT], the notification's Mark spot action, is not a recording command at all and
+ * never reaches the controller - see [handleMarkSpot].
+ *
  * There is no boot receiver anywhere in this app's manifest, so a device reboot can never reach
  * this class at all.
  *
@@ -54,6 +63,19 @@ class TripRecordingService : Service() {
     private val container get() = (application as StepSplitApplication).container
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var pendingCommand: Job? = null
+
+    /**
+     * Whether this service's foreground notification is up, guarded by [notificationLock]: a spot's
+     * feedback (see [showSpotFeedback]) updates the notification from the main thread, while the
+     * service can stop - and remove it - from a controller coroutine. Without the lock an update
+     * could land just after the removal and leave a stray notification behind.
+     */
+    private val notificationLock = Any()
+    private var notificationShown = false
+    private var spotFeedbackReset: Job? = null
+
+    /** Whether this service instance has had a recording command (anything but [ACTION_MARK_SPOT]) - see [handleMarkSpot]. */
+    private var hadRecordingCommand = false
 
     private val commandController: TripRecordingCommandController by lazy {
         TripRecordingCommandController(
@@ -72,6 +94,8 @@ class TripRecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_MARK_SPOT) return handleMarkSpot(startId)
+        hadRecordingCommand = true
         val generation = commandController.beginCommand()
 
         try {
@@ -107,6 +131,7 @@ class TripRecordingService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        synchronized(notificationLock) { notificationShown = false }
         // Safety net for every terminal path, including one this class didn't itself initiate (e.g.
         // the system killing the service outright): commandController.shutdown() atomically closes
         // the command generation gate (permanently rejecting every existing/future command's attempt
@@ -133,31 +158,103 @@ class TripRecordingService : Service() {
         stopServiceIfOwned(
             startId = startId,
             stopSelfResult = ::stopSelfResult,
-            removeForegroundNotification = { ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE) },
+            removeForegroundNotification = {
+                synchronized(notificationLock) {
+                    notificationShown = false
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                }
+            },
         )
+    }
+
+    /**
+     * The notification's Mark spot action, sent as a plain `startService` by its [PendingIntent]
+     * from the shade or the lock screen - the action doesn't ask to unlock (see [buildNotification]).
+     * Not a recording command: it never calls [TripRecordingCommandController.beginCommand] (a new
+     * generation would make the collector that is running look stale), never promotes or stops the
+     * service, and only asks [com.example.stepsplit.data.trip.TripSpotMarker] - the same one the
+     * Trips screen's button uses - for a spot. The outcome is shown as a toast and, for a few
+     * seconds, as the notification's text.
+     *
+     * Normally the service is already recording. If this action alone started it (a notification
+     * left over from a recording that is gone), there is nothing to mark: it says so and stops again.
+     */
+    private fun handleMarkSpot(startId: Int): Int {
+        val startedForThisAlone = !hadRecordingCommand
+        serviceScope.launch {
+            val result = container.tripSpotMarker.markSpot()
+            withContext(Dispatchers.Main) {
+                showSpotFeedback(result)
+                if (startedForThisAlone) stopSelf(startId)
+            }
+        }
+        return if (startedForThisAlone) START_NOT_STICKY else START_STICKY
+    }
+
+    /** Main thread only. */
+    private fun showSpotFeedback(result: SpotMarkResult) {
+        val message = spotMarkMessage(resources, result)
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        if (!updateNotificationIfShown(message)) return
+        spotFeedbackReset?.cancel()
+        spotFeedbackReset = serviceScope.launch(Dispatchers.Main) {
+            delay(SPOT_FEEDBACK_MILLIS)
+            updateNotificationIfShown(contentText = null)
+        }
+    }
+
+    /** Re-posts the foreground notification with [contentText] (null: the usual text), only while it is up. Returns whether it was. */
+    private fun updateNotificationIfShown(contentText: String?): Boolean = synchronized(notificationLock) {
+        if (!notificationShown) return@synchronized false
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(contentText))
+        true
     }
 
     private fun promoteToForeground() {
         ensureNotificationChannel()
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        synchronized(notificationLock) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            notificationShown = true
         }
     }
 
+    /**
+     * The recording notification's channel: default importance, but with no sound and no vibration,
+     * so it never makes a noise. Not "silent" (low importance) as it used to be: Android hides silent
+     * notifications on the lock screen unless the owner turns them on, and Mark spot must be there
+     * with the phone locked in a jeep. A channel's importance can't be raised once it exists, so this
+     * is a new channel and the old one is deleted.
+     */
     private fun ensureNotificationChannel() {
         val manager = getSystemService(NotificationManager::class.java)
+        manager.deleteNotificationChannel(SILENT_CHANNEL_ID)
         val channel = NotificationChannel(
             CHANNEL_ID,
             getString(R.string.trip_notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
-        )
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(): Notification {
+    /**
+     * The recording notification: tapping it opens the Trips tab; its actions are Mark spot and
+     * Finish. [contentText] replaces the usual "Tap to view progress" - a spot's feedback.
+     *
+     * Public on the lock screen (its text says nothing private), so Mark spot is there even when the
+     * phone hides notification content on a secure lock screen. Mark spot doesn't ask to unlock
+     * ([NotificationCompat.Action.Builder.setAuthenticationRequired] false, also the default): with the
+     * phone mounted in a jeep, one tap on the lock screen must be enough.
+     */
+    private fun buildNotification(contentText: String? = null): Notification {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
@@ -172,14 +269,25 @@ class TripRecordingService : Service() {
             Intent(this, TripRecordingService::class.java).setAction(ACTION_FINISH),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val markSpotIntent = PendingIntent.getService(
+            this,
+            MARK_SPOT_REQUEST_CODE,
+            Intent(this, TripRecordingService::class.java).setAction(ACTION_MARK_SPOT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val markSpotAction = NotificationCompat.Action.Builder(0, getString(R.string.trip_notification_mark_spot_action), markSpotIntent)
+            .setAuthenticationRequired(false)
+            .build()
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_trip)
             .setContentTitle(getString(R.string.trip_notification_title))
-            .setContentText(getString(R.string.trip_notification_text))
+            .setContentText(contentText ?: getString(R.string.trip_notification_text))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(contentIntent)
+            .addAction(markSpotAction)
             .addAction(0, getString(R.string.trip_notification_finish_action), finishIntent)
             .build()
     }
@@ -188,9 +296,17 @@ class TripRecordingService : Service() {
         const val ACTION_START = "com.example.stepsplit.trip.action.START"
         const val ACTION_FINISH = "com.example.stepsplit.trip.action.FINISH"
         const val ACTION_RESUME = "com.example.stepsplit.trip.action.RESUME"
+        const val ACTION_MARK_SPOT = "com.example.stepsplit.trip.action.MARK_SPOT"
         const val EXTRA_TRIP_ID = "com.example.stepsplit.trip.extra.TRIP_ID"
-        private const val CHANNEL_ID = "trip_recording"
-        private const val NOTIFICATION_ID = 4201
+        @VisibleForTesting internal const val CHANNEL_ID = "trip_recording_lock_screen"
+
+        /** The first, silent channel - see [ensureNotificationChannel]. */
+        @VisibleForTesting internal const val SILENT_CHANNEL_ID = "trip_recording"
+        internal const val NOTIFICATION_ID = 4201
+        private const val MARK_SPOT_REQUEST_CODE = 1
+
+        /** How long the notification shows a spot's feedback before its usual text comes back. */
+        internal const val SPOT_FEEDBACK_MILLIS = 5_000L
 
         /**
          * In-process liveness flag, set true in [onCreate] and false in [onDestroy]. This is what

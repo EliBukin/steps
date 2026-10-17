@@ -39,7 +39,7 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
             container.clock,
         )
 
-        TripsViewModel::class.java -> TripsViewModel(container.tripRepository, container.clock)
+        TripsViewModel::class.java -> TripsViewModel(container.tripRepository, container.clock, container.tripSpotMarker::markSpot)
 
         else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     } as T

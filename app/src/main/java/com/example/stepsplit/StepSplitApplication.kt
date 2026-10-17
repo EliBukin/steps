@@ -1,6 +1,7 @@
 package com.example.stepsplit
 
 import android.app.Application
+import androidx.annotation.VisibleForTesting
 import androidx.work.Configuration
 import com.example.stepsplit.di.AppContainer
 import com.example.stepsplit.sync.SyncScheduler
@@ -8,7 +9,7 @@ import com.example.stepsplit.sync.SyncScheduler
 class StepSplitApplication : Application(), Configuration.Provider {
 
     lateinit var container: AppContainer
-        private set
+        @VisibleForTesting internal set
 
     override fun onCreate() {
         super.onCreate()

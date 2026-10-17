@@ -1,7 +1,10 @@
 package com.example.stepsplit.ui.trips
 
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -44,9 +48,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -62,6 +68,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
+import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.TripElevation
@@ -72,7 +79,9 @@ import com.example.stepsplit.ui.common.formatDateLabel
 import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.roundToLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,12 +91,19 @@ fun TripDetailScreen(
     uiState: TripDetailUiState,
     onSaveTripDetails: (name: String, type: TripType) -> Unit,
     onDeleteTrip: () -> Unit,
+    onRenameSpot: (spotId: Long, name: String) -> Unit,
+    onDeleteSpot: (spotId: Long) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showEdit by rememberSaveable { mutableStateOf(false) }
+    // The spot whose marker was tapped, and which of its dialogs is open.
+    var selectedSpotId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var renamingSpot by rememberSaveable { mutableStateOf(false) }
+    var confirmingSpotDelete by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
+    val resources = LocalResources.current
     val coroutineScope = rememberCoroutineScope()
     val gpxShareFailureMessage = stringResource(R.string.trip_gpx_share_failure)
     val gpxShareChooserTitle = stringResource(R.string.trip_gpx_share_chooser_title)
@@ -109,15 +125,29 @@ fun TripDetailScreen(
     // work can never change what gets serialized; serialization and the file write run off the main
     // thread, with the coroutine scoped to this composable so leaving the screen cancels it safely
     // instead of touching a torn-down Toast/Context.
+    //
+    // The spots go in as waypoints, named as the app shows them. Their heights follow the track
+    // points' rule; should only one of the two conversions have worked, the spots go without a
+    // height rather than mix two references in one file.
     val shareGpx: () -> Unit = {
         val points = uiState.points
+        val sameHeightReference = uiState.spotHeightsAboveSeaLevel == uiState.heightsAboveSeaLevel
+        val waypoints = uiState.spots.map { spot ->
+            GpxExport.Waypoint(
+                latitude = spot.latitude,
+                longitude = spot.longitude,
+                altitudeMeters = spot.altitudeMeters?.takeIf { sameHeightReference },
+                epochSecond = spot.capturedAtEpochSecond,
+                name = spotDisplayName(resources, spot),
+            )
+        }
         val tripId = trip.id
         val tripName = trip.name
         val fileName = GpxExport.suggestedFileName(date)
         coroutineScope.launch {
             val file = withContext(Dispatchers.Default) {
                 runCatching {
-                    val gpx = GpxExport.toGpx(points, name = tripName)
+                    val gpx = GpxExport.toGpx(points, name = tripName, waypoints = waypoints)
                     withContext(Dispatchers.IO) { GpxShare.writeFile(context.cacheDir, tripId, fileName, gpx) }
                 }.getOrNull()
             }
@@ -181,6 +211,12 @@ fun TripDetailScreen(
                         points = uiState.points,
                         speedColoring = uiState.speedColoring,
                         modifier = Modifier.fillMaxWidth().weight(1f),
+                        spots = uiState.spots,
+                        onSpotClick = { spotId ->
+                            selectedSpotId = spotId
+                            renamingSpot = false
+                            confirmingSpotDelete = false
+                        },
                     )
                     if (showChart && elevation != null) {
                         TripHeightChartCard(elevation = elevation, aboveSeaLevel = uiState.heightsAboveSeaLevel)
@@ -208,6 +244,46 @@ fun TripDetailScreen(
             },
             onDismiss = { showEdit = false },
         )
+    }
+
+    val selectedSpot = uiState.spots.firstOrNull { it.id == selectedSpotId }
+    if (selectedSpot != null) {
+        val closeSpot = {
+            selectedSpotId = null
+            renamingSpot = false
+            confirmingSpotDelete = false
+        }
+        when {
+            renamingSpot -> RenameSpotDialog(
+                initialName = selectedSpot.name.orEmpty(),
+                defaultName = stringResource(R.string.trip_spot_default_name, selectedSpot.number),
+                onSave = { name ->
+                    onRenameSpot(selectedSpot.id, name)
+                    renamingSpot = false
+                },
+                onDismiss = { renamingSpot = false },
+            )
+            confirmingSpotDelete -> AlertDialog(
+                onDismissRequest = { confirmingSpotDelete = false },
+                title = { Text(stringResource(R.string.trip_spot_delete_confirm_title, spotDisplayName(resources, selectedSpot))) },
+                text = { Text(stringResource(R.string.trip_spot_delete_confirm_message)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        onDeleteSpot(selectedSpot.id)
+                        closeSpot()
+                    }) { Text(stringResource(R.string.trip_spot_delete_action)) }
+                },
+                dismissButton = { TextButton(onClick = { confirmingSpotDelete = false }) { Text(stringResource(android.R.string.cancel)) } },
+            )
+            else -> SpotDialog(
+                spot = selectedSpot,
+                zoneId = ZoneId.of(trip.startZoneId),
+                heightAboveSeaLevel = uiState.spotHeightsAboveSeaLevel,
+                onRename = { renamingSpot = true },
+                onDelete = { confirmingSpotDelete = true },
+                onDismiss = closeSpot,
+            )
+        }
     }
 
     if (showDeleteConfirm) {
@@ -414,6 +490,109 @@ private fun TripTypeOption(type: TripType, selected: Boolean, suggested: Boolean
             }
         }
     }
+}
+
+/**
+ * What a tapped spot marker opens: the spot's number badge (as on the map), its name or "Spot N",
+ * the time it was marked, and its height when it is above sea level (Android 14 and newer - see
+ * [com.example.stepsplit.data.trip.SeaLevelHeights]; a height above the ellipsoid would be about
+ * 20 m off in Israel, so none is shown then). Rename and Delete; Close or a tap outside closes it.
+ */
+@Composable
+private fun SpotDialog(
+    spot: TripSpot,
+    zoneId: ZoneId,
+    heightAboveSeaLevel: Boolean,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val locale = LocalConfiguration.current.locales[0]
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { SpotBadge(spot.number) },
+        title = { Text(text = spotDisplayName(LocalResources.current, spot), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                if (spot.name != null) {
+                    Text(
+                        text = stringResource(R.string.trip_spot_default_name, spot.number),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.trip_spot_time_format, formatClockTimeInZone(spot.capturedAtEpochSecond, zoneId)),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                val height = spot.altitudeMeters
+                if (heightAboveSeaLevel && height != null) {
+                    // "410 m below sea level" reads better than "-410 m above".
+                    val meters = formatHeightNumber(abs(height), locale)
+                    Text(
+                        text = stringResource(
+                            if (height.roundToLong() < 0) R.string.trip_spot_height_below_format else R.string.trip_spot_height_above_format,
+                            meters,
+                        ),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.trip_spot_close_action)) } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) { Text(stringResource(R.string.trip_spot_delete_action)) }
+                TextButton(onClick = onRename) { Text(stringResource(R.string.trip_spot_rename_action)) }
+            }
+        },
+    )
+}
+
+/** A spot's number in a white disc with a dark green ring - the map's marker, at dialog size. */
+@Composable
+private fun SpotBadge(number: Int) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .background(Color.White, CircleShape)
+            .border(2.5.dp, SpotBadgeColor, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = number.toString(), color = SpotBadgeColor, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** The map markers' ring and number color (see `TripRouteMap`). */
+private val SpotBadgeColor = Color(0xFF1B6D5A)
+
+/**
+ * Renames a spot: up to [TripName.MAX_LENGTH] characters, like a trip's name. Empty goes back to
+ * [defaultName] ("Spot 3"), which the field shows as its placeholder.
+ */
+@Composable
+private fun RenameSpotDialog(initialName: String, defaultName: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by rememberSaveable { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.trip_spot_rename_title)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = TripName.limit(it) },
+                label = { Text(stringResource(R.string.trip_edit_name_label)) },
+                placeholder = { Text(defaultName) },
+                supportingText = {
+                    Text(text = "${name.length}/${TripName.MAX_LENGTH}", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onSave(name) }) { Text(stringResource(R.string.trip_edit_save_action)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+    )
 }
 
 /**

@@ -13,4 +13,8 @@ data class TripsUiState(
     val elapsedSeconds: Long = 0L,
     val acceptedPointCount: Int = 0,
     val gpsStatus: GpsStatus = GpsStatus.SEARCHING,
+    /** How many spots the active trip has. */
+    val spotCount: Int = 0,
+    /** Whether a Mark spot tap is still waiting for its GPS fix - the button stays disabled meanwhile. */
+    val isMarkingSpot: Boolean = false,
 )

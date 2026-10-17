@@ -1141,4 +1141,86 @@ class TripRepositoryTest {
         assertFalse(finished)
         assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
     }
+
+    private fun spotFix(capturedAt: Long, lat: Double = 31.77, altitude: Double? = 650.0) =
+        RawLocationSample(lat, 35.21, 6f, capturedAt, altitudeMeters = altitude)
+
+    @Test
+    fun `spots are numbered per trip from 1 and keep their fix's time, place and height`() = runTest {
+        val tripId = repository.startTrip()
+
+        assertEquals(1, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 10, lat = 31.771)))
+        assertEquals(2, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 20, altitude = null)))
+
+        val spots = repository.getTripSpots(tripId)
+        assertEquals(listOf(1, 2), spots.map { it.number })
+        assertEquals(31.771, spots[0].latitude, 0.0)
+        assertEquals(35.21, spots[0].longitude, 0.0)
+        assertEquals(650.0, spots[0].altitudeMeters!!, 0.0)
+        assertEquals(fixedNow.epochSecond + 10, spots[0].capturedAtEpochSecond)
+        assertNull(spots[1].altitudeMeters)
+        assertTrue(spots.all { it.name == null })
+
+        // Another trip starts again at 1.
+        repository.finishTrip(tripId, fixedNow.epochSecond + 60)
+        clock.instant = fixedNow.plusSeconds(3_600)
+        val nextTripId = repository.startTrip()
+        assertEquals(1, repository.addSpot(nextTripId, spotFix(fixedNow.epochSecond + 3_610)))
+        assertEquals(listOf(1, 2), repository.observeTripSpots(tripId).first().map { it.number })
+    }
+
+    @Test
+    fun `a spot is saved only while its trip records, and never from before it started or past a Finish cutoff`() = runTest {
+        val tripId = repository.startTrip()
+        assertNull("before Start", repository.addSpot(tripId, spotFix(fixedNow.epochSecond - 1)))
+
+        repository.beginFinish(tripId, token = 7L, cutoffEpochSecond = fixedNow.epochSecond + 30)
+        assertNull("after the cutoff", repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 31)))
+        assertEquals(1, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 30)))
+        repository.cancelFinish(7L)
+
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertNull("interrupted", repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 40)))
+        assertNull("unknown trip", repository.addSpot(tripId + 99, spotFix(fixedNow.epochSecond + 40)))
+        assertEquals(1, repository.getTripSpots(tripId).size)
+    }
+
+    @Test
+    fun `renaming a spot is normalized like a trip name, and deleting one keeps the others' numbers`() = runTest {
+        val tripId = repository.startTrip()
+        repeat(3) { repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 10L * (it + 1))) }
+        val (first, second, third) = repository.getTripSpots(tripId)
+
+        repository.renameSpot(first.id, "  Ein\nFawwar   spring ")
+        repository.renameSpot(third.id, "x".repeat(80))
+        repository.deleteSpot(second.id)
+
+        val spots = repository.getTripSpots(tripId)
+        assertEquals(listOf(1, 3), spots.map { it.number })
+        assertEquals("Ein Fawwar spring", spots[0].name)
+        assertEquals(60, spots[1].name!!.length)
+        // The next spot follows the highest number, so "Spot 3" is never reused for another place.
+        assertEquals(4, repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 50)))
+
+        repository.renameSpot(first.id, "   ")
+        assertNull("blank goes back to Spot 1", repository.getTripSpots(tripId).first().name)
+    }
+
+    @Test
+    fun `deleting a trip deletes its spots, and keeping it in Stats keeps none of them`() = runTest {
+        val tripId = repository.startTrip()
+        repository.recordAcceptedBatch(
+            tripId,
+            listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10), sample(32.0001, 34.0, fixedNow.epochSecond + 20)),
+        )
+        repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 15))
+        repository.addSpot(tripId, spotFix(fixedNow.epochSecond + 18))
+        repository.finishTrip(tripId, fixedNow.epochSecond + 600)
+
+        repository.deleteTrip(tripId, keepInStats = true)
+
+        assertTrue(repository.getTripSpots(tripId).isEmpty())
+        assertTrue(database.tripSpotDao().getAllForTrip(tripId).isEmpty())
+        assertEquals(1, repository.observeDeletedTripTotals().first().size)
+    }
 }

@@ -3,7 +3,10 @@ package com.example.stepsplit.ui.trips
 import com.example.stepsplit.domain.model.TripPoint
 import java.io.ByteArrayInputStream
 import java.util.Locale
+import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.transform.stream.StreamSource
+import javax.xml.validation.SchemaFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -150,6 +153,56 @@ class GpxExportTest {
             assertEquals(0, root.getElementsByTagName("metadata").length)
             assertEquals(0, root.getElementsByTagName("name").length)
         }
+    }
+
+    private fun assertValidGpx11(gpx: String) {
+        val xsd = checkNotNull(javaClass.classLoader?.getResource("gpx/gpx-1.1.xsd")) { "the GPX 1.1 schema test resource" }
+        val schema = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(xsd)
+        schema.newValidator().validate(StreamSource(ByteArrayInputStream(gpx.toByteArray(Charsets.UTF_8))))
+    }
+
+    private val spots = listOf(
+        GpxExport.Waypoint(31.7701, 35.2101, 812.4, 1_005L, "Spot 1"),
+        GpxExport.Waypoint(31.7702, 35.2102, null, 1_015L, "Ein & <Fawwar> \"spring\" מעיין"),
+    )
+
+    @Test
+    fun `spots become waypoints after metadata and before the track`() {
+        val gpx = GpxExport.toGpx(listOf(point(1_000L, 31.77, 35.21, 800.0)), name = "Sataf", waypoints = spots)
+        val root = parse(gpx)
+        val order = buildList {
+            var node = root.firstChild
+            while (node != null) {
+                if (node is Element) add(node.tagName)
+                node = node.nextSibling
+            }
+        }
+        assertEquals(listOf("metadata", "wpt", "wpt", "trk"), order)
+        val first = root.getElementsByTagName("wpt").item(0) as Element
+        assertEquals(31.7701, first.getAttribute("lat").toDouble(), 1e-9)
+        assertEquals(35.2101, first.getAttribute("lon").toDouble(), 1e-9)
+        val children = buildList {
+            var node = first.firstChild
+            while (node != null) {
+                if (node is Element) add(node.tagName to node.textContent)
+                node = node.nextSibling
+            }
+        }
+        assertEquals(listOf("ele" to "812.4000000", "time" to "1970-01-01T00:16:45Z", "name" to "Spot 1"), children)
+        val second = root.getElementsByTagName("wpt").item(1) as Element
+        assertEquals(0, second.getElementsByTagName("ele").length)
+        assertEquals(spots[1].name, second.getElementsByTagName("name").item(0).textContent)
+        assertFalse(gpx.contains("<Fawwar>"))
+    }
+
+    @Test
+    fun `the file validates against the GPX 1_1 schema with and without spots`() {
+        val points = listOf(point(1_000L, 31.77, 35.21, 800.0), point(1_010L, 31.771, 35.211))
+        assertValidGpx11(GpxExport.toGpx(emptyList()))
+        assertValidGpx11(GpxExport.toGpx(points))
+        assertValidGpx11(GpxExport.toGpx(points, name = "Sataf"))
+        assertValidGpx11(GpxExport.toGpx(points, name = "Sataf", waypoints = spots))
+        assertValidGpx11(GpxExport.toGpx(points, waypoints = spots))
     }
 
     private fun Element.firstChildElement(): Element {
