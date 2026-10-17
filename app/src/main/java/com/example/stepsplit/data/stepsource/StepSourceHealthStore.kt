@@ -9,10 +9,15 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.stepsplit.data.settings.resetCorruptPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-private val Context.stepSourceHealthDataStore: DataStore<Preferences> by preferencesDataStore(name = "stepsplit_step_source_health")
+// A corrupt file reads as empty instead of crashing every launch - see resetCorruptPreferences.
+private val Context.stepSourceHealthDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "stepsplit_step_source_health",
+    corruptionHandler = resetCorruptPreferences,
+)
 
 /**
  * A point-in-time view of production step acquisition health - see [StepSourceHealthStore]'s own

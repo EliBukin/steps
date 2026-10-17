@@ -2,10 +2,12 @@ package com.example.stepsplit.data.settings
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -18,7 +20,20 @@ import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "stepsplit_settings")
+/**
+ * What a preferences file that can't be read (a torn write, a bad flash block) is read as: empty,
+ * so every setting is back at its default, and the file is rewritten that way. Without it every
+ * read throws `CorruptionException`, which crashes the app on every launch (the Today screen reads
+ * the settings at once), and only clearing the app's data gets it to start again - every trip and
+ * step with it. Both of the app's preferences files use it; their contents are small and can be
+ * set again.
+ */
+internal val resetCorruptPreferences = ReplaceFileCorruptionHandler { emptyPreferences() }
+
+private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "stepsplit_settings",
+    corruptionHandler = resetCorruptPreferences,
+)
 
 data class AppSettings(
     val goals: StepGoals,
