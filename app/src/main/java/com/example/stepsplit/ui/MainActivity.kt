@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -57,10 +58,16 @@ class MainActivity : ComponentActivity() {
     private var navigationEvent by mutableStateOf<TripNotificationNavigationEvent?>(null)
     private val navigationEventCounter = AtomicLong(0)
 
+    @VisibleForTesting
+    internal val navigationEventForTest: TripNotificationNavigationEvent? get() = navigationEvent
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        navigationEvent = eventForIntent(intent)
+        // Only a fresh launch carries the notification's navigation. The activity keeps its launch
+        // intent across a recreation (rotation, dark mode, language, process death), and the
+        // restored back stack already shows wherever the owner went after that launch.
+        navigationEvent = if (savedInstanceState == null) eventForIntent(intent) else null
 
         val container = (application as StepSplitApplication).container
 
