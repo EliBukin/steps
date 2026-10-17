@@ -1,5 +1,8 @@
 package com.example.stepsplit.ui.trips
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.stepsplit.data.local.StepSplitDatabase
@@ -31,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -289,6 +293,42 @@ class TripDetailViewModelTest {
 
         assertTrue(viewModel.uiState.first { it.deleted }.deleted)
         assertEquals(600L, repository.observeDeletedTripTotals().first().single().durationSeconds)
+    }
+
+    /**
+     * Pressing Back closes the screen and its ViewModel's scope with it. A delete the owner already
+     * confirmed must still happen when they leave right away, before it is done: it reads the
+     * trip and its route (for Stats) before it deletes anything. Main runs at once here, as
+     * `Dispatchers.Main.immediate` does on the phone.
+     */
+    @Test
+    fun `a confirmed delete still happens when the screen is left right away`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val tripId = insertFinishedTrip()
+        val repository = TripRepository(database, clock)
+        val store = ViewModelStore()
+        val viewModel = viewModelIn(store) { TripDetailViewModel(repository, tripId, flowOf(true), StoredHeightsOnly) }
+
+        viewModel.deleteTrip()
+        store.clear()
+
+        awaitUntil { database.tripDao().getById(tripId) == null }
+        assertNull("the trip is gone", database.tripDao().getById(tripId))
+        assertEquals("and kept in Stats", 1, repository.observeDeletedTripTotals().first().size)
+    }
+
+    private fun <T : ViewModel> viewModelIn(store: ViewModelStore, create: () -> T): T {
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <V : ViewModel> create(modelClass: Class<V>): V = create() as V
+        }
+        @Suppress("UNCHECKED_CAST")
+        return ViewModelProvider(store, factory)[ViewModel::class.java] as T
+    }
+
+    /** Real time, for Room's own threads: up to 2 s for [done]. */
+    private suspend fun awaitUntil(done: suspend () -> Boolean) {
+        withContext(Dispatchers.Default) { withTimeoutOrNull(2_000) { while (!done()) delay(10) } }
     }
 
     @Test

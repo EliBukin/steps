@@ -16,6 +16,7 @@ import com.example.stepsplit.domain.model.StepGoals
 import com.example.stepsplit.domain.model.SyncFailure
 import com.example.stepsplit.domain.model.deriveStepCollectionHealth
 import java.time.Clock
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val isLoading: Boolean = true,
@@ -110,7 +112,7 @@ class SettingsViewModel(
     }
 
     fun setDailyGoal(steps: Long) {
-        viewModelScope.launch {
+        save {
             val accepted = settingsRepository.setDailyGoal(steps)
             goalInputError.value = !accepted
         }
@@ -119,15 +121,24 @@ class SettingsViewModel(
     fun setThresholds(thresholds: ClassificationThresholds) {
         // Routed through stepRepository (not settingsRepository directly) so existing sessions
         // are reclassified immediately under the new thresholds, not just on the next sync.
-        viewModelScope.launch { stepRepository.applyThresholds(thresholds) }
+        save { stepRepository.applyThresholds(thresholds) }
     }
 
     fun resetThresholds() {
-        viewModelScope.launch { stepRepository.resetThresholds() }
+        save { stepRepository.resetThresholds() }
     }
 
     fun setKeepDeletedTripsInStats(keep: Boolean) {
-        viewModelScope.launch { settingsRepository.setKeepDeletedTripsInStats(keep) }
+        save { settingsRepository.setKeepDeletedTripsInStats(keep) }
+    }
+
+    /**
+     * Runs a change the owner made to the end, even if they leave Settings meanwhile: Back clears
+     * this ViewModel and cancels its scope, and new thresholds first wait for any sync that is
+     * running, which can take seconds - they would otherwise be dropped, silently.
+     */
+    private fun save(write: suspend () -> Unit) {
+        viewModelScope.launch { withContext(NonCancellable) { write() } }
     }
 
     /**

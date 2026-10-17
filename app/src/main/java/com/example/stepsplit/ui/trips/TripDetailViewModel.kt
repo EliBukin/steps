@@ -15,6 +15,7 @@ import com.example.stepsplit.domain.trip.TripElevation
 import com.example.stepsplit.domain.trip.TripMotion
 import com.example.stepsplit.domain.trip.TripTypeRule
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class TripDetailUiState(
     val isLoading: Boolean = true,
@@ -161,20 +163,29 @@ class TripDetailViewModel(
         val state = uiState.value
         if (state.trip == null) return
         val override = type.takeIf { it != state.suggestedType }
-        viewModelScope.launch { repository.updateTripDetails(tripId, name, override) }
+        save { repository.updateTripDetails(tripId, name, override) }
     }
 
     fun deleteTrip() {
-        viewModelScope.launch { repository.deleteTrip(tripId, keepInStats = keepDeletedTripsInStats.first()) }
+        save { repository.deleteTrip(tripId, keepInStats = keepDeletedTripsInStats.first()) }
     }
 
     /** Names a spot; blank goes back to "Spot N". */
     fun renameSpot(spotId: Long, name: String) {
-        viewModelScope.launch { repository.renameSpot(spotId, name) }
+        save { repository.renameSpot(spotId, name) }
     }
 
     fun deleteSpot(spotId: Long) {
-        viewModelScope.launch { repository.deleteSpot(spotId) }
+        save { repository.deleteSpot(spotId) }
+    }
+
+    /**
+     * Runs a change the owner confirmed to the end, even if they leave the screen meanwhile: Back
+     * clears this ViewModel and cancels its scope, and a delete reads the trip and its route
+     * before it deletes anything, so it would otherwise be dropped half way, silently.
+     */
+    private fun save(write: suspend () -> Unit) {
+        viewModelScope.launch { withContext(NonCancellable) { write() } }
     }
 }
 
