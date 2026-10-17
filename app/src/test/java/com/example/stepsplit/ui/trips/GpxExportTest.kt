@@ -103,6 +103,28 @@ class GpxExportTest {
         }
     }
 
+    /** Arabic and Persian locales format with their own digits (٣١٫٧٧ / ۳۱٫۷۷); GPX must still get ASCII digits and a dot everywhere. */
+    @Test
+    fun `numbers and times stay ASCII under locales with their own digits`() {
+        val original = Locale.getDefault()
+        try {
+            for (tag in listOf("ar-EG", "fa-IR", "he-IL")) {
+                Locale.setDefault(Locale.forLanguageTag(tag))
+                val gpx = GpxExport.toGpx(
+                    listOf(point(1_000L, 31.77, 35.21, altitude = -410.5)),
+                    waypoints = listOf(GpxExport.Waypoint(31.78, 35.22, 812.25, 1_060L, "Spot 1")),
+                )
+                assertTrue("$tag: $gpx", gpx.all { it.code < 128 })
+                val trkpt = parse(gpx).getElementsByTagName("trkpt").item(0) as Element
+                assertEquals(31.77, trkpt.getAttribute("lat").toDouble(), 1e-6)
+                assertEquals(-410.5, trkpt.getElementsByTagName("ele").item(0).textContent.toDouble(), 1e-6)
+                assertEquals("1970-01-01T00:16:40Z", trkpt.getElementsByTagName("time").item(0).textContent)
+            }
+        } finally {
+            Locale.setDefault(original)
+        }
+    }
+
     @Test
     fun `XML special characters are escaped`() {
         val escaped = GpxExport.escapeXml("Tom & Jerry's \"great\" <hike>")
