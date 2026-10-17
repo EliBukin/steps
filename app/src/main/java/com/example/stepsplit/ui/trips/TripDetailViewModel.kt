@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.trips
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripRepository
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSummary
@@ -9,12 +10,17 @@ import com.example.stepsplit.domain.model.TripType
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
+import com.example.stepsplit.domain.trip.TripElevation
+import com.example.stepsplit.domain.trip.TripMotion
 import com.example.stepsplit.domain.trip.TripTypeRule
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -26,6 +32,17 @@ data class TripDetailUiState(
     val speedColoring: RouteSpeedColoring.SpeedColoredRoute? = null,
     /** [TripTypeRule.suggest] on [points] - the type the Edit trip dialog marks as suggested. */
     val suggestedType: TripType = TripType.WALK,
+    /** Moving time and top speed of [points], counted as a trip of [type] - see [TripMotion]. Null when the route has fewer than two points. */
+    val motion: TripMotion.Motion? = null,
+    /** Climb, descent, highest and lowest point and the height chart of [points] - see [TripElevation]. Null when too few points have a height. */
+    val elevation: TripElevation.Elevation? = null,
+    /**
+     * Whether [points]' heights, and so [elevation]'s, are above sea level (converted on Android 14 and
+     * newer - see [SeaLevelHeights]). When false they are as stored, above the WGS84 ellipsoid: fine
+     * for climb, descent and the chart's shape, but not as absolute heights, so the screen doesn't
+     * show those.
+     */
+    val heightsAboveSeaLevel: Boolean = false,
     val deleted: Boolean = false,
     /** Whether deleting this trip keeps its time and distance in Stats - the delete dialog says which. */
     val keepDeletedTripsInStats: Boolean = false,
@@ -50,30 +67,67 @@ data class TripDetailUiState(
  * points-flow emission here rather than separately (or repeatedly, on every Compose recomposition)
  * downstream. The underlying stored rows themselves are never modified - this is purely a read-time,
  * display/export transform.
+ *
+ * The same goes for heights: on Android 14 and newer [seaLevelHeights] converts the stored heights
+ * (above the WGS84 ellipsoid) to above sea level right here, so the elevation numbers, the height
+ * chart and the GPX `<ele>` values all read the same converted [uiState.points].
+ *
+ * Everything derived from the route is worked out off the main thread, once per points-flow
+ * emission: renaming a trip or changing its type doesn't redo it. Only the moving time, which
+ * depends on the type, is recounted then, from the already-smoothed points.
  */
 class TripDetailViewModel(
     private val repository: TripRepository,
     private val tripId: Long,
     /** The "Keep deleted trips in Stats" setting - see [com.example.stepsplit.data.settings.AppSettings.keepDeletedTripsInStats]. */
     private val keepDeletedTripsInStats: Flow<Boolean>,
+    /** Converts the stored heights to above sea level where the phone can - see [SeaLevelHeights]. */
+    private val seaLevelHeights: SeaLevelHeights,
 ) : ViewModel() {
+
+    /** Everything the screen shows that comes from the route alone. */
+    private class DisplayedRoute(
+        val distanceMeters: Double,
+        val points: List<TripPoint>,
+        val speedColoring: RouteSpeedColoring.SpeedColoredRoute,
+        val suggestedType: TripType,
+        val elevation: TripElevation.Elevation?,
+        val heightsAboveSeaLevel: Boolean,
+    )
+
+    private val displayedRoute: Flow<DisplayedRoute> = repository.observeTripPoints(tripId).map { rawPoints ->
+        val smoothed = RouteSmoother.smooth(RouteSanitizer.sanitize(rawPoints).points)
+        val seaLevelPoints = seaLevelHeights.toSeaLevel(smoothed.points)
+        val points = seaLevelPoints ?: smoothed.points
+        DisplayedRoute(
+            distanceMeters = smoothed.distanceMeters,
+            points = points,
+            speedColoring = RouteSpeedColoring.colorize(points),
+            suggestedType = TripTypeRule.suggest(points),
+            elevation = TripElevation.measure(points),
+            heightsAboveSeaLevel = seaLevelPoints != null,
+        )
+    }.flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<TripDetailUiState> = combine(
         repository.observeTrip(tripId),
-        repository.observeTripPoints(tripId),
+        displayedRoute,
         keepDeletedTripsInStats,
-    ) { trip, rawPoints, keepInStats ->
-        val smoothed = RouteSmoother.smooth(RouteSanitizer.sanitize(rawPoints).points)
+    ) { trip, route, keepInStats ->
+        val type = trip?.typeOverride ?: route.suggestedType
         TripDetailUiState(
             isLoading = false,
-            trip = trip?.copy(distanceMeters = smoothed.distanceMeters),
-            points = smoothed.points,
-            speedColoring = RouteSpeedColoring.colorize(smoothed.points),
-            suggestedType = TripTypeRule.suggest(smoothed.points),
+            trip = trip?.copy(distanceMeters = route.distanceMeters),
+            points = route.points,
+            speedColoring = route.speedColoring,
+            suggestedType = route.suggestedType,
+            motion = if (route.points.size >= 2) TripMotion.measure(route.points, type) else null,
+            elevation = route.elevation,
+            heightsAboveSeaLevel = route.heightsAboveSeaLevel,
             deleted = trip == null,
             keepDeletedTripsInStats = keepInStats,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripDetailUiState())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TripDetailUiState())
 
     /**
      * Saves the Edit trip dialog: [name] (blank clears it) and the [type] the owner picked. Picking

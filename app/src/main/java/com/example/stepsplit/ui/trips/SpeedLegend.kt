@@ -28,7 +28,7 @@ import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private const val METERS_PER_SECOND_TO_KMH = 3.6
+internal const val METERS_PER_SECOND_TO_KMH = 3.6
 
 /** The legend's color steps - enough to read as a smooth red-yellow-green blend at this size. */
 private const val LEGEND_COLOR_STEPS = 16

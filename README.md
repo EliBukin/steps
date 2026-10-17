@@ -48,7 +48,7 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 | **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
 | **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** a card for **Walks** and one for **Drives**, each with the number of trips, total time and distance, and average speed; walks also show average pace. A card with no trips is hidden. |
 | **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route, a walk or car icon for its type, and its name, or its day, date and start time if it has none. |
-| **Trip detail** | The trip's type icon and its name, with the date under it (an unnamed trip is titled by its date). When the trip started and ended, its duration and distance, and the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. At the top, the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked) and the trash icon deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Trip detail** | The trip's type icon and its name, with the date under it (an unnamed trip is titled by its date). A card with when the trip started and ended, its duration and distance, and under those the total climb (↑) and descent (↓), the moving time (the duration without stops) and the top speed. Then the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. Under the map, a small height chart along the trip, with the highest and lowest point above sea level next to its top and bottom (Android 14 and newer; older phones show the chart's shape only). The chart is left out on a short phone, where the map needs the room, and a trip recorded without heights has no climb, descent or chart. The screen doesn't scroll, so the map's gestures always work. At the top, the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked) and the trash icon deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
 | **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
@@ -108,7 +108,8 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 - **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
   sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app. A
   named trip's name goes into the file too (as the GPX file's and track's name), so other apps
-  show it.
+  show it. Each point's height (`<ele>`) is above sea level, as GPX means it, on Android 14 and
+  newer; see *Heights* below.
 - **Walk or drive.** Every finished trip is a *walk* (walks, hikes, jogs) or a *drive*, so Stats can
   keep hikes and jeep drives apart. The app suggests one from the route's speed: each stretch's
   speed, the same one the speed colors use, and the trip is a drive when at least a tenth of its
@@ -134,6 +135,33 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   moved more than 100 m has no points showing how you got there. That happens when recording was
   interrupted and resumed, or the GPS lost its fix. Such a stretch is drawn gray and dashed, with
   no speed. The GPX file, the trip list's route pictures and the offline outline stay one color.
+- **Moving time.** The duration counts everything from start to finish, a 20-minute break
+  included. Moving time counts only the stretches whose speed (the same 30-second average the
+  colors use) is above 1 km/h on a walk or 3 km/h on a drive. Standing still sends no new points,
+  so a stop is one long, nearly motionless stretch, and GPS drift during a break stays well under
+  1 km/h, while even a slow scramble is faster. A drive's limit is higher because the stretch
+  holding a stop also holds the drive-off up to the next point. Pauses shorter than about half a
+  minute blend into the walking around them and count as moving. A gap (gray and dashed on the
+  map) counts as moving when its straight line, the least ground you covered, is faster than the
+  limit: a short GPS dropout counts, a long interruption spent mostly standing doesn't.
+- **Top speed.** The fastest of those 30-second average speeds, never a single GPS reading or the
+  phone's own reported speed, so one bad point can't produce a silly number. Gaps have no speed.
+  It is never below the speed legend's fast end.
+- **Heights.** GPS heights scatter 10-20 m up and down, so adding up every rise would turn a flat
+  4 km walk into more than a kilometer of climb. The app first smooths the heights along the
+  distance (a weighted average in which the heights within about 65 m count most on a walk, and
+  more on a drive, whose points are farther apart), then counts climb and descent from valley to
+  peak and back, ignoring any rise or fall under 10 m. The highest and lowest point are those of
+  the smoothed heights. A trip where fewer than half of the points (or fewer than 10) have a
+  height, or whose heights cover less than 100 m of the route, shows no heights at all.
+- **Heights above sea level.** The phone reports height above the WGS84 ellipsoid, a mathematical
+  shape of the Earth, not above sea level. In Israel that is about 17-20 m higher (Android's own
+  model gives about 19-20 m at Jerusalem, 19 m at Tel Aviv and 17 m at Arad and the Dead Sea). The
+  app stores what the phone reports and, on Android 14 and newer, converts it to above sea level
+  with Android's built-in converter each time a trip is shown or shared, so trips recorded before
+  this existed are converted too. Android 13 and older have no converter: there the trip shows
+  climb, descent and the chart's shape, which don't depend on it, but no highest or lowest
+  point, and the GPX file gets the heights as stored.
 - **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org). You can pan, zoom and
   rotate the map; tilting is off. The scale bar is always in meters and kilometers. Without
   internet, the screen shows a plain outline of the route instead, with a *Retry map* button.
@@ -178,6 +206,11 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
   meters to the side of the road can stay in the route.
 - **"Searching" while standing still.** The GPS status can show *Searching* after 30 seconds
   without moving, because no new points are kept then.
+- **Heights are only as good as GPS.** Even after smoothing, the climb and descent are estimates,
+  good to about 10-20%, and the highest and lowest point are often 5-10 m off. A slow drift of the
+  GPS height over minutes looks just like a gentle hill, so a flat walk can still show some climb,
+  and hills smaller than about 10-15 m are missed. Telling the two apart would need a barometer,
+  which the app doesn't use.
 - **Steps update only while the app is open.** The phone keeps counting, but if you don't open
   the app for more than 30 days, the steps from before that are never copied in.
 - **Android 14+ only for steps.** Older phones get no step counting.
@@ -202,11 +235,12 @@ app/src/main/java/com/example/stepsplit/
   ui/               Compose screens (today, history, stats, trips, settings), navigation, theme
   di/               AppContainer and ViewModelFactory
   domain/           Pure Kotlin, no Android: walk classification, aggregation, time,
-                    lifetime stats, and the trip route logic (point acceptance, cleanup, smoothing)
+                    lifetime stats, and the trip route logic (point acceptance, cleanup, smoothing,
+                    speed colors, walk/drive, moving time and top speed, elevation)
   data/
     stepsource/     Health Connect step source (+ a fake for tests and debug data)
     repository/     StepRepository: imports, stores and classifies steps
-    trip/           TripRepository, GPS location client, recording coordinator
+    trip/           TripRepository, GPS location client, recording coordinator, sea-level heights
     local/          Room database, entities and DAOs
     settings/       DataStore settings (goal, thresholds, last sync, keep deleted trips)
   trip/service/     The trip recording foreground service and its command handling

@@ -49,7 +49,7 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass == TripDetailViewModel::class.java) { "Unknown ViewModel class: ${modelClass.name}" }
-            return TripDetailViewModel(container.tripRepository, tripId, keepDeletedTripsInStats()) as T
+            return TripDetailViewModel(container.tripRepository, tripId, keepDeletedTripsInStats(), container.seaLevelHeights) as T
         }
     }
 

@@ -141,6 +141,14 @@
     <string name="trip_detail_distance_label">Distance</string>
     <string name="trip_detail_time_label">Time</string>
     <string name="trip_detail_time_range_format">%1$s – %2$s</string>
+    <string name="trip_detail_moving_time_label">Moving time</string>
+    <string name="trip_detail_top_speed_label">Top speed</string>
+    <string name="trip_detail_climb_descent_label">Climb / descent</string>
+    <string name="trip_detail_climb_descent_format">↑%1$s ↓%2$s m</string>
+    <string name="trip_height_meters_format">%1$s m</string>
+    <string name="cd_trip_height_chart">Height chart along the route.</string>
+    <string name="cd_trip_climb_descent">Climb %1$s, descent %2$s</string>
+    <string name="cd_trip_height_extremes">Highest point %1$s, lowest point %2$s, above sea level.</string>
     <string name="trip_gpx_export_success">GPX file saved successfully</string>
     <string name="trip_gpx_export_failure">Failed to save the GPX file</string>
     <string name="trip_detail_share_gpx_action">Share GPX</string>

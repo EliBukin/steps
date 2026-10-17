@@ -13,6 +13,8 @@ import com.example.stepsplit.data.stepsource.StepSource
 import com.example.stepsplit.data.stepsource.StepSourceHealthSink
 import com.example.stepsplit.data.stepsource.StepSourceHealthStore
 import com.example.stepsplit.data.trip.FusedTripLocationClient
+import com.example.stepsplit.data.trip.PlatformSeaLevelHeights
+import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripLocationClient
 import com.example.stepsplit.data.trip.TripRecordingCoordinator
 import com.example.stepsplit.data.trip.TripRepository
@@ -120,6 +122,10 @@ class AppContainer(context: Context) {
     )
 
     val locationClient: TripLocationClient = FusedTripLocationClient(context)
+
+    // Converts a trip's stored heights (above the WGS84 ellipsoid) to above sea level for the trip
+    // detail screen and GPX, on Android 14 and newer - see SeaLevelHeights.
+    val seaLevelHeights: SeaLevelHeights = PlatformSeaLevelHeights(context)
 
     // Owns TripRecordingCoordinator's location-collecting coroutine - a plain SupervisorJob-backed
     // scope living for the process lifetime, the same pattern as repositoryScope above. Recording

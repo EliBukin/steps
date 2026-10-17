@@ -21,7 +21,11 @@ internal object GpxExport {
      * order exactly. Each point's latitude/longitude/elevation is formatted with
      * [Locale.ROOT] so a device locale that uses a comma decimal separator can never produce
      * invalid GPX, and its timestamp as a UTC ISO-8601 instant (e.g. `2026-08-17T14:23:00Z`).
-     * Elevation is only included when [TripPoint.altitudeMeters] is present.
+     * Elevation is only included when [TripPoint.altitudeMeters] is present. GPX's `<ele>` means
+     * height above sea level, and the trip detail screen passes points whose heights it already
+     * converted to that on Android 14 and newer (see `TripDetailUiState.heightsAboveSeaLevel`); on
+     * older Android they are the stored heights above the WGS84 ellipsoid, as before - about 20 m
+     * too high in Israel.
      *
      * A trip [name], when there is one, goes XML-escaped into both `<metadata><name>` (the file's
      * name) and `<trk><name>` (the track's), since apps differ in which one they show. GPX 1.1

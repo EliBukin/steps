@@ -45,7 +45,7 @@ object RouteSpeedColoring {
     /** The green end of the scale: this share of the trip's stretches are at or above it. */
     const val HIGH_PERCENTILE = 0.95
 
-    /** The scale never spans less than 1 km/h, so a trip at one steady speed shows as one middle color, not as noise stretched across red to green. */
+    /** The scale never spans less than 1 km/h, so a trip at one steady speed shows as one color, not as noise stretched across red to green. */
     const val MIN_SCALE_SPAN_METERS_PER_SECOND = 1.0 / 3.6
 
     /** How many color steps [colorize] uses. Neighbouring stretches with the same step are merged into one line, which keeps the map's feature count down without a visible change. */
@@ -133,6 +133,12 @@ object RouteSpeedColoring {
      * The trip's own scale from its stretch [speeds] (gaps already left out): the [LOW_PERCENTILE]
      * and [HIGH_PERCENTILE], linearly interpolated between the sorted values, then widened to at least
      * [MIN_SCALE_SPAN_METERS_PER_SECOND] around their middle (never below zero). Null for no speeds.
+     *
+     * The widening never pushes the fast end past the fastest stretch, which is the trip's top speed
+     * ([TripMotion]), so the legend never shows a fast end the trip didn't reach; a trip at one steady
+     * speed ends up at the fast end of its scale instead of in the middle. The one exception is a trip
+     * that never went faster than [MIN_SCALE_SPAN_METERS_PER_SECOND] (1 km/h), which has no top speed
+     * to disagree with.
      */
     fun scaleFor(speeds: List<Double>): SpeedScale? {
         if (speeds.isEmpty()) return null
@@ -141,7 +147,8 @@ object RouteSpeedColoring {
         var fast = percentile(sorted, HIGH_PERCENTILE)
         if (fast - slow < MIN_SCALE_SPAN_METERS_PER_SECOND) {
             val middle = (slow + fast) / 2
-            slow = max(0.0, middle - MIN_SCALE_SPAN_METERS_PER_SECOND / 2)
+            fast = min(middle + MIN_SCALE_SPAN_METERS_PER_SECOND / 2, sorted.last())
+            slow = max(0.0, fast - MIN_SCALE_SPAN_METERS_PER_SECOND)
             fast = slow + MIN_SCALE_SPAN_METERS_PER_SECOND
         }
         return SpeedScale(slow, fast)

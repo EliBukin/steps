@@ -141,6 +141,14 @@
     <string name="trip_detail_distance_label">מרחק</string>
     <string name="trip_detail_time_label">שעות</string>
     <string name="trip_detail_time_range_format">%1$s – %2$s</string>
+    <string name="trip_detail_moving_time_label">זמן בתנועה</string>
+    <string name="trip_detail_top_speed_label">מהירות מרבית</string>
+    <string name="trip_detail_climb_descent_label">עלייה / ירידה</string>
+    <string name="trip_detail_climb_descent_format">↑%1$s ↓%2$s מ׳</string>
+    <string name="trip_height_meters_format">%1$s מ׳</string>
+    <string name="cd_trip_height_chart">תרשים גובה לאורך המסלול.</string>
+    <string name="cd_trip_climb_descent">עלייה %1$s, ירידה %2$s</string>
+    <string name="cd_trip_height_extremes">הנקודה הגבוהה %1$s והנמוכה %2$s, מעל פני הים.</string>
     <string name="trip_gpx_export_success">קובץ ה-GPX נשמר בהצלחה</string>
     <string name="trip_gpx_export_failure">שמירת קובץ ה-GPX נכשלה</string>
     <string name="trip_detail_share_gpx_action">שיתוף GPX</string>

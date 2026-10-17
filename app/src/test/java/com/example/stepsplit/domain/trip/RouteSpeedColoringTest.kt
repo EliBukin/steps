@@ -137,10 +137,28 @@ class RouteSpeedColoringTest {
     }
 
     @Test
-    fun `a trip at one steady speed gets a narrow scale centered on it`() {
+    fun `a trip at one steady speed gets a narrow scale ending at it`() {
         val scale = RouteSpeedColoring.scaleFor(List(20) { 1.4 })!!
         assertEquals(RouteSpeedColoring.MIN_SCALE_SPAN_METERS_PER_SECOND, scale.fastMetersPerSecond - scale.slowMetersPerSecond, 1e-9)
-        assertEquals(0.5, scale.fractionOf(1.4), 1e-9)
+        // The fast end can't be above the trip's top speed, so the steady speed is the fast end.
+        assertEquals(1.4, scale.fastMetersPerSecond, 1e-9)
+    }
+
+    @Test
+    fun `a narrow scale is widened around its middle when the fastest stretch leaves room`() {
+        // 4.0-4.3 km/h with one stretch at 6 km/h: the 1 km/h span fits under the fastest stretch.
+        val speeds = List(40) { (4.0 + (it % 4) * 0.1) / 3.6 } + 6.0 / 3.6
+        val scale = RouteSpeedColoring.scaleFor(speeds)!!
+        assertEquals(RouteSpeedColoring.MIN_SCALE_SPAN_METERS_PER_SECOND, scale.fastMetersPerSecond - scale.slowMetersPerSecond, 1e-9)
+        assertEquals(0.5, scale.fractionOf((4.0 + 4.3) / 2 / 3.6), 0.01)
+    }
+
+    @Test
+    fun `the widened fast end is never above the fastest stretch`() {
+        val steadyish = List(30) { (5.0 + (it % 3) * 0.1) / 3.6 }
+        val scale = RouteSpeedColoring.scaleFor(steadyish)!!
+        assertTrue(scale.fastMetersPerSecond <= steadyish.max() + 1e-12)
+        assertEquals(RouteSpeedColoring.MIN_SCALE_SPAN_METERS_PER_SECOND, scale.fastMetersPerSecond - scale.slowMetersPerSecond, 1e-9)
     }
 
     @Test

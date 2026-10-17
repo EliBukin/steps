@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.trips
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,9 +44,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -53,16 +58,21 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.model.TripType
+import com.example.stepsplit.domain.trip.TripElevation
+import com.example.stepsplit.domain.trip.TripMotion
 import com.example.stepsplit.domain.trip.TripName
 import com.example.stepsplit.ui.common.formatClockTimeInZone
 import com.example.stepsplit.ui.common.formatDateLabel
 import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
+import kotlin.math.min
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -122,10 +132,10 @@ fun TripDetailScreen(
     // scrollable container, any drag with a vertical component (an upward pan, a diagonal drag, a
     // pinch) is claimed by the container after a few pixels and cancelled for the map, so the map
     // stalls mid-gesture. Here nothing competes for touches on the map, and it takes whatever
-    // height the title and summary above and the Share button below leave free.
+    // height the title and summary above and the height card and Share button below leave free.
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(SECTION_SPACING),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
@@ -153,17 +163,30 @@ fun TripDetailScreen(
             }
         }
 
-        TripSummaryCard(trip)
+        TripSummaryCard(trip, uiState.motion, uiState.elevation)
 
         if (uiState.points.isEmpty()) {
             Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.weight(1f))
         } else {
-            TripRouteMapCard(
-                points = uiState.points,
-                speedColoring = uiState.speedColoring,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            // The map and the height chart under it share the height that is left. The chart shows
+            // only while the map keeps at least MIN_MAP_HEIGHT next to it: on a short phone the map
+            // wins, and the climb and descent stay in the card above. No chart at all when too few
+            // points have a height - see TripElevation.
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                val elevation = uiState.elevation
+                val showChart = elevation != null && maxHeight >= MIN_MAP_HEIGHT + SECTION_SPACING + TripHeightChartHeight
+                Column(verticalArrangement = Arrangement.spacedBy(SECTION_SPACING)) {
+                    TripRouteMapCard(
+                        points = uiState.points,
+                        speedColoring = uiState.speedColoring,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                    if (showChart && elevation != null) {
+                        TripHeightChartCard(elevation = elevation, aboveSeaLevel = uiState.heightsAboveSeaLevel)
+                    }
+                }
+            }
         }
 
         Button(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
@@ -214,31 +237,97 @@ fun TripDetailScreen(
 }
 
 /**
- * The trip's numbers above the map: when it ran, how long it took and how far it went. A column of
- * rows, so more numbers can be added as another row; every row added takes its height from the map.
+ * The trip's numbers above the map, in two rows: when it ran, how long it took and how far it went;
+ * then the climb and descent under the time, the moving time (see [TripMotion]) under the duration,
+ * and the top speed under the distance. They are laid out as a table ([SummaryGrid]), so the second
+ * row lines up with the first even when the time range wraps onto a second line on a narrow phone.
+ * [motion] is null when the route has fewer than two points, and [elevation] when too few points
+ * have a height; their cells are then left empty, and the second row is left out when it would be
+ * empty. Every row takes its height from the map.
  */
 @Composable
-private fun TripSummaryCard(trip: TripSummary) {
+private fun TripSummaryCard(trip: TripSummary, motion: TripMotion.Motion?, elevation: TripElevation.Elevation?) {
     val zoneId = ZoneId.of(trip.startZoneId)
+    val locale = LocalConfiguration.current.locales[0]
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                SummaryCell(
-                    label = stringResource(R.string.trip_detail_time_label),
-                    value = stringResource(
-                        R.string.trip_detail_time_range_format,
-                        formatClockTimeInZone(trip.startEpochSecond, zoneId),
-                        trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
-                    ),
-                )
-                SummaryCell(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
-                SummaryCell(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
+        SummaryGrid(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            SummaryCell(
+                label = stringResource(R.string.trip_detail_time_label),
+                value = stringResource(
+                    R.string.trip_detail_time_range_format,
+                    formatClockTimeInZone(trip.startEpochSecond, zoneId),
+                    trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
+                ),
+                maxLines = 2,
+            )
+            SummaryCell(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
+            SummaryCell(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
+            if (motion != null || elevation != null) {
+                if (elevation != null) {
+                    val climb = formatHeightNumber(elevation.climbMeters, locale)
+                    val descent = formatHeightNumber(elevation.descentMeters, locale)
+                    SummaryCell(
+                        label = stringResource(R.string.trip_detail_climb_descent_label),
+                        value = stringResource(R.string.trip_detail_climb_descent_format, climb, descent),
+                        valueDescription = stringResource(
+                            R.string.cd_trip_climb_descent,
+                            stringResource(R.string.trip_height_meters_format, climb),
+                            stringResource(R.string.trip_height_meters_format, descent),
+                        ),
+                    )
+                } else {
+                    Spacer(Modifier)
+                }
+                if (motion != null) {
+                    SummaryCell(stringResource(R.string.trip_detail_moving_time_label), formatElapsed(motion.movingSeconds))
+                    SummaryCell(
+                        label = stringResource(R.string.trip_detail_top_speed_label),
+                        // Formatted like the speed legend's ends, so the two always agree on the map's scale.
+                        value = motion.topSpeedMetersPerSecond?.let {
+                            stringResource(R.string.trip_map_speed_format, formatLegendSpeed(it * METERS_PER_SECOND_TO_KMH, locale))
+                        } ?: "–",
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Lays its cells out in rows of three, like a table. The second and third columns are as wide as
+ * their widest cell; the first takes what is left, so a long time range wraps instead of running
+ * into the next column. The columns are spread across the width with at least [columnSpacing]
+ * between them, and each row is as tall as its tallest cell, so the rows always line up. Mirrors in
+ * right-to-left languages.
+ */
+@Composable
+private fun SummaryGrid(
+    modifier: Modifier = Modifier,
+    rowSpacing: Dp = 12.dp,
+    columnSpacing: Dp = 12.dp,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val columns = 3
+        val rows = (measurables.size + columns - 1) / columns
+        fun widest(column: Int) = (column until measurables.size step columns).maxOfOrNull { measurables[it].maxIntrinsicWidth(Constraints.Infinity) } ?: 0
+        val width = constraints.maxWidth
+        val gap = columnSpacing.roundToPx()
+        val widths = IntArray(columns) { if (it == 0) 0 else widest(it) }
+        widths[0] = min(widest(0), (width - widths[1] - widths[2] - 2 * gap).coerceAtLeast(0))
+        val placeables = measurables.mapIndexed { i, measurable -> measurable.measure(Constraints(maxWidth = widths[i % columns])) }
+        val rowHeights = IntArray(rows) { row -> (0 until columns).maxOf { placeables.getOrNull(row * columns + it)?.height ?: 0 } }
+        val rowGap = rowSpacing.roundToPx()
+        val free = width - widths.sum()
+        val x = intArrayOf(0, widths[0] + free / 2, width - widths[2])
+        layout(width, rowHeights.sum() + rowGap * (rows - 1).coerceAtLeast(0)) {
+            var y = 0
+            for (row in 0 until rows) {
+                for (column in 0 until columns) placeables.getOrNull(row * columns + column)?.placeRelative(x[column], y)
+                y += rowHeights[row] + rowGap
             }
         }
     }
@@ -327,14 +416,32 @@ private fun TripTypeOption(type: TripType, selected: Boolean, suggested: Boolean
     }
 }
 
-/** One label-over-value column of the summary row: time, duration or distance. */
+/**
+ * One label-over-value cell of the summary card: time, climb and descent, duration, moving time,
+ * distance or top speed. [valueDescription], when given, is what TalkBack reads instead of [value]
+ * (for "↑230 ↓222 m").
+ */
 @Composable
-private fun SummaryCell(label: String, value: String) {
+private fun SummaryCell(label: String, value: String, maxLines: Int = 1, valueDescription: String? = null) {
     Column(modifier = Modifier.semantics(mergeDescendants = true) {}) {
         Text(text = label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text = value, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = maxLines,
+            modifier = if (valueDescription != null) Modifier.clearAndSetSemantics { contentDescription = valueDescription } else Modifier,
+        )
     }
 }
+
+/** The space between the screen's parts: title, numbers, map, height chart and Share button. */
+private val SECTION_SPACING = 12.dp
+
+/**
+ * The map never gets less than this for the height chart's sake: room for the route between the
+ * scale bar and legend at the top and the "Show whole route" button at the bottom.
+ */
+private val MIN_MAP_HEIGHT = 200.dp
 
 private fun tripDate(startEpochSecond: Long, startZoneId: String) =
     Instant.ofEpochSecond(startEpochSecond).atZone(ZoneId.of(startZoneId)).toLocalDate()
