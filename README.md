@@ -48,7 +48,7 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 | **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
 | **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** number of trips, total time and distance, average speed and average pace. |
 | **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. Below that, your finished trips, each with a small picture of its route. |
-| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map. The round button on the map shows the whole route again; the trash icon at the top deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
+| **Trip detail** | When the trip started and ended, its duration and distance, and the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again; the trash icon at the top deletes the trip. *Share GPX* opens Android's share sheet: *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files. |
 | **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
 
 ## How it works
@@ -111,6 +111,15 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   is on (it's off by default), the app first keeps the trip's date, duration and distance, with
   no location, and Stats keeps counting it. Turning the setting off hides those trips from Stats
   until you turn it on again. Trips deleted while it's off are gone from Stats for good.
+- **Speed colors.** Each stretch between two points of that same route is colored by its speed:
+  distance over time, averaged over about 30 seconds so the color doesn't flicker. Each trip has
+  its own scale. Its slowest 5% of stretches are red and its fastest 5% green, so a walk at
+  2-6 km/h and a jeep drive at 10-60 km/h both use the full range. The legend shows the trip's
+  km/h at the red and green ends. Slow sits on the left in English and on the right in Hebrew.
+  Standing still is just slow, so it's red. A stretch where more than a minute passed *and* you
+  moved more than 100 m has no points showing how you got there. That happens when recording was
+  interrupted and resumed, or the GPS lost its fix. Such a stretch is drawn gray and dashed, with
+  no speed. The GPX file, the trip list's route pictures and the offline outline stay one color.
 - **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org). You can pan, zoom and
   rotate the map; tilting is off. The scale bar is always in meters and kilometers. Without
   internet, the screen shows a plain outline of the route instead, with a *Retry map* button.

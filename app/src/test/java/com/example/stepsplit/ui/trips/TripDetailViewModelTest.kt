@@ -10,6 +10,7 @@ import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -25,6 +26,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -219,6 +221,10 @@ class TripDetailViewModelTest {
         val gpx = GpxExport.toGpx(uiState.points)
         assertTrue(gpx.contains(String.format(Locale.ROOT, "%.7f", uiState.points[1].latitude)))
         assertTrue(uiState.points[1].longitude != rawEntities[1].longitude)
+
+        // The map's speed colors are drawn from those same displayed points, never the raw ones.
+        assertEquals(RouteSpeedColoring.colorize(uiState.points), uiState.speedColoring)
+        assertNotEquals(RouteSpeedColoring.colorize(rawDomainPoints), uiState.speedColoring)
     }
 
     /** A FINISHED trip with a short two-point route, inserted directly. */

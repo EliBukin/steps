@@ -174,6 +174,8 @@
     <string name="trip_detail_map_show_route_action">הצג את כל המסלול</string>
     <string name="trip_map_scale_meters_format">%1$s מ׳</string>
     <string name="trip_map_scale_kilometers_format">%1$s ק״מ</string>
+    <string name="trip_map_speed_format">%1$s קמ״ש</string>
+    <string name="cd_trip_speed_legend">צבע המסלול לפי מהירות: אדום הוא %1$s ומטה, ירוק הוא %2$s ומעלה. קווים אפורים מקווקווים הם קטעים שלא נרשמו בהם נקודות.</string>
 
     <string name="stats_subtitle">לכל הזמנים</string>
     <string name="stats_lifetime_steps_label">סך כל הצעדים אי פעם</string>
