@@ -32,11 +32,19 @@ import androidx.compose.ui.unit.dp
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.trip.RoutePoint
+import com.example.stepsplit.domain.trip.RouteSpeedColoring
+import java.util.Locale
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.expressions.dsl.const
+import org.maplibre.compose.expressions.dsl.convertToColor
+import org.maplibre.compose.expressions.dsl.feature
+import org.maplibre.compose.expressions.value.LineCap
+import org.maplibre.compose.expressions.value.LineJoin
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.map.GestureOptions
@@ -46,6 +54,8 @@ import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
+import org.maplibre.spatialk.geojson.Feature
+import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.LineString
 import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
@@ -66,13 +76,30 @@ private const val DARK_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
 private val StartMarkerColor = Color(0xFF2E7D32)
 
 private const val ROUTE_LAYER_ID = "trip-route-line"
+private const val ROUTE_CASING_LAYER_ID = "trip-route-casing"
+private const val GAP_LAYER_ID = "trip-route-gaps"
+
+/** The feature property holding each speed-colored run's color, as "#RRGGBB". */
+private const val COLOR_PROPERTY = "color"
+
+/**
+ * A thin outline under the colored route, so every color - the bright yellow middle included - stays
+ * readable: dark on the light map style, light on the dark one.
+ */
+private val LightStyleCasingColor = Color(0x99212121)
+private val DarkStyleCasingColor = Color(0xB3FFFFFF)
+
+/** A gap (see [RouteSpeedColoring.isGap]): gray, dashed, no outline - clearly not a recorded stretch. */
+private val LightStyleGapColor = Color(0xFF757575)
+private val DarkStyleGapColor = Color(0xFFBDBDBD)
 private const val START_LAYER_ID = "trip-route-start"
 private const val FINISH_LAYER_ID = "trip-route-finish"
 
 /**
  * The completed-trip route on a real geographic basemap, in a rounded Material 3 card that fills
  * whatever size [modifier] gives it: fits the camera to the full route with padding, draws the
- * route as a polyline, and marks the start and finish distinctly. A round "Show whole route" button
+ * route as a polyline colored by speed ([speedColoring], with a small legend on the map; gaps gray
+ * and dashed), and marks the start and finish distinctly. A round "Show whole route" button
  * on the map re-frames the route, north up, after the user pans, zooms or rotates away. Must not be placed inside a vertically scrollable container - see `TripDetailScreen` for why that breaks the map's gestures. Reads only the already-recorded [points] (must be non-empty - the caller
  * shows its own empty state instead, as before) - never requests a new location fix, never shows
  * the user's live position, and never associates the route with step data.
@@ -88,7 +115,11 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
  * stale failure from a different trip or a theme switch never blocks an otherwise-healthy load.
  */
 @Composable
-fun TripRouteMapCard(points: List<TripPoint>, modifier: Modifier = Modifier) {
+fun TripRouteMapCard(
+    points: List<TripPoint>,
+    speedColoring: RouteSpeedColoring.SpeedColoredRoute?,
+    modifier: Modifier = Modifier,
+) {
     require(points.isNotEmpty()) { "TripRouteMapCard requires at least one point; callers show their own empty state." }
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         var mapLoadFailed by remember { mutableStateOf(false) }
@@ -99,13 +130,18 @@ fun TripRouteMapCard(points: List<TripPoint>, modifier: Modifier = Modifier) {
         if (mapLoadFailed) {
             OfflineFallback(points = points, onRetry = { mapLoadFailed = false })
         } else {
-            LiveMap(points = points, isDark = isDark, onLoadFailed = { mapLoadFailed = true })
+            LiveMap(points = points, speedColoring = speedColoring, isDark = isDark, onLoadFailed = { mapLoadFailed = true })
         }
     }
 }
 
 @Composable
-private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -> Unit) {
+private fun LiveMap(
+    points: List<TripPoint>,
+    speedColoring: RouteSpeedColoring.SpeedColoredRoute?,
+    isDark: Boolean,
+    onLoadFailed: () -> Unit,
+) {
     val styleUrl = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
     val first = points.first()
     val cameraState = rememberCameraState(
@@ -133,7 +169,25 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -
             ),
             onMapLoadFailed = { onLoadFailed() },
         ) {
-            if (points.size >= 2) {
+            if (speedColoring != null && speedColoring.runs.isNotEmpty()) {
+                val runsSource = rememberGeoJsonSource(data = remember(speedColoring) { speedColoring.runsGeoJson() })
+                LineLayer(
+                    id = ROUTE_CASING_LAYER_ID,
+                    source = runsSource,
+                    color = const(if (isDark) DarkStyleCasingColor else LightStyleCasingColor),
+                    width = const(6.dp),
+                    cap = const(LineCap.Round),
+                    join = const(LineJoin.Round),
+                )
+                LineLayer(
+                    id = ROUTE_LAYER_ID,
+                    source = runsSource,
+                    color = feature.get(COLOR_PROPERTY).convertToColor(),
+                    width = const(4.dp),
+                    cap = const(LineCap.Round),
+                    join = const(LineJoin.Round),
+                )
+            } else if (points.size >= 2 && speedColoring == null) {
                 val routeSource = rememberGeoJsonSource(
                     data = GeoJsonData.Features(LineString(points.map { Position(longitude = it.longitude, latitude = it.latitude) })),
                 )
@@ -142,6 +196,16 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -
                     source = routeSource,
                     color = const(MaterialTheme.colorScheme.primary),
                     width = const(4.dp),
+                )
+            }
+            if (speedColoring != null && speedColoring.gaps.isNotEmpty()) {
+                val gapsSource = rememberGeoJsonSource(data = remember(speedColoring) { speedColoring.gapsGeoJson() })
+                LineLayer(
+                    id = GAP_LAYER_ID,
+                    source = gapsSource,
+                    color = const(if (isDark) DarkStyleGapColor else LightStyleGapColor),
+                    width = const(3.dp),
+                    dasharray = const(listOf<Number>(2, 2)),
                 )
             }
 
@@ -165,6 +229,11 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
         )
 
+        // Under the scale bar: both describe how to read the map.
+        speedColoring?.scale?.let { scale ->
+            SpeedLegend(scale = scale, modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 36.dp))
+        }
+
         // Bottom end, just above MapLibre's attribution button, which sits in that corner (both
         // mirror in right-to-left languages); the compass has the top end and the scale bar the top start.
         SmallFloatingActionButton(
@@ -180,6 +249,31 @@ private fun LiveMap(points: List<TripPoint>, isDark: Boolean, onLoadFailed: () -
         }
     }
 }
+
+private fun RouteSpeedColoring.SpeedColoredRoute.runsGeoJson() = GeoJsonData.Features(
+    FeatureCollection(
+        runs.map { run ->
+            Feature(
+                LineString(run.points.map { Position(longitude = it.longitude, latitude = it.latitude) }),
+                buildJsonObject { put(COLOR_PROPERTY, String.format(Locale.ROOT, "#%06X", run.color and 0xFFFFFF)) },
+            )
+        },
+    ),
+)
+
+private fun RouteSpeedColoring.SpeedColoredRoute.gapsGeoJson() = GeoJsonData.Features(
+    FeatureCollection(
+        gaps.map { gap ->
+            Feature(
+                LineString(
+                    Position(longitude = gap.from.longitude, latitude = gap.from.latitude),
+                    Position(longitude = gap.to.longitude, latitude = gap.to.latitude),
+                ),
+                null,
+            )
+        },
+    ),
+)
 
 /**
  * Frames the whole route, north up - on first display, and again whenever the user taps the "Show

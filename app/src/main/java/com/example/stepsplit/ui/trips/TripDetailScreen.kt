@@ -146,7 +146,11 @@ fun TripDetailScreen(
             Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.weight(1f))
         } else {
-            TripRouteMapCard(points = uiState.points, modifier = Modifier.fillMaxWidth().weight(1f))
+            TripRouteMapCard(
+                points = uiState.points,
+                speedColoring = uiState.speedColoring,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
         }
 
         Button(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {

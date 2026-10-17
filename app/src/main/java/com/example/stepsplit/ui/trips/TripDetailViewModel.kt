@@ -7,6 +7,7 @@ import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +20,8 @@ data class TripDetailUiState(
     val isLoading: Boolean = true,
     val trip: TripSummary? = null,
     val points: List<TripPoint> = emptyList(),
+    /** [points] split into speed-colored runs and gaps for the map - see [RouteSpeedColoring]. */
+    val speedColoring: RouteSpeedColoring.SpeedColoredRoute? = null,
     val deleted: Boolean = false,
     /** Whether deleting this trip keeps its time and distance in Stats - the delete dialog says which. */
     val keepDeletedTripsInStats: Boolean = false,
@@ -58,6 +61,7 @@ class TripDetailViewModel(
             isLoading = false,
             trip = trip?.copy(distanceMeters = smoothed.distanceMeters),
             points = smoothed.points,
+            speedColoring = RouteSpeedColoring.colorize(smoothed.points),
             deleted = trip == null,
             keepDeletedTripsInStats = keepInStats,
         )
