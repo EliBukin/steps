@@ -60,6 +60,9 @@
           from Health Connect's own "App permissions" -> app -> "view usage" flow - see
           PermissionsRationaleActivity's own doc comment. Without both declarations below, Health
           Connect silently refuses to honor a granted READ_STEPS permission at read time.
+          The alias (Android 14+) must require android.permission.START_VIEW_PERMISSION_USAGE,
+          which Health Connect holds: with any other permission, tapping "privacy policy" in its
+          permission screen crashes Health Connect with a SecurityException.
         -->
         <activity
             android:name=".ui.PermissionsRationaleActivity"
@@ -72,7 +75,7 @@
             android:name="ViewPermissionUsageActivity"
             android:exported="true"
             android:targetActivity=".ui.PermissionsRationaleActivity"
-            android:permission="android.permission.health.START_VIEW_PERMISSION_USAGE">
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
