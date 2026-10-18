@@ -1,6 +1,8 @@
 package com.example.stepsplit.domain.trip
 
 import com.example.stepsplit.domain.model.TripPoint
+import kotlin.math.cos
+import kotlin.math.hypot
 
 /**
  * The result of [RouteSanitizer.sanitize]: [points] is the cleaned, chronological sequence with
@@ -81,7 +83,28 @@ data class SanitizedRoute(
  *    judged by *implied speed* (distance / elapsed time), a long sampling gap does not by itself
  *    make the next genuine point look implausible - it simply means more elapsed time is available
  *    to explain the same distance.
- * 5. [SanitizedRoute.distanceMeters] is the haversine sum of consecutive points in the *resulting*
+ * 5. **Out-and-back excursions** ([removeExcursions]). One look-ahead point is not enough for a
+ *    GPS excursion of two or three fixes: on a walk, a fix 76 m back, one 26 m further, then one
+ *    173 m forward onto the path, 15-34 s apart - each leg under the 6 m/s walking cap and each
+ *    triple within its own accuracy budget, so every check above keeps them, while the phone's own
+ *    speed says 4-5 km/h throughout. They show as a spur on the map, an 18 km/h top speed and extra
+ *    distance. A run of 1 to [EXCURSION_MAX_POINTS] kept points between two kept neighbours is
+ *    removed when all of these hold ([isExcursion]):
+ *    - **every point involved reports a speed, none above** the vehicle threshold
+ *      ([RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS]). Without the phone's speed
+ *      nothing shows the walker didn't go there, and at driving speed a hairpin bend has this shape;
+ *      either way the run is kept;
+ *    - **the neighbours agree**: going straight from one to the other is ordinary movement for that
+ *      speed (the same support as [shouldDropPending]: at most 1.5x the reported speed plus 1 m/s);
+ *    - **getting there and back is too fast**: the legs into and out of the run both imply more than
+ *      [EXCURSION_LEG_SPEED_MULTIPLIER]x the reported speed plus [EXCURSION_LEG_SPEED_MARGIN_MPS] -
+ *      13 km/h at a reported 4.8 km/h;
+ *    - **the run really leaves the path**: a point of it lies farther from the line between the
+ *      neighbours than its own accuracy plus the neighbours' - ordinary scatter stays within that.
+ *    A real turnaround or detour at walking pace keeps its legs at the phone's speed and is kept; a
+ *    stop is handled before this, and its neighbours never move fast enough. The reference speed is
+ *    the highest any point involved reports, so a doubt keeps the run.
+ * 6. [SanitizedRoute.distanceMeters] is the haversine sum of consecutive points in the *resulting*
  *    cleaned sequence only - a removed point never contributes a segment on either side of it.
  */
 object RouteSanitizer {
@@ -118,6 +141,21 @@ object RouteSanitizer {
      */
     private const val CONTEXTUAL_SOFT_SPEED_MULTIPLIER = 1.5
     private const val CONTEXTUAL_SOFT_SPEED_MARGIN_MPS = 1.0
+
+    /** The longest run of fixes [removeExcursions] treats as one excursion. */
+    private const val EXCURSION_MAX_POINTS = 3
+
+    /**
+     * How much faster than the phone's reported speed the legs into and out of an excursion must
+     * be: 2x plus 1 m/s, so 13 km/h at a reported 4.8 km/h, where the excursions seen on a real walk
+     * had 15-18 km/h legs. Looser than [RouteMovementPlausibility]'s 2x plus 3 m/s pair ceiling, which
+     * those legs pass, and safe only because [isExcursion] also needs the run to leave the path by
+     * more than the fixes' accuracy, with neighbours that agree with each other.
+     */
+    private const val EXCURSION_LEG_SPEED_MULTIPLIER = 2.0
+    private const val EXCURSION_LEG_SPEED_MARGIN_MPS = 1.0
+
+    private const val EARTH_RADIUS_METERS = 6_371_000.0
 
     fun sanitize(points: List<TripPoint>): SanitizedRoute {
         if (points.isEmpty()) return SanitizedRoute(emptyList(), 0.0)
@@ -175,7 +213,75 @@ object RouteSanitizer {
         }
         pending?.let { keep(it) }
 
-        return SanitizedRoute(kept, distance, rejections)
+        val cleaned = removeExcursions(kept, rejections)
+        if (cleaned.size == kept.size) return SanitizedRoute(kept, distance, rejections)
+        val cleanedDistance = cleaned.zipWithNext { from, to -> RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) }.sum()
+        return SanitizedRoute(cleaned, cleanedDistance, rejections)
+    }
+
+    /**
+     * Step 5 of the class doc comment: walks [points] (already cleaned by the steps before) and drops
+     * every run of 1 to [EXCURSION_MAX_POINTS] points that [isExcursion] calls an out-and-back
+     * excursion between the last point kept and the point after the run. The longest such run wins:
+     * a shorter one can end on a fix that is still out on the excursion, which then looks like a
+     * neighbour. A longer one never swallows a good fix, since the leg out of the run must be too
+     * fast too, and a walking leg isn't. The first and last points are never in a run: there is
+     * nothing on their other side.
+     */
+    private fun removeExcursions(points: List<TripPoint>, rejections: MutableList<Rejection>): List<TripPoint> {
+        if (points.size < 3) return points
+        val result = mutableListOf(points.first())
+        var i = 1
+        while (i < points.size) {
+            val before = result.last()
+            val runLength = (EXCURSION_MAX_POINTS downTo 1).firstOrNull { length ->
+                i + length < points.size && isExcursion(before, points.subList(i, i + length), points[i + length])
+            }
+            if (runLength == null) {
+                result += points[i]
+                i++
+            } else {
+                for (j in i until i + runLength) rejections += Rejection(points[j], RouteSampleRejectionReason.OUT_AND_BACK_EXCURSION)
+                i += runLength
+            }
+        }
+        return result
+    }
+
+    /** Whether [run], between [before] and [after], is an out-and-back excursion - see step 5 of the class doc comment. */
+    private fun isExcursion(before: TripPoint, run: List<TripPoint>, after: TripPoint): Boolean {
+        var referenceSpeed = 0.0
+        for (point in listOf(before) + run + after) {
+            val reported = point.speedMetersPerSecond ?: return false
+            referenceSpeed = maxOf(referenceSpeed, reported.toDouble())
+        }
+        if (referenceSpeed > RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS) return false
+
+        if (impliedSpeed(before, after) > referenceSpeed * CONTEXTUAL_SOFT_SPEED_MULTIPLIER + CONTEXTUAL_SOFT_SPEED_MARGIN_MPS) return false
+
+        val legCeiling = referenceSpeed * EXCURSION_LEG_SPEED_MULTIPLIER + EXCURSION_LEG_SPEED_MARGIN_MPS
+        if (impliedSpeed(before, run.first()) <= legCeiling || impliedSpeed(run.last(), after) <= legCeiling) return false
+
+        val neighbourAccuracy = maxOf(before.accuracyMeters, after.accuracyMeters)
+        return run.any { distanceFromSegmentMeters(it, before, after) > it.accuracyMeters + neighbourAccuracy }
+    }
+
+    private fun impliedSpeed(from: TripPoint, to: TripPoint): Double {
+        val elapsedSeconds = (to.capturedAtEpochSecond - from.capturedAtEpochSecond).coerceAtLeast(1L)
+        return RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) / elapsedSeconds
+    }
+
+    /** How far [point] is from the straight line between [start] and [end], in a local metre plane around [start]. */
+    private fun distanceFromSegmentMeters(point: TripPoint, start: TripPoint, end: TripPoint): Double {
+        val metersPerDegreeLongitude = Math.toRadians(1.0) * EARTH_RADIUS_METERS * cos(Math.toRadians(start.latitude))
+        val metersPerDegreeLatitude = Math.toRadians(1.0) * EARTH_RADIUS_METERS
+        val endEast = (end.longitude - start.longitude) * metersPerDegreeLongitude
+        val endNorth = (end.latitude - start.latitude) * metersPerDegreeLatitude
+        val pointEast = (point.longitude - start.longitude) * metersPerDegreeLongitude
+        val pointNorth = (point.latitude - start.latitude) * metersPerDegreeLatitude
+        val lengthSquared = endEast * endEast + endNorth * endNorth
+        val along = if (lengthSquared == 0.0) 0.0 else ((pointEast * endEast + pointNorth * endNorth) / lengthSquared).coerceIn(0.0, 1.0)
+        return hypot(pointEast - along * endEast, pointNorth - along * endNorth)
     }
 
     /**

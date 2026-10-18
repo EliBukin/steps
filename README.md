@@ -104,7 +104,12 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   app trusts it to tell a real drive from a jump.
 - **The route you see.** Before the route is drawn, measured or exported, stray points are removed
   and the line is smoothed. The map, the distance and the GPX file all use this same route, so
-  they always agree.
+  they always agree. On foot this includes short GPS excursions: one to three points that jump
+  away from your path and back faster than the phone says you were moving (say, about 80 m away
+  and back within a minute while the phone reports 5 km/h) are left out, so they add no spur, no
+  distance and no false top speed. A real detour or turnaround at your own pace stays, and so does
+  everything recorded without the phone's speed or at driving speed. Nothing stored changes, so
+  trips recorded before this are cleaned up too.
 - **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
   sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app. A
   named trip's name goes into the file too (as the GPX file's and track's name), so other apps
@@ -231,8 +236,9 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
   reports its speed. GPS points normally include it; if the phone stops reporting it, points are
   skipped until you slow down, and the route shows a straight jump.
 - **GPS jumps are harder to catch while driving.** The faster the phone says you're going, the
-  bigger the gap between two points the app allows. While driving, a stray point a few hundred
-  meters to the side of the road can stay in the route.
+  bigger the gap between two points the app allows, and the out-and-back cleanup above is for
+  walking only (at driving speed a hairpin bend has the same shape). While driving, a stray point
+  a few hundred meters to the side of the road can stay in the route.
 - **"Searching" while standing still.** The GPS status can show *Searching* after 30 seconds
   without moving, because no new points are kept then.
 - **Heights are only as good as GPS.** Even after smoothing, the climb and descent are estimates,

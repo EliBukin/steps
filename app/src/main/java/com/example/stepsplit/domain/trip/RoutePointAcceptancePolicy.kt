@@ -19,6 +19,9 @@ enum class RouteSampleRejectionReason {
     STATIONARY_WOBBLE,
     IMPLAUSIBLE_JUMP,
     SPEED_CONTRADICTION,
+
+    /** Read-time only: one of up to three fixes that jump away from the path and back, faster than the phone says it moved - see [RouteSanitizer]. */
+    OUT_AND_BACK_EXCURSION,
 }
 
 sealed interface RouteSampleDecision {
