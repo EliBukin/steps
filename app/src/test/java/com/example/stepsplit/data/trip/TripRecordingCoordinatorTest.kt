@@ -146,11 +146,16 @@ class TripRecordingCoordinatorTest {
 
         coordinator.start(tripId)
         awaitSubscriptionCount(1)
+        val firstSubscription = locationClient.latestSubscriptionId
 
         coordinator.stop()
         coordinator.start(tripId)
 
-        awaitSubscriptionCount(1)
+        // The new collection, not the old one still winding down: that one can be the only one
+        // active for a moment, before the count drops to zero and the new one arrives.
+        withTimeout(2_000) {
+            while (locationClient.activeSubscriptionIds.let { it.size != 1 || it.single() <= firstSubscription }) yield()
+        }
         // Give the old subscription's own asynchronous teardown a further moment to also settle, then
         // confirm the count is still exactly one - not two (a lingering duplicate) and not zero (both
         // torn down).

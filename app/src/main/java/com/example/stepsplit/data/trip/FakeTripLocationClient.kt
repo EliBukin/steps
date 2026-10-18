@@ -1,6 +1,8 @@
 package com.example.stepsplit.data.trip
 
 import com.example.stepsplit.domain.trip.RawLocationSample
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.awaitClose
@@ -13,6 +15,13 @@ import kotlinx.coroutines.flow.callbackFlow
  * missed while nothing was collecting is simply gone. [activeSubscriptionCount] proves collection
  * only happens while something is actually gathering updates, used to assert no location request
  * occurs while idle.
+ *
+ * Every collection gets an id, counting up from 1 ([latestSubscriptionId], [activeSubscriptionIds]),
+ * so a test can tell the collection a restart started from the one it replaced. The coordinator
+ * subscribes and unsubscribes on its own background scope, so right after a restart the old
+ * collection, both, or neither may be active for a moment; a plain "one is active" check can pass on
+ * the old collection just before it goes. Collections come and go on those background threads while
+ * a test reads them from its own, so they are kept in a thread-safe list.
  *
  * Also simulates the distinct ways production behavior can diverge from "recording proceeds
  * normally" (see [FusedTripLocationClient]'s doc comment for why these are treated differently, not
@@ -32,9 +41,18 @@ class FakeTripLocationClient(
     private val registrationFailure: Throwable? = null,
     private val neverCompletingFlush: Boolean = false,
 ) : TripLocationClient {
-    private val channels = mutableListOf<SendChannel<List<RawLocationSample>>>()
+    private class Subscription(val id: Int, val channel: SendChannel<List<RawLocationSample>>)
 
-    val activeSubscriptionCount: Int get() = channels.size
+    private val subscriptions = CopyOnWriteArrayList<Subscription>()
+    private val lastSubscriptionId = AtomicInteger(0)
+
+    val activeSubscriptionCount: Int get() = subscriptions.size
+
+    /** The ids of the collections active right now. */
+    val activeSubscriptionIds: List<Int> get() = subscriptions.map { it.id }
+
+    /** The id of the newest collection started so far; 0 before the first. */
+    val latestSubscriptionId: Int get() = lastSubscriptionId.get()
 
     /** Set synchronously as the very first action of [flush], *before* [neverCompletingFlush] can suspend it - lets a test deterministically await "flush has been entered" without a sleep. */
     @Volatile var flushInvoked: Boolean = false
@@ -53,12 +71,12 @@ class FakeTripLocationClient(
     }
 
     fun emit(batch: List<RawLocationSample>) {
-        channels.toList().forEach { it.trySend(batch) }
+        subscriptions.forEach { it.channel.trySend(batch) }
     }
 
     /** Closes every currently active collector with [exception], the same way [FusedTripLocationClient] closes its flow when an actual exception terminates an already-active registration. */
     fun failActiveCollection(exception: Throwable) {
-        channels.toList().forEach { it.close(exception) }
+        subscriptions.forEach { it.channel.close(exception) }
     }
 
     override fun locationUpdates(): Flow<List<RawLocationSample>> = callbackFlow {
@@ -66,9 +84,9 @@ class FakeTripLocationClient(
             close(registrationFailure)
             return@callbackFlow
         }
-        val channel = this
-        channels.add(channel)
-        awaitClose { channels.remove(channel) }
+        val subscription = Subscription(lastSubscriptionId.incrementAndGet(), this)
+        subscriptions.add(subscription)
+        awaitClose { subscriptions.remove(subscription) }
     }
 
     /** Suspends forever when [neverCompletingFlush] is set, exercising a caller's own bounded timeout around this call; otherwise a normal no-op, like the production default. */

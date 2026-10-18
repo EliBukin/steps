@@ -181,6 +181,20 @@ class TripRecordingCommandControllerTest {
     private suspend fun awaitSubscriptionCount(expected: Int, timeoutMs: Long = 2_000) =
         awaitSubscriptionCount(locationClient, expected, timeoutMs)
 
+    /**
+     * Waits until exactly one collection is active and it started after [afterId] - the one the
+     * command under test just started, not the one it replaced. Use this, not
+     * `awaitSubscriptionCount(1)`, after a command restarts collection while an older collection may
+     * still be winding down: the coordinator subscribes and unsubscribes on its own background scope,
+     * so for a moment the old collection alone can be the "one" active, and the count then drops to
+     * zero before the new one arrives (see [FakeTripLocationClient]).
+     */
+    private suspend fun awaitOnlyNewSubscription(afterId: Int, client: FakeTripLocationClient = locationClient, timeoutMs: Long = 2_000) {
+        withTimeout(timeoutMs) {
+            while (client.activeSubscriptionIds.let { it.size != 1 || it.single() <= afterId }) yield()
+        }
+    }
+
     private suspend fun awaitTripState(tripId: Long, expected: TripState, timeoutMs: Long = 5_000) {
         withTimeout(timeoutMs) { repository.observeTrip(tripId).first { it?.state == expected } }
     }
@@ -356,9 +370,10 @@ class TripRecordingCommandControllerTest {
         // The Finish command is dispatched (its generation reserved)...
         val finishGen = controller.beginCommand()
         // ...but before its (delayed) handler body actually runs, a brand-new Start supersedes it.
+        val firstSubscription = locationClient.latestSubscriptionId
         val startGen2 = controller.beginCommand()
         controller.handleStart(startGen2, startId = 2)
-        awaitSubscriptionCount(1)
+        awaitOnlyNewSubscription(firstSubscription)
         assertEquals(tripId, repository.getActiveTripId())
 
         // The old, now-stale Finish handler finally runs.
@@ -476,9 +491,10 @@ class TripRecordingCommandControllerTest {
         controller.handleFinish(finishGen, startId = 1)
         assertEquals(TripState.FINISHED.name, repository.getTrip(trip1)!!.state)
 
+        val firstSubscription = locationClient.latestSubscriptionId
         val startGen2 = controller.beginCommand()
         controller.handleStart(startGen2, startId = 2)
-        awaitSubscriptionCount(1)
+        awaitOnlyNewSubscription(firstSubscription)
         val trip2 = repository.getActiveTripId()!!
 
         assertNotEquals(trip1, trip2)
@@ -503,6 +519,7 @@ class TripRecordingCommandControllerTest {
         awaitSubscriptionCount(1)
         val tripId = repository.getActiveTripId()!!
         repository.finishTrip(tripId, clock.instant.epochSecond)
+        val firstSubscription = locationClient.latestSubscriptionId
 
         // A failed Resume (the trip is FINISHED, not INTERRUPTED) stops the old collector via
         // stopIfCurrent, immediately followed - with no wait for that stop's own async teardown - by a
@@ -513,7 +530,7 @@ class TripRecordingCommandControllerTest {
 
         val startGen2 = controller.beginCommand()
         controller.handleStart(startGen2, startId = 3)
-        awaitSubscriptionCount(1)
+        awaitOnlyNewSubscription(firstSubscription)
 
         // Give the old (failed-Resume) subscription's own asynchronous teardown a further moment to
         // also settle, then confirm the count is still exactly one.
@@ -543,10 +560,11 @@ class TripRecordingCommandControllerTest {
 
         // A newer Start supersedes and cancels the still-suspended Finish - exactly what the service
         // does: cancel the previous command's coroutine, then dispatch the new one.
+        val firstSubscription = blockingClient.latestSubscriptionId
         val startGen2 = blockingController.beginCommand()
         finishJob.cancel()
         blockingController.handleStart(startGen2, startId = 2)
-        awaitSubscriptionCount(blockingClient, 1)
+        awaitOnlyNewSubscription(firstSubscription, blockingClient)
         finishJob.join()
 
         // The trip remains ACTIVE, exactly one current collector exists, and no stale stop ran.
@@ -671,9 +689,10 @@ class TripRecordingCommandControllerTest {
         // B starts fresh for the same trip - still ACTIVE, since A's delayed mutation has not
         // committed yet - and B's own atomic claim (claimTripForStart) genuinely completes and wins
         // ownership before A is released.
+        val subscriptionA = locationClient.latestSubscriptionId
         val startGenB = racyController.beginCommand()
         racyController.handleStart(startGenB, startId = 2)
-        awaitSubscriptionCount(1)
+        awaitOnlyNewSubscription(subscriptionA)
         assertEquals(tripId, repository.getActiveTripId())
 
         // Release A's paused failure and wait for its (now-stale) mutation attempt to fully resolve.
@@ -933,10 +952,11 @@ class TripRecordingCommandControllerTest {
         // B - a distinct, freshly (re)started controller - Resumes the same trip while that stale
         // reconciliation is still paused, and fully, successfully claims and starts collecting for it
         // before A's reconciliation is released.
+        val subscriptionA = locationClient.latestSubscriptionId
         val controllerB = buildController(repository, coordinator, locationClient)
         val resumeGen = controllerB.beginCommand()
         controllerB.handleResume(tripId, resumeGen, startId = 2)
-        awaitSubscriptionCount(1)
+        awaitOnlyNewSubscription(subscriptionA)
         assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
 
         handoff.release()
