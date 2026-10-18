@@ -8,8 +8,9 @@ import kotlin.math.roundToInt
 /**
  * The trip-detail map's speed colors: which stretches of a route are drawn in which color, and
  * which are gaps. Pure and JVM-testable, like [RouteSanitizer] and [RouteSmoother], and always fed
- * their output - the same cleaned-up, smoothed points the map draws - never the raw stored points
- * and never the phone's own reported speed.
+ * their output - the same cleaned-up, smoothed points the map draws - never the raw stored points.
+ * The colors are worked out from the points' positions and times, never from the phone's own
+ * reported speed; that is only used to tell which speeds can be trusted ([trustedSpeeds]).
  *
  * A *stretch* is the line between two consecutive points. For each one:
  *
@@ -25,7 +26,9 @@ import kotlin.math.roundToInt
  * 3. **Scale.** Per trip: the [LOW_PERCENTILE] of the trip's stretch speeds is the red end and the
  *    [HIGH_PERCENTILE] the green end (see [scaleFor]). A walk at 2-6 km/h and a jeep drive at
  *    10-60 km/h both use the full range, and one odd stretch can't squeeze everything else into a
- *    single color. Speeds outside the ends get the end color.
+ *    single color. Speeds outside the ends get the end color. Only [trusted][trustedSpeeds] speeds
+ *    set the scale, as they do the top speed ([TripMotion]), so the legend's fast end stays at or
+ *    below it; when no speed is trusted, all of them do.
  * 4. **Color.** Red, yellow, green ([colorAt]), with clearly different brightness at each so slow and
  *    fast still differ for someone who can't tell red from green.
  */
@@ -38,6 +41,14 @@ object RouteSpeedColoring {
 
     /** Speeds are averaged over this many seconds, centered on each stretch - about three points at the usual 10 s interval. */
     const val SMOOTHING_WINDOW_SECONDS = 30.0
+
+    /**
+     * How much faster than the phone's own reported speed a stretch may be before [trustedSpeeds]
+     * stops trusting the speeds around it: 2x plus 1 m/s, the same margin [RouteSanitizer] uses for
+     * an out-and-back excursion's legs.
+     */
+    const val TRUSTED_SPEED_MULTIPLIER = 2.0
+    const val TRUSTED_SPEED_MARGIN_MPS = 1.0
 
     /** The red end of the scale: this share of the trip's stretches are at or below it. */
     const val LOW_PERCENTILE = 0.05
@@ -90,14 +101,7 @@ object RouteSpeedColoring {
      */
     fun smoothedSpeeds(points: List<TripPoint>): List<Double?> {
         if (points.size < 2) return emptyList()
-        val stretches = points.zipWithNext { from, to ->
-            Stretch(
-                start = from.capturedAtEpochSecond.toDouble(),
-                end = to.capturedAtEpochSecond.toDouble(),
-                meters = distanceMeters(from, to),
-                isGap = isGap(from, to),
-            )
-        }
+        val stretches = stretchesOf(points)
         val halfWindow = SMOOTHING_WINDOW_SECONDS / 2
         return stretches.indices.map { i ->
             val stretch = stretches[i]
@@ -160,10 +164,57 @@ object RouteSpeedColoring {
         return if (f <= 0.5) blend(SLOW_COLOR, MIDDLE_COLOR, f * 2) else blend(MIDDLE_COLOR, FAST_COLOR, (f - 0.5) * 2)
     }
 
+    /**
+     * For each stretch of [smoothedSpeeds]: whether its speed can count as one the trip really went
+     * at - a top speed, or the speed legend's fast end. Not when its [SMOOTHING_WINDOW_SECONDS] window
+     * takes in a stretch the phone's own speed contradicts: one between two points that both report a
+     * speed, faster than [TRUSTED_SPEED_MULTIPLIER] times the higher of the two plus
+     * [TRUSTED_SPEED_MARGIN_MPS] - 13 km/h while the phone reports 4.8 km/h. That is a GPS position
+     * catching up after lagging behind (8 m in 14 s, then 110 m in 23 s, straight ahead), which a
+     * route's shape and length survive but its speed doesn't: the average spreads it to the
+     * stretches around it too, which is why the whole window counts. The phone measures its speed
+     * from the satellite signal itself, separately from the position, so it doesn't share the lag.
+     *
+     * Nothing else changes: the stretch keeps its color, moving time and distance. Driving reports a
+     * high speed, so a real fast stretch is never contradicted, and a point without a reported speed
+     * contradicts nothing, as before. Gaps have no speed and count as trusted.
+     */
+    fun trustedSpeeds(points: List<TripPoint>): List<Boolean> {
+        if (points.size < 2) return emptyList()
+        val stretches = stretchesOf(points)
+        val contradicted = points.zipWithNext(::contradictsReportedSpeed)
+        val halfWindow = SMOOTHING_WINDOW_SECONDS / 2
+        return stretches.indices.map { i ->
+            val stretch = stretches[i]
+            if (stretch.isGap) return@map true
+            if (contradicted[i]) return@map false
+            val middle = (stretch.start + stretch.end) / 2
+            val windowStart = middle - halfWindow
+            val windowEnd = middle + halfWindow
+            // The same stretches smoothedSpeeds averages over for this one.
+            var j = i - 1
+            while (j >= 0 && !stretches[j].isGap && stretches[j].end > windowStart) if (contradicted[j--]) return@map false
+            j = i + 1
+            while (j < stretches.size && !stretches[j].isGap && stretches[j].start < windowEnd) if (contradicted[j++]) return@map false
+            true
+        }
+    }
+
+    private fun contradictsReportedSpeed(from: TripPoint, to: TripPoint): Boolean {
+        val fromReported = from.speedMetersPerSecond ?: return false
+        val toReported = to.speedMetersPerSecond ?: return false
+        val seconds = to.capturedAtEpochSecond - from.capturedAtEpochSecond
+        if (seconds <= 0L) return false
+        val reported = max(fromReported, toReported).toDouble()
+        return distanceMeters(from, to) / seconds > reported * TRUSTED_SPEED_MULTIPLIER + TRUSTED_SPEED_MARGIN_MPS
+    }
+
     /** The whole route ready to draw: colored runs, gap lines and the trip's scale. */
     fun colorize(points: List<TripPoint>): SpeedColoredRoute {
         val speeds = smoothedSpeeds(points)
-        val scale = scaleFor(speeds.filterNotNull()) ?: return SpeedColoredRoute(
+        val trusted = trustedSpeeds(points)
+        val trustedValues = speeds.filterIndexed { i, speed -> speed != null && trusted[i] }.filterNotNull()
+        val scale = scaleFor(trustedValues.ifEmpty { speeds.filterNotNull() }) ?: return SpeedColoredRoute(
             runs = emptyList(),
             gaps = speeds.indices.map { GapLine(points[it].toRoutePoint(), points[it + 1].toRoutePoint()) },
             scale = null,
@@ -199,6 +250,15 @@ object RouteSpeedColoring {
     }
 
     private class Stretch(val start: Double, val end: Double, val meters: Double, val isGap: Boolean)
+
+    private fun stretchesOf(points: List<TripPoint>): List<Stretch> = points.zipWithNext { from, to ->
+        Stretch(
+            start = from.capturedAtEpochSecond.toDouble(),
+            end = to.capturedAtEpochSecond.toDouble(),
+            meters = distanceMeters(from, to),
+            isGap = isGap(from, to),
+        )
+    }
 
     /** The [p] percentile (0..1) of [sorted], linearly interpolated between neighbouring values. [sorted] must not be empty. */
     internal fun percentile(sorted: List<Double>, p: Double): Double {

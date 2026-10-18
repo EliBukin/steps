@@ -164,7 +164,8 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   distance over time, averaged over about 30 seconds so the color doesn't flicker. Each trip has
   its own scale. Its slowest 5% of stretches are red and its fastest 5% green, so a walk at
   2-6 km/h and a jeep drive at 10-60 km/h both use the full range. The legend shows the trip's
-  km/h at the red and green ends. Slow sits on the left in English and on the right in Hebrew.
+  km/h at the red and green ends, worked out from the same stretches the top speed may come from.
+  Slow sits on the left in English and on the right in Hebrew.
   Standing still is just slow, so it's red. A stretch where more than a minute passed *and* you
   moved more than 100 m has no points showing how you got there. That happens when recording was
   interrupted and resumed, or the GPS lost its fix. Such a stretch is drawn gray and dashed, with
@@ -180,7 +181,13 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   limit: a short GPS dropout counts, a long interruption spent mostly standing doesn't.
 - **Top speed.** The fastest of those 30-second average speeds, never a single GPS reading or the
   phone's own reported speed, so one bad point can't produce a silly number. Gaps have no speed.
-  It is never below the speed legend's fast end.
+  It is never below the speed legend's fast end. A stretch far faster than the phone's own speed
+  says (more than twice it plus 1 m/s, such as the GPS position catching up in one jump after
+  lagging behind) can't be the top speed, and neither can the stretches whose 30-second average
+  takes it in; the route, its colors and its distance stay as they are. The phone measures its
+  speed separately from the position, so it doesn't share the lag. At driving speed the phone
+  reports a high speed, so a real fast stretch always counts, and so does anything recorded
+  without the phone's speed.
 - **Heights.** GPS heights scatter 10-20 m up and down, so adding up every rise would turn a flat
   4 km walk into more than a kilometer of climb. The app first smooths the heights along the
   distance (a weighted average in which the heights within about 65 m count most on a walk, and

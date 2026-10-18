@@ -32,9 +32,11 @@ import com.example.stepsplit.domain.model.TripType
  *
  * **Top speed.** The highest smoothed stretch speed, never a single GPS reading: each speed is
  * averaged over about [RouteSpeedColoring.SMOOTHING_WINDOW_SECONDS], so one bad fix can't make a silly
- * number, and gaps have no speed. It is the same data the speed legend's scale comes from, and
- * [RouteSpeedColoring.scaleFor] never puts the legend's fast end above it. A trip with no moving
- * stretch has no top speed.
+ * number, and gaps have no speed. Only a [trusted][RouteSpeedColoring.trustedSpeeds] speed counts: not
+ * one whose average takes in a stretch far faster than the phone's own reported speed, like a GPS
+ * position catching up after lagging behind. It is the same data the speed legend's scale comes
+ * from, and [RouteSpeedColoring.scaleFor] never puts the legend's fast end above it. A trip with no
+ * trusted moving stretch has no top speed.
  */
 object TripMotion {
     /** A walk's stretch is moving above this speed. */
@@ -59,6 +61,7 @@ object TripMotion {
     fun measure(route: List<TripPoint>, type: TripType): Motion {
         val threshold = movingSpeedKmh(type) / KMH_PER_METER_PER_SECOND
         val speeds = RouteSpeedColoring.smoothedSpeeds(route)
+        val trusted = RouteSpeedColoring.trustedSpeeds(route)
         var movingSeconds = 0L
         var top: Double? = null
         speeds.forEachIndexed { i, smoothed ->
@@ -68,7 +71,7 @@ object TripMotion {
             if (seconds <= 0L) return@forEachIndexed
             val speed = smoothed ?: (RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) / seconds)
             if (speed > threshold) movingSeconds += seconds
-            if (smoothed != null && smoothed > threshold && smoothed > (top ?: 0.0)) top = smoothed
+            if (smoothed != null && trusted[i] && smoothed > threshold && smoothed > (top ?: 0.0)) top = smoothed
         }
         return Motion(movingSeconds, top)
     }

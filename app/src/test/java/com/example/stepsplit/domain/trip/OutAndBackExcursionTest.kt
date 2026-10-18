@@ -94,6 +94,26 @@ class OutAndBackExcursionTest {
         assertEquals(excursion.map { it.t }.toSet(), result.rejections.map { it.point.capturedAtEpochSecond }.toSet())
     }
 
+    /**
+     * One fix 76 m off, sideways and a little back, 18 s after the last good one, then 120 m back
+     * onto the path 27 s later (15-16 km/h legs), while the phone reports 3.2-5.0 km/h and the two
+     * good fixes are 73 m apart in 45 s. The one-point look-ahead (step 4) already removes it.
+     */
+    @Test
+    fun `a single fix far off the path and back is removed`() {
+        val walk = (0 until 12).map { Fix(eastMeters = 15.0 + 9.0 * (12 - it), northMeters = 0.0, t = -60L + 5 * it, accuracy = 16f, speed = 1.36f) } +
+            listOf(Fix(15.0, 0.0, 0L, 15f, 1.36f), Fix(0.0, 0.0, 11L, 18f, 1.39f)) +
+            listOf(Fix(-73.0, 0.0, 56L, 14f, 1.31f)) +
+            (1..15).map { Fix(-73.0 - 9.0 * it, 0.0, 56L + 5 * it, 16f, 1.33f) }
+        val excursion = Fix(22.6, 72.6, 29L, 9f, 0.89f)
+        val fixes = (walk + excursion).sortedBy { it.t }
+
+        val result = RouteSanitizer.sanitize(fixes.map(::TripPointOf))
+
+        assertEquals(listOf(29L), result.rejections.map { it.point.capturedAtEpochSecond })
+        assertTrue("top speed ${topSpeedKmh(displayed(fixes))} km/h", topSpeedKmh(displayed(fixes)) <= 8.0)
+    }
+
     // ---- Kept: what looks like an excursion but isn't ----
 
     /** Forgot something: 30 s back east at walking pace, then on west. The phone's speed fits every leg. */
