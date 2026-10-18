@@ -27,7 +27,7 @@
 <li><strong>App:</strong> Steps GPS Route</li>
 <li><strong>Developer:</strong> bukin</li>
 <li><strong>Contact:</strong> dev.mechanics998877@gmail.com</li>
-<li><strong>Effective date:</strong> 2026-10-16</li>
+<li><strong>Effective date:</strong> 2026-10-18</li>
 </ul>
 <p>This policy explains what the app does with your information. Steps GPS Route shows how much you walk each day, and records GPS routes of trips you start yourself, such as hikes, nature walks or off-road drives, so you can view them on a map and export them as GPX files.</p>
 <p>Steps GPS Route is not a health or medical app. It gives no health advice, and it is not meant to diagnose, treat or track any health condition.</p>
@@ -54,20 +54,26 @@
 <h2>Location and GPS trips</h2>
 <p>The app asks for precise location when you start (or resume) a trip. It uses your location <strong>only while a trip you started is recording</strong>. The app does not ask for background location permission and never tracks your location at other times.</p>
 <p>While a trip records, Android shows an ongoing notification, and recording continues with the screen off or while you use other apps, until you finish the trip or Android stops the app. On Android 13 and later the app also asks for permission to show notifications, so that this notification can appear; recording works either way.</p>
+<p>The notification has <strong>Mark spot</strong> and <strong>Finish</strong> buttons, and it also shows on your lock screen, so you can use them without unlocking your phone. It says only that a trip is recording and, for a few seconds after you mark a spot, whether the spot was saved. It never shows where you are. Anyone holding your phone while a trip records can see that it's recording, and can mark a spot or finish the trip from the lock screen.</p>
 <p>For each trip, the app stores on your device:</p>
 <ul>
 <li>when the trip started and finished, and its time zone;</li>
 <li>its route: a series of GPS points, each with its time, latitude, longitude, accuracy, and altitude and speed when the phone reports them;</li>
-<li>its distance.</li>
+<li>its distance;</li>
+<li>its name, if you give it one;</li>
+<li>whether it's a walk or a drive, if you change the type the app suggests;</li>
+<li>the spots you mark while it records: for each spot, its number, time, location and height, and a name if you give it one.</li>
 </ul>
-<p>Trips are used to show the route on a map, the trip's time and distance, your trip stats, and to create GPX files when you ask for one.</p>
+<p>Trips are used to show the route on a map, colored by speed; to show the trip's time, distance, moving time, top speed, climb and heights; to show your trip stats, with walks and drives counted separately; and to create GPX files when you ask for one.</p>
+<p>All of this is worked out on your device. The app suggests whether a trip was a walk or a drive from its speed. On Android 14 and later, it converts the heights the phone reports into heights above sea level, using a model built into Android. Nothing is sent anywhere for this.</p>
 
 <h2>Maps and internet use</h2>
 <p>When you open a trip's screen, the app loads the map from <a href="https://openfreemap.org">OpenFreeMap</a>, a free map service. These requests contain the map tiles for the area being shown and the usual technical details of any internet request, such as your IP address. They do not contain your GPS points, but like any online map they show OpenFreeMap which area you're viewing. OpenFreeMap handles these requests under its own terms.</p>
 <p>Map tiles you've viewed are cached in the app's private storage, so maps load faster next time. This is the app's only internet use.</p>
 
 <h2>Sharing and saving GPX files</h2>
-<p>A trip's route leaves your device only when you tap <strong>Share GPX</strong>:</p>
+<p>A trip leaves your device only when you tap <strong>Share GPX</strong>. The GPX file contains the trip's route, with the time and height of each point, the trip's name if it has one, and the spots you marked, with their names.</p>
+<p>Then you choose where it goes:</p>
 <ul>
 <li><strong>Save file</strong> saves the GPX file to a folder you pick. That folder may belong to another app or service, such as cloud storage, which handles the file under its own terms.</li>
 <li><strong>Any other choice</strong>, such as WhatsApp, Gmail or Drive, sends the file to that app. The app you choose, and the people you send it to, handle it under their own terms.</li>
@@ -78,13 +84,13 @@
 <ul>
 <li>Your settings: step goal, the limits for telling workout steps from incidental steps, and whether deleted trips stay in Stats.</li>
 <li>When steps were last updated, and the technical status of recent updates, such as whether they worked.</li>
-<li>If you turn on <strong>Keep deleted trips in Stats</strong>: for each finished trip you delete, its date, duration and distance, so your trip totals keep counting it. No route or location is kept.</li>
+<li>If you turn on <strong>Keep deleted trips in Stats</strong>: for each finished trip you delete, its date, duration, distance and whether it was a walk or a drive, so your trip totals keep counting it. No name, route, spots or location is kept.</li>
 </ul>
 <p>All of this is kept in the app's private storage, which other apps can't read. It is not encrypted beyond Android's own protection of app storage.</p>
 
 <h2>How long data is kept, and deleting it</h2>
 <ul>
-<li><strong>Trips</strong> are kept until you delete them in the app. Deleting a trip removes its route and GPS points.</li>
+<li><strong>Trips and their spots</strong> are kept until you delete them in the app. Deleting a trip removes its name, route, GPS points and spots. You can also delete a single spot.</li>
 <li><strong>Step counts and settings</strong> are kept until you uninstall the app.</li>
 <li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, or GPX files you saved or shared.</li>
 </ul>
