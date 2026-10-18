@@ -1,14 +1,24 @@
 # Steps GPS Route
 
-An Android app with two jobs: it shows **how much you walk each day**, and it **records GPS routes**
-of your trips so you can see them on a map and export them as GPX files.
+**An Android app that shows how much you walk each day, and records the GPS route of your hikes,
+nature walks and 4x4 drives so you can see them on a map and share them as GPX files.**
 
-- **Steps.** Your daily and weekly step counts, a daily goal, the last 7 days, and lifetime stats.
-- **GPS trips.** Start a trip, and the app records your route until you finish it. Afterwards you
-  can view the route on a map, and save or share it as a GPX file to use in other apps.
+<p align="center">
+  <img src="docs/screenshots/today.webp" width="220" alt="Today: 8,275 of 10,000 steps in a ring, split into workout and incidental steps">
+  <img src="docs/screenshots/trips.webp" width="220" alt="Trips: Start trip, and a list of earlier trips with route pictures">
+  <img src="docs/screenshots/trip-detail.webp" width="220" alt="A hike on a map, colored by speed, with four numbered spots">
+</p>
 
-There's no account, no cloud backend, no ads and no analytics. Everything is stored on the phone.
-The app is in English on an English phone, and in Hebrew (right to left) otherwise.
+- **What it does.** It reads your daily steps from Android's Health Connect and shows them against
+  a goal. When you start a trip, it records your route until you finish, along with spots you mark
+  on the way. Each trip shows on a map colored by speed, with its distance, moving time, top speed
+  and heights, and you can share it as a GPX file to open in other map apps.
+- **Who it's for.** Anyone who wants a simple daily step count and a plain GPS tracker for
+  outings on foot or by car, whose routes they can take to other apps.
+- **What it isn't.** It isn't a health, fitness-coaching or medical app. It has no account, no
+  cloud, no ads and no analytics: everything stays on the phone.
+- **What it needs.** Android 8.0 or newer for trips; Android 14 or newer with Health Connect for
+  steps. It's in English on a phone set to English, and in Hebrew (right to left) otherwise.
 
 **Privacy policy:** <https://elibukin.github.io/steps/privacy-policy.html>
 
@@ -42,14 +52,213 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 
 ## Screens
 
-| Screen | What it shows |
+The screenshots come from an Android emulator with made-up demo data.
+
+<table>
+<tr>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/today.webp" width="240" alt="Today screen"><br><b>Today</b><br>Today's steps against your daily goal, workout and incidental steps, and this week's total.</td>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/history.webp" width="240" alt="History screen"><br><b>History</b><br>The last 7 days as bars, with the goal line, then a card for each day.</td>
+<td align="center" valign="top" width="33%"><img src="docs/screenshots/stats-steps.webp" width="240" alt="Stats screen, Steps section"><br><b>Stats: Steps</b><br>Lifetime numbers, from total steps to burgers burned.</td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/stats-trips.webp" width="240" alt="Stats screen, GPS trips section"><br><b>Stats: GPS trips</b><br>Walks and drives counted separately.</td>
+<td align="center" valign="top"><img src="docs/screenshots/trips.webp" width="240" alt="Trips screen, not recording"><br><b>Trips</b><br>Start a trip; earlier trips with a picture of their route.</td>
+<td align="center" valign="top"><img src="docs/screenshots/trips-recording.webp" width="240" alt="Trips screen while recording"><br><b>Recording</b><br>Clock, distance, GPS signal, <i>Mark spot</i> and <i>Finish trip</i>.</td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/trip-detail.webp" width="240" alt="Trip screen with the route on a map"><br><b>Trip</b><br>The route colored by speed, the legend, and numbered spots.</td>
+<td align="center" valign="top"><img src="docs/screenshots/trip-detail-panel.webp" width="240" alt="Trip screen with the details panel open"><br><b>Trip details</b><br>Distance, duration, moving time, climb, top speed and a height chart.</td>
+<td align="center" valign="top"><img src="docs/screenshots/spot-dialog.webp" width="240" alt="A marked spot's dialog"><br><b>A spot</b><br>Its name, time and height, with <i>Rename</i> and <i>Delete</i>.</td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/edit-trip.webp" width="240" alt="Edit trip dialog"><br><b>Edit trip</b><br>A name, and Walk or Drive with the app's suggestion marked.</td>
+<td align="center" valign="top"><img src="docs/screenshots/share-sheet.webp" width="240" alt="Android share sheet with Save file first"><br><b>Share</b><br>Android's share sheet, with the app's own <i>Save file</i> first.</td>
+<td align="center" valign="top"><img src="docs/screenshots/settings.webp" width="240" alt="Settings screen"><br><b>Settings</b><br>Step goal, workout limits, and <i>Keep deleted trips in Stats</i>.</td>
+</tr>
+</table>
+
+**In Hebrew and dark mode.** The app follows the phone's dark theme, and in Hebrew the whole
+layout runs right to left, including the speed legend and the height chart.
+
+<p align="center">
+  <img src="docs/screenshots/he-dark-today.webp" width="220" alt="Today screen in Hebrew, dark mode">
+  <img src="docs/screenshots/he-dark-trips.webp" width="220" alt="Trips screen in Hebrew, dark mode">
+  <img src="docs/screenshots/he-dark-trip-detail.webp" width="220" alt="A drive down to the Dead Sea in Hebrew, dark mode, with the details panel open">
+</p>
+
+## How to use
+
+### First launch: allow Health Connect
+
+1. Open the app. It starts on **Today**.
+2. Tap **Grant permission** in the banner at the top. Health Connect opens (the first time, it may
+   show an introduction: tap **Get started**).
+3. Switch on **Steps** and tap **Allow**. The app asks for nothing else from Health Connect.
+
+<p align="center">
+  <img src="docs/screenshots/health-connect-permission.webp" width="220" alt="Health Connect asking to allow Steps GPS Route to read steps">
+  <img src="docs/screenshots/health-connect-rationale.webp" width="320" alt="How Steps GPS Route uses Health Connect">
+</p>
+
+On the left, Health Connect's permission screen. On the right, the app's explanation of how it
+uses Health Connect, which is there for Health Connect's privacy-policy link.
+
+Your steps appear within a few seconds. The app copies them in whenever you open it, so **open it
+at least once every 30 days**: it reaches back only that far.
+
+**If steps stay at 0** (or Today says *Waiting for first step data*), Health Connect has no steps
+for the app to read. The app only reads steps; something else has to write them:
+
+- On many Android 14+ phones, Android counts steps into Health Connect by itself.
+- Otherwise, an app that counts steps must save them to Health Connect, for example your phone
+  maker's health app or your watch's app. Turn on its Health Connect sync, or allow it to write
+  **Steps** in Health Connect's settings.
+- To check, open Health Connect (search your phone's Settings for "Health Connect") and look under
+  its data for Steps.
+
+The daily goal starts at 15,000 steps; change it in **Settings**.
+
+### Today, History and Stats
+
+- **Today** shows today's steps in a ring that fills toward your daily goal, split into
+  **workout** steps (brisk walks of 10 minutes or more) and **incidental** steps (everything
+  else). Below, this week's total against the weekly goal (daily goal × 7; weeks start on Sunday),
+  and when steps were last updated. While Today is open, steps update about once a minute.
+- **History** shows the last 7 days as bars split the same way, with the daily goal as a dashed
+  line. Below the chart, each day has a card with its total, its share of the goal, its workout
+  and incidental steps and the distance estimated from them.
+- **Stats** shows lifetime numbers. **Steps**: total steps, estimated distance, workouts and
+  workout time, active days, the average per active day, your best day, marathons and the next
+  one, and the for-fun ones. **GPS trips**: one card for **Walks** and one for **Drives**, each
+  with the number of trips, total time and distance and average speed (walks also show average
+  pace). A card with no trips is hidden.
+
+### Recording a trip
+
+1. Go to **Trips** and tap **Start trip**.
+2. The app explains why it needs your location; tap **Continue**, then allow **precise** location
+   while using the app. On Android 13 and newer it also asks to show notifications: allow it, so
+   you get the recording notification with *Mark spot* on the lock screen. If location is off,
+   tap **Turn on location**.
+3. The green card shows **Recording route**, the elapsed time, the distance and the GPS signal
+   (*Searching*, *Weak* or *Good*). Outdoors it usually reaches *Good* within seconds; wait for
+   it before you set off.
+4. Put the phone away. Recording continues with the screen off or while you use other apps.
+5. To stop, tap **Finish trip** and confirm, or tap **Finish** in the notification. The trip
+   moves to **Previous trips**.
+
+**If Android stopped the app** during a trip (battery saver, a crash, a force stop), the Trips
+screen says **Trip recording was interrupted** the next time you open it. Tap **Resume (with a
+gap)** to carry on recording (the time in between shows as a gray dashed line), or **Finish at
+last point** to save the trip as it is.
+
+<p align="center">
+  <img src="docs/screenshots/trips-interrupted.webp" width="320" alt="Trip recording was interrupted, with Resume (with a gap) and Finish at last point">
+</p>
+
+### Marking spots
+
+While a trip records, **Mark spot** saves where you are, with no questions: a spring, a viewpoint,
+a tricky passage, a place to come back to. The app confirms with *Spot 3 marked*, and spots are
+numbered per trip.
+
+<p align="center">
+  <img src="docs/screenshots/notification.webp" width="320" alt="Recording notification with Mark spot and Finish, after Spot 3 marked">
+  <img src="docs/screenshots/lock-screen.webp" width="320" alt="Lock screen showing the Recording your trip notification">
+</p>
+
+- **In the app:** the **Mark spot** button on the recording card.
+- **From the notification:** pull down the notification shade and tap **Mark spot** under
+  *Recording your trip*.
+- **From the lock screen:** the same notification shows there; expand it and tap **Mark spot**.
+  You don't need to unlock the phone, which helps with a phone in a mount. The notification's
+  text says *Spot 3 marked* for a few seconds.
+
+With no GPS fix yet, the app says so and saves nothing. A second tap before you've moved (a double
+tap, a bump in the jeep) says the spot *is already marked here*. Names come later: tap the spot on
+the trip's map.
+
+### The trip screen
+
+Tap a trip in **Previous trips** to open it.
+
+- **Top bar.** The walk or car icon, the trip's name (or its date, if it has no name), then
+  **Share**, **Edit** (pencil) and **Delete** (trash).
+- **The map.** Drag, pinch to zoom and twist to rotate. The button with four arrows shows the whole
+  route again. The green dot is the start and the red dot the finish.
+- **Colors.** The route is colored by speed, from red (slow) through yellow to green (fast). The
+  small legend under the scale bar gives this trip's own km/h at each end, so a walk and a jeep
+  drive both use the full range. A gray dashed stretch has no recorded points (the GPS lost its
+  fix, or the trip was resumed after an interruption).
+- **The panel.** The bar at the bottom shows the distance and duration. Tap it or drag it up for
+  **Trip details**: the distance and duration, when the trip started and ended, the **moving
+  time** (without stops), **climb / descent**, **top speed**, and an **elevation** chart with the
+  highest and lowest point. Tap its top, drag it down or press Back to close it.
+- **Spots.** Tap a numbered marker to see the spot's name, when it was marked and its height
+  above sea level, with **Rename** and **Delete**.
+- **Edit trip.** Give the trip a name (up to 60 characters) and set it to **Walk** or **Drive**.
+  The app's own guess, from the trip's speed, is tagged *Suggested*. Stats counts walks and
+  drives separately.
+- **Delete.** The trash icon deletes the trip, its route and its spots, after you confirm. With
+  *Keep deleted trips in Stats* on, its date, time and distance still count in Stats.
+
+Heights above sea level need Android 14 or newer; older phones show the climb, the descent and the
+chart's shape only.
+
+### Sharing or saving a GPX file
+
+1. On the trip's screen, tap **Share** (the icon at the top).
+2. Android's share sheet opens. Its first entry is the app's own **Save file**: pick a folder
+   (Downloads, a cloud drive...) and save. Or pick any app that accepts files, such as a messaging
+   or email app, or a drive.
+
+The file is called `steps-gps-route-trip-<date>.gpx`. It's a standard GPX 1.1 file: the route as a
+track (each point with its time and height), the trip's name, and each spot as a waypoint with its
+name, time and height. Open it in any app that imports GPX, such as Organic Maps or OsmAnd, usually
+through the app's import option or by opening the file from your Files app.
+
+### Settings
+
+- **Daily step goal:** type a number and tap **Save**. The weekly goal is 7 times it.
+- **Automatic classification thresholds (advanced):** tap **Show** to change the limits that
+  decide what counts as a workout; **Reset to defaults** undoes it.
+- **Keep deleted trips in Stats:** off by default. When on, a deleted trip's date, time, distance
+  and type keep counting in Stats.
+- **Permission status** and **Data collection status** tell you whether step reading works.
+
+### Tips for hikes and 4x4 drives
+
+- **Stop Android from closing the app.** Battery savers can stop a long recording. In Android's
+  settings, open *Apps → Steps GPS Route → Battery* and choose **Unrestricted**. On Samsung phones,
+  also make sure the app isn't in *Sleeping apps* or *Deep sleeping apps* (*Settings → Battery →
+  Background usage limits*). Don't force-stop the app while recording.
+- **Keep location on**, and check the card says *GPS: Good* before you start moving. Deep wadis,
+  canyons and dense trees weaken the signal.
+- **No mobile data needed for recording.** GPS works offline. Only the map on a trip's screen
+  needs internet; offline you see a plain outline of the route with a **Retry map** button.
+- **In a vehicle,** put the phone in a mount where it sees the sky (a windshield mount works
+  well), keep it charging on long drives, and keep it out of direct sun on the dashboard. Mark
+  spots from the lock screen without unlocking.
+- **On long hikes,** carry a power bank: recording keeps the GPS on, which uses battery, more so in
+  cold weather or with a weak signal.
+- **After the trip,** check whether it's a Walk or a Drive and give it a name, so Stats and the
+  GPX file make sense later.
+
+### Troubleshooting
+
+| Problem | What to do |
 |---|---|
-| **Today** | Today's steps inside a ring that fills toward the daily goal, with the workout and incidental steps below it. This week's total against the weekly goal (daily goal × 7; weeks start on Sunday). When the steps were last updated, and a banner if step data isn't available or an update failed. |
-| **History** | The last 7 days as a bar chart, each bar split into workout and incidental steps, with the daily goal as a line. Below it, the estimated distance per day. |
-| **Stats** | Lifetime numbers in two sections. **Steps:** all steps ever, estimated distance, workouts and workout time, active days, average per active day, best day, marathons walked and the next marathon, progress around the Earth and to the Moon, estimated calories and burgers burned. **GPS trips:** a card for **Walks** and one for **Drives**, each with the number of trips, total time and distance, and average speed; walks also show average pace. A card with no trips is hidden. |
-| **Trips** | Start, finish or resume a trip, with a live clock, the distance and the GPS signal while recording. *Mark spot* saves where you are with one tap (a spring, a viewpoint, a tricky passage) and confirms with "Spot 3 marked"; the recording notification has the same action, which also works from the lock screen. Below that, your finished trips, each with a small picture of its route, a walk or car icon for its type, and its name, or its day, date and start time if it has none. |
-| **Trip detail** | At the top, the trip's type icon and its name, with the date under it (an unnamed trip is titled by its date), then three icons: *Share* opens Android's share sheet, where *Save file* (to a folder you pick) comes first, then WhatsApp, Gmail, Telegram, Drive or any other app that accepts files; the pencil opens *Edit trip* (a name, and Walk or Drive, with the app's suggestion marked); the trash icon deletes the trip. The rest of the screen is the route on a map, colored by speed from red (slow) through yellow to green (fast), with a small legend giving the trip's own km/h at each end. Stretches with no recorded points are gray and dashed. The round button on the map shows the whole route again. Spots you marked are white discs with their number (where two overlap, the newer one is on top; zoom in to separate them); tapping one shows its name (or "Spot 3"), when it was marked and its height above sea level (Android 14 and newer), with *Rename* and *Delete*. A panel over the bottom of the map shows the distance and duration; tap it or drag it up for *Trip details*: the distance and duration large, when the trip started and ended, the moving time (the duration without stops), the total climb (↑) and descent (↓), the top speed, and a height chart along the trip with the highest and lowest point above sea level (Android 14 and newer; older phones show the chart's shape only). A trip recorded without heights has no climb, descent or chart. Tap the panel's top, drag it down or press Back to close it. When it opens or closes, the route is framed again in the part of the map left visible, unless you've moved the map yourself. Nothing on the screen scrolls the map, so its gestures always work. |
-| **Settings** | Daily step goal, the workout-detection limits (advanced), *Keep deleted trips in Stats*, and the permission and step-data status. Debug builds also show debug tools. |
+| Steps stay at 0, or *Waiting for first step data* | Health Connect has no steps: see *First launch* above. |
+| *Step tracking is not available on this device* | The phone runs Android 13 or older, or has no Health Connect step counting. Trips still work. |
+| *Grant permission* does nothing | After you've said no twice, Android stops asking. Open Health Connect's settings, then *App permissions → Steps GPS Route*, and allow **Steps**. |
+| *The newest step data is too old* | No new steps came in for 2 days. Check the Health Connect permission and the app that writes your steps. |
+| A trip says *interrupted* | Android stopped the app. Resume or finish it, and set the app's battery use to **Unrestricted**. |
+| *Precise location required* | You chose approximate location. Tap **Open app settings** and turn on *Use precise location*. |
+| No recording notification | Notifications are off for the app. Recording still works; turn them on in the app's settings to get *Mark spot* on the lock screen. |
+| The notification isn't on the lock screen | Allow notifications on the lock screen in Android's settings (lock screen or notification settings). |
+| *GPS: Searching* while you stand still | Normal: no new points are kept while you don't move. It goes back to *Good* when you walk on. |
+| The map doesn't load | No internet. You get an outline of the route; tap **Retry map** when you're back online. |
+| No heights, climb or chart | The phone didn't report heights for most of the trip. |
 
 ## How it works
 
@@ -57,7 +266,7 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
 
 - **Where steps come from.** Android's Health Connect. It holds the step count from the phone's
   built-in step counter, plus steps from any other app or watch you've connected to Health Connect.
-  The app reads Health Connect's combined total and never writes anything back.
+  The app reads Health Connect's combined total, minute by minute, and never writes anything back.
 - **Requirements.** Android 14 or later, with Health Connect's step counting available. On an older
   or unsupported phone, the app says step tracking isn't available; trips still work.
 - **When steps update.** The phone counts steps all the time, whether the app is open or not. The
@@ -108,20 +317,16 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   away from your path and back faster than the phone says you were moving (say, about 80 m away
   and back within a minute while the phone reports 5 km/h) are left out, so they add no spur, no
   distance and no false top speed. A real detour or turnaround at your own pace stays, and so does
-  everything recorded without the phone's speed or at driving speed. Nothing stored changes, so
-  trips recorded before this are cleaned up too.
-- **Sharing and saving.** *Share GPX* writes the trip as a GPX file and opens Android's share
-  sheet. *Save file* saves it to a folder you choose; any other choice sends it to that app. A
-  named trip's name goes into the file too (as the GPX file's and track's name), so other apps
-  show it. Each marked spot becomes a waypoint (`<wpt>`) with its height, time and name; an
-  unnamed spot is called "Spot 3" in the app's language, as the app shows it, so the other app
-  calls it the same. Each point's and spot's height (`<ele>`) is above sea level, as GPX means it,
-  on Android 14 and newer; see *Heights* below.
-- **Marked spots.** While a trip records, *Mark spot* on the Trips screen or in the notification
-  saves where you are, at once and with no questions, so it works from a moving jeep. Spots are
-  numbered per trip (Spot 1, 2, 3...); a number stays with its spot, so deleting Spot 2 doesn't
-  turn Spot 3 into Spot 2. A name is optional and can be set later by tapping the spot on the map.
-  Which GPS point a spot uses:
+  everything recorded without the phone's speed or at driving speed. The stored points never
+  change; the cleanup runs each time a trip is shown or shared.
+- **GPX files.** The file is GPX 1.1, created as "Steps GPS Route". A named trip's name goes into
+  the file twice (as the file's and the track's name), since apps differ in which one they show.
+  Each marked spot becomes a waypoint (`<wpt>`) with its height, time and name; an unnamed spot is
+  called "Spot 3" in the app's language, as the app shows it. Each point's and spot's height
+  (`<ele>`) is above sea level on Android 14 and newer; see *Heights above sea level* below.
+- **Marked spots.** *Mark spot* saves where you are at once, so it works from a moving jeep. Spots
+  are numbered per trip (Spot 1, 2, 3...); a number stays with its spot, so deleting Spot 2
+  doesn't turn Spot 3 into Spot 2. Which GPS point a spot uses:
   - Any point the phone delivered from within 30 seconds of the tap (before or after), with an
     accuracy of 50 m or better, counts, including points the route itself skips, such as drift
     while standing still. The spot uses the one closest in time to the tap.
@@ -135,15 +340,16 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
     new points at all. If nothing closer comes, it uses the best point from those 30 seconds.
   - With no point at all, nothing is saved and the app says there's no GPS fix yet.
   - One point, one spot. The point the last spot used counts as one of those points too, so a
-    second tap the phone can't have moved 40 m since (a double tap, a bump in the jeep) lands on
-    that same point: nothing new is saved, and the app says "Spot 3 is already marked here". Once
-    you've moved on, a tap is a new spot.
+    second tap the phone can't have moved 40 m since lands on that same point: nothing new is
+    saved, and the app says "Spot 3 is already marked here". Once you've moved on, a tap is a new
+    spot.
 
-  The spot keeps that point's time and height, so they match its place. The notification's
-  *Mark spot* doesn't ask you to unlock the phone. The recording notification makes no sound and
-  doesn't vibrate, but it isn't a "silent" notification in Android's sense (those are hidden on
-  the lock screen by default), so it shows there in full, actions included. The answer ("Spot 3 marked", or "No GPS fix yet") shows as a short message and,
-  for a few seconds, as the notification's text.
+  The spot keeps that point's time and height, so they match its place.
+- **The recording notification.** It makes no sound and doesn't vibrate, but it isn't a "silent"
+  notification in Android's sense (those are hidden on the lock screen by default), so it shows
+  there in full, actions included. Its *Mark spot* doesn't ask you to unlock the phone. The answer
+  ("Spot 3 marked", or "No GPS fix yet") shows as a short message and, for a few seconds, as the
+  notification's text.
 - **Walk or drive.** Every finished trip is a *walk* (walks, hikes, jogs) or a *drive*, so Stats can
   keep hikes and jeep drives apart. The app suggests one from the route's speed: each stretch's
   speed, the same one the speed colors use, and the trip is a drive when at least a tenth of its
@@ -153,13 +359,13 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   wins, and picking the suggested type again goes back to the suggestion. The suggestion isn't
   stored: it's worked out from the route each time, so an improved rule also applies to old trips.
   It can be wrong: a 4x4 crawl that never goes over 15 km/h is suggested as a walk.
-- **Names.** A trip can have a name of up to 60 characters, like "Wadi Qelt hike". Leave it empty
-  and the trip is titled by its date, as before.
-- **Deleting a trip.** Deleting removes the trip, its route and its marked spots. If *Keep deleted trips in Stats*
-  is on (it's off by default), the app first keeps the trip's date, duration, distance and type
-  (walk or drive), with no location, no name and no spots, and Stats keeps counting it in the right card.
-  Turning the setting off hides those trips from Stats until you turn it on again. Trips deleted
-  while it's off are gone from Stats for good.
+- **Names.** A trip can have a name of up to 60 characters, like "Wadi Qelt hike". Without one,
+  the trip is titled by its date.
+- **Deleting a trip.** Deleting removes the trip, its route and its marked spots. If *Keep deleted
+  trips in Stats* is on (it's off by default), the app first keeps the trip's date, duration,
+  distance and type (walk or drive), with no location, no name and no spots, and Stats keeps
+  counting it in the right card. Turning the setting off hides those trips from Stats until you
+  turn it on again. Trips deleted while it's off are gone from Stats for good.
 - **Speed colors.** Each stretch between two points of that same route is colored by its speed:
   distance over time, averaged over about 30 seconds so the color doesn't flicker. Each trip has
   its own scale. Its slowest 5% of stretches are red and its fastest 5% green, so a walk at
@@ -199,13 +405,14 @@ The split into *workout* and *incidental* steps is a rule of thumb too.
   shape of the Earth, not above sea level. In Israel that is about 17-20 m higher (Android's own
   model gives about 19-20 m at Jerusalem, 19 m at Tel Aviv and 17 m at Arad and the Dead Sea). The
   app stores what the phone reports and, on Android 14 and newer, converts it to above sea level
-  with Android's built-in converter each time a trip is shown or shared, so trips recorded before
-  this existed are converted too. Android 13 and older have no converter: there the trip shows
+  with Android's built-in converter each time a trip is shown or shared, so every trip is
+  converted, old ones included. Android 13 and older have no converter: there the trip shows
   climb, descent and the chart's shape, which don't depend on it, but no highest or lowest
   point, and the GPX file gets the heights as stored.
-- **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org). You can pan, zoom and
-  rotate the map; tilting is off. The scale bar is always in meters and kilometers. Without
-  internet, the screen shows a plain outline of the route instead, with a *Retry map* button.
+- **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org), in a light or dark style to
+  match the phone. You can pan, zoom and rotate the map; tilting is off. The scale bar is always in
+  meters and kilometers. Without internet, the screen shows a plain outline of the route instead,
+  with a *Retry map* button.
 
 ### Steps and trips are separate
 
@@ -217,8 +424,8 @@ database file and its screens.
 
 | Permission | Used for | When it's asked |
 |---|---|---|
-| Health Connect: *Read steps* | Your step counts | When you tap the grant button on *Today* |
-| Precise location | Recording a trip's route | When you tap *Start trip* or *Resume* |
+| Health Connect: *Read steps* | Your step counts | When you tap *Grant permission* on *Today* |
+| Precise location | Recording a trip's route | When you tap *Start trip* or *Resume*, after the app's own explanation |
 | Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |
 | Internet | Loading the map on a trip's screen | Granted automatically |
@@ -231,9 +438,11 @@ The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.h
 
 - Steps, trips and settings are stored only on the phone. Android's cloud backup is turned off for
   this app.
-- The app sends nothing to the developer or anyone else. Its only internet traffic is loading map
-  tiles from OpenFreeMap while a trip's screen is open. Those requests don't include your GPS
-  points, but like any map they show OpenFreeMap which area you're looking at, and your IP address.
+- The app sends nothing to the developer or anyone else. Its only internet traffic is loading the
+  map from OpenFreeMap while a trip's screen is open. Those requests don't include your GPS points,
+  but like any map they show OpenFreeMap which area you're looking at, and your IP address.
+- Locations come from Google Play services' location service on the phone, which may also use
+  Wi-Fi and mobile networks, depending on the phone's location settings.
 - A GPX file leaves the app only when you save or share it yourself.
 - Step data is never written back to Health Connect.
 
@@ -296,7 +505,8 @@ app/src/main/java/com/example/stepsplit/
 ```
 
 The privacy policy's source is `docs/privacy-policy.html`. It's published on GitHub Pages from the
-`gh-pages` branch, as `index.html` and `privacy-policy.html`.
+`gh-pages` branch, as `index.html` and `privacy-policy.html`. A draft of the Google Play store
+listing is in `docs/store-listing.md`, and the README's screenshots are in `docs/screenshots/`.
 
 ### Build, install, test
 
@@ -310,14 +520,15 @@ with platform 36.
 ./gradlew lintDebug
 ```
 
-- **Tests.** About 670 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
+- **Tests.** About 720 unit tests. Business logic is pure Kotlin; Room and the screens' ViewModels
   run under Robolectric. There are no instrumented (on-device) tests.
 - **Step separation.** `ArchitectureInvariantsTest` scans the code to make sure step and trip code
   don't import each other, and `StepGpsSeparationTest` runs both features together.
-- **Real phone.** Step counting needs a real phone with Health Connect step counting. An emulator
-  reports step tracking as unavailable.
+- **Real phone.** Step counting needs a real phone with Health Connect step counting. Most
+  emulator images report step tracking as unavailable, because their SDK extension level is
+  below 20.
 - **Emulator.** Trips can be tested on an emulator by feeding it positions with
-  `adb emu geo fix <longitude> <latitude>`.
+  `adb emu geo fix <longitude> <latitude>`, about one per second.
 - **Debug tools.** Debug builds (`com.example.stepsplit.debug`) add a *Debug tools* section in
   Settings:
   - *Generate sample data*: a week of fake steps, stored under a separate source so they never
