@@ -15,3 +15,7 @@ sealed class Screen(val route: String) {
 }
 
 val bottomNavScreens = listOf(Screen.Today, Screen.History, Screen.Stats, Screen.Trips, Screen.Settings)
+
+/** Whether this bottom-bar tab is highlighted while [route] is on screen: its own route, and Trips for an open trip too. */
+fun Screen.isSelectedFor(route: String?): Boolean =
+    route == this.route || (this == Screen.Trips && route == Screen.TripDetail.route)

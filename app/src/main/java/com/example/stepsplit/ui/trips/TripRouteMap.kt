@@ -4,8 +4,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -21,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,6 +31,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.stepsplit.R
@@ -36,11 +40,13 @@ import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.trip.RoutePoint
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
@@ -163,6 +169,12 @@ fun TripRouteMapCard(
     spots: List<TripSpot> = emptyList(),
     /** A spot marker was tapped, with that spot's id. */
     onSpotClick: (Long) -> Unit = {},
+    /**
+     * How much of the card's bottom is covered by something on top of it (the trip screen's details
+     * panel). The map still draws there, but its buttons, logo and attribution move above it, and the
+     * route is framed in the part that stays visible.
+     */
+    bottomInset: Dp = 0.dp,
 ) {
     require(points.isNotEmpty()) { "TripRouteMapCard requires at least one point; callers show their own empty state." }
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
@@ -172,7 +184,7 @@ fun TripRouteMapCard(
         LaunchedEffect(points, isDark) { mapLoadFailed = false }
 
         if (mapLoadFailed) {
-            OfflineFallback(points = points, onRetry = { mapLoadFailed = false })
+            OfflineFallback(points = points, bottomInset = bottomInset, onRetry = { mapLoadFailed = false })
         } else {
             LiveMap(
                 points = points,
@@ -180,6 +192,7 @@ fun TripRouteMapCard(
                 spots = spots,
                 onSpotClick = onSpotClick,
                 isDark = isDark,
+                bottomInset = bottomInset,
                 onLoadFailed = { mapLoadFailed = true },
             )
         }
@@ -193,6 +206,7 @@ private fun LiveMap(
     spots: List<TripSpot>,
     onSpotClick: (Long) -> Unit,
     isDark: Boolean,
+    bottomInset: Dp,
     onLoadFailed: () -> Unit,
 ) {
     val styleUrl = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
@@ -205,7 +219,22 @@ private fun LiveMap(
         if (spots.isNotEmpty()) " " + stringResource(R.string.cd_trip_map_spots, spots.size) else ""
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(fit) { cameraState.showWholeRoute(fit, animate = false) }
+    // Frames the route on first display. When the panel over the map opens or closes, the route is
+    // framed again in the part left visible - once the panel stops moving, and only if the user hasn't
+    // panned, zoomed or rotated the map since the last framing: then it stays as they left it.
+    var movedByUser by remember { mutableStateOf(false) }
+    LaunchedEffect(cameraState) {
+        snapshotFlow { cameraState.moveReason }.collect { if (it == CameraMoveReason.GESTURE) movedByUser = true }
+    }
+    var framedOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(fit, bottomInset) {
+        if (framedOnce) {
+            delay(INSET_SETTLE_MILLIS)
+            if (movedByUser) return@LaunchedEffect
+        }
+        cameraState.showWholeRoute(fit, animate = framedOnce, bottomInset = bottomInset)
+        framedOnce = true
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         MaplibreMap(
@@ -218,8 +247,8 @@ private fun LiveMap(
                 // Only tilt is locked: in a map this small it mostly fires by accident while zooming.
                 gestureOptions = GestureOptions(isTiltEnabled = false),
                 // MapLibre's own scale bar shows feet on a US-region phone; MetricScaleBar below
-                // replaces it. Logo, attribution and compass stay on.
-                ornamentOptions = OrnamentOptions(isScaleBarEnabled = false),
+                // replaces it. Logo, attribution and compass stay on, above whatever covers the bottom.
+                ornamentOptions = OrnamentOptions(padding = PaddingValues(bottom = bottomInset), isScaleBarEnabled = false),
             ),
             onMapLoadFailed = { onLoadFailed() },
         ) {
@@ -340,8 +369,11 @@ private fun LiveMap(
         // Bottom end, just above MapLibre's attribution button, which sits in that corner (both
         // mirror in right-to-left languages); the compass has the top end and the scale bar the top start.
         SmallFloatingActionButton(
-            onClick = { coroutineScope.launch { cameraState.showWholeRoute(fit, animate = true) } },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 40.dp),
+            onClick = {
+                movedByUser = false
+                coroutineScope.launch { cameraState.showWholeRoute(fit, animate = true, bottomInset = bottomInset) }
+            },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 40.dp + bottomInset),
             containerColor = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.primary,
         ) {
@@ -397,13 +429,14 @@ private fun RouteSpeedColoring.SpeedColoredRoute.gapsGeoJson() = GeoJsonData.Fea
  * Frames the whole route, north up - on first display, and again whenever the user taps the "Show
  * whole route" button after panning, zooming or rotating away.
  */
-private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?, animate: Boolean) {
+private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?, animate: Boolean, bottomInset: Dp) {
+    val padding = PaddingValues(start = ROUTE_PADDING, top = ROUTE_PADDING, end = ROUTE_PADDING, bottom = ROUTE_PADDING + bottomInset)
     when (fit) {
         is RouteCameraBounds.Fit.Bounded ->
             if (animate) {
-                animateTo(boundingBox = fit.boundingBox, padding = ROUTE_PADDING)
+                animateTo(boundingBox = fit.boundingBox, padding = padding)
             } else {
-                jumpTo(boundingBox = fit.boundingBox, padding = ROUTE_PADDING)
+                jumpTo(boundingBox = fit.boundingBox, padding = padding)
             }
         is RouteCameraBounds.Fit.Centered -> {
             val target = CameraPosition(target = fit.target, zoom = fit.zoom)
@@ -413,10 +446,13 @@ private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?, anim
     }
 }
 
-private val ROUTE_PADDING = PaddingValues(28.dp)
+private val ROUTE_PADDING = 28.dp
+
+/** How long the bottom inset must stay put before the route is framed again: the panel's open or close animation. */
+private const val INSET_SETTLE_MILLIS = 350L
 
 @Composable
-private fun ColumnScope.OfflineFallback(points: List<TripPoint>, onRetry: () -> Unit) {
+private fun ColumnScope.OfflineFallback(points: List<TripPoint>, bottomInset: Dp, onRetry: () -> Unit) {
     // Weighted without filling, so the message and Retry below always stay visible however little
     // height the card is given. RouteTraceCanvas keeps its own square aspect ratio within that.
     RouteTraceCanvas(
@@ -431,4 +467,5 @@ private fun ColumnScope.OfflineFallback(points: List<TripPoint>, onRetry: () -> 
     TextButton(onClick = onRetry, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
         Text(stringResource(R.string.trip_detail_map_retry_action))
     }
+    Spacer(Modifier.height(bottomInset))
 }

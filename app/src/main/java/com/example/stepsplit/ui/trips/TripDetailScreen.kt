@@ -1,35 +1,43 @@
 package com.example.stepsplit.ui.trips
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,9 +46,11 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,9 +59,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -80,7 +91,6 @@ import com.example.stepsplit.ui.common.formatDayLabel
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.abs
-import kotlin.math.min
 import kotlin.math.roundToLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -158,32 +168,40 @@ fun TripDetailScreen(
         }
     }
 
-    // A plain, non-scrolling Column on purpose. The route map is a native view: inside a vertically
-    // scrollable container, any drag with a vertical component (an upward pan, a diagonal drag, a
-    // pinch) is claimed by the container after a few pixels and cancelled for the map, so the map
-    // stalls mid-gesture. Here nothing competes for touches on the map, and it takes whatever
-    // height the title and summary above and the height card and Share button below leave free.
-    Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(SECTION_SPACING),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    // The map takes the whole screen under the title bar, and the trip's numbers sit in a panel over
+    // its bottom that opens upward. Nothing scrolls the map: the map is a native view, and inside a
+    // vertically scrollable container any drag with a vertical component (an upward pan, a diagonal
+    // drag, a pinch) is claimed by the container after a few pixels and cancelled for the map, so the
+    // map stalls mid-gesture. Only the open panel's own content scrolls, on a short phone.
+    var detailsExpanded by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = detailsExpanded) { detailsExpanded = false }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_navigate_back))
             }
             TripTypeIcon(uiState.type, size = 24.dp, modifier = Modifier.padding(end = 8.dp))
             // An unnamed trip is titled by its date, as it always was; a named one shows the date under its name.
             Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
+                // One line, so the bar stays short and the map keeps its room; the full name is in Edit trip.
                 Text(
                     text = trip.name ?: dateTitle,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (trip.name != null) {
                     Text(text = dateTitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            // Share opens the system share sheet, whose first entry is the app's own "Save file".
+            IconButton(onClick = shareGpx, enabled = uiState.points.isNotEmpty()) {
+                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.trip_detail_share_gpx_action))
             }
             IconButton(onClick = { showEdit = true }) {
                 Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.trip_detail_edit_action))
@@ -193,43 +211,41 @@ fun TripDetailScreen(
             }
         }
 
-        TripSummaryCard(trip, uiState.motion, uiState.elevation)
-
-        if (uiState.points.isEmpty()) {
-            Text(text = stringResource(R.string.trip_detail_route_empty), style = MaterialTheme.typography.bodyMedium)
-            Spacer(modifier = Modifier.weight(1f))
-        } else {
-            // The map and the height chart under it share the height that is left. The chart shows
-            // only while the map keeps at least MIN_MAP_HEIGHT next to it: on a short phone the map
-            // wins, and the climb and descent stay in the card above. No chart at all when too few
-            // points have a height - see TripElevation.
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                val elevation = uiState.elevation
-                val showChart = elevation != null && maxHeight >= MIN_MAP_HEIGHT + SECTION_SPACING + TripHeightChartHeight
-                Column(verticalArrangement = Arrangement.spacedBy(SECTION_SPACING)) {
+        MapUnderPanel(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            panel = {
+                TripDetailsPanel(
+                    trip = trip,
+                    motion = uiState.motion,
+                    elevation = uiState.elevation,
+                    heightsAboveSeaLevel = uiState.heightsAboveSeaLevel,
+                    expanded = detailsExpanded,
+                    onExpandedChange = { detailsExpanded = it },
+                )
+            },
+            map = { bottomInset ->
+                if (uiState.points.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.trip_detail_route_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                } else {
                     TripRouteMapCard(
                         points = uiState.points,
                         speedColoring = uiState.speedColoring,
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
                         spots = uiState.spots,
                         onSpotClick = { spotId ->
                             selectedSpotId = spotId
                             renamingSpot = false
                             confirmingSpotDelete = false
                         },
+                        bottomInset = bottomInset,
                     )
-                    if (showChart && elevation != null) {
-                        TripHeightChartCard(elevation = elevation, aboveSeaLevel = uiState.heightsAboveSeaLevel)
-                    }
                 }
-            }
-        }
-
-        Button(onClick = shareGpx, enabled = uiState.points.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-            Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-            Text(stringResource(R.string.trip_detail_share_gpx_action))
-        }
+            },
+        )
     }
 
     if (showEdit) {
@@ -313,35 +329,181 @@ fun TripDetailScreen(
 }
 
 /**
- * The trip's numbers above the map, in two rows: when it ran, how long it took and how far it went;
- * then the climb and descent under the time, the moving time (see [TripMotion]) under the duration,
- * and the top speed under the distance. They are laid out as a table ([SummaryGrid]), so the second
- * row lines up with the first even when the time range wraps onto a second line on a narrow phone.
- * [motion] is null when the route has fewer than two points, and [elevation] when too few points
- * have a height; their cells are then left empty, and the second row is left out when it would be
- * empty. Every row takes its height from the map.
+ * Lays [map] out over the whole area and [panel] over its bottom, at the panel's own height, but never
+ * taller than [MAX_PANEL_FRACTION] of the area. [map] gets the panel's height as its bottom inset, so
+ * it can keep its buttons and the framed route above the panel. The panel is measured first, so even
+ * the first frame frames the route in the right place.
  */
 @Composable
-private fun TripSummaryCard(trip: TripSummary, motion: TripMotion.Motion?, elevation: TripElevation.Elevation?) {
+private fun MapUnderPanel(modifier: Modifier, panel: @Composable () -> Unit, map: @Composable (bottomInset: Dp) -> Unit) {
+    SubcomposeLayout(modifier) { constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val panelPlaceable = subcompose(MapPanelSlot.Panel, panel).first()
+            .measure(Constraints(minWidth = width, maxWidth = width, maxHeight = (height * MAX_PANEL_FRACTION).toInt()))
+        val bottomInset = panelPlaceable.height.toDp()
+        val mapPlaceable = subcompose(MapPanelSlot.Map) { map(bottomInset) }.first().measure(Constraints.fixed(width, height))
+        layout(width, height) {
+            mapPlaceable.place(0, 0)
+            panelPlaceable.place(0, height - panelPlaceable.height)
+        }
+    }
+}
+
+private enum class MapPanelSlot { Map, Panel }
+
+/**
+ * The trip's numbers in a panel over the bottom of the map. Closed, it shows the distance and duration
+ * and "Trip details"; open, it adds the distance and duration large, then the time, moving time (see
+ * [TripMotion]), climb and descent, and top speed, then the height chart when enough points have a
+ * height (see [TripElevation]). A tap on its top row, or a drag up or down on it, opens or closes it;
+ * Back closes it. [motion] is null when the route has fewer than two points and [elevation] when too
+ * few points have a height: their numbers then show as a dash.
+ */
+@Composable
+private fun TripDetailsPanel(
+    trip: TripSummary,
+    motion: TripMotion.Motion?,
+    elevation: TripElevation.Elevation?,
+    heightsAboveSeaLevel: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+    val distance = formatDistance(trip.distanceMeters)
+    val duration = formatElapsed(tripDurationSeconds(trip))
+    val dragThresholdPx = with(LocalDensity.current) { PANEL_DRAG_THRESHOLD.toPx() }
+    var dragTotal by remember { mutableFloatStateOf(0f) }
+    val toggleLabel = stringResource(if (expanded) R.string.cd_trip_details_hide else R.string.cd_trip_details_show)
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = PANEL_CORNER, topEnd = PANEL_CORNER),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shadowElevation = 8.dp,
+    ) {
+        Column(modifier = Modifier.animateContentSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .draggable(
+                        orientation = Orientation.Vertical,
+                        state = rememberDraggableState { delta -> dragTotal += delta },
+                        onDragStarted = { dragTotal = 0f },
+                        onDragStopped = { onExpandedChange(panelExpandedAfterDrag(expanded, dragTotal, dragThresholdPx)) },
+                    )
+                    .clickable(onClickLabel = toggleLabel, role = Role.Button) { onExpandedChange(!expanded) }
+                    .padding(start = 20.dp, end = 12.dp, bottom = 12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 8.dp)
+                        .size(width = 32.dp, height = 4.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp))
+                        .align(Alignment.CenterHorizontally),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (expanded) stringResource(R.string.trip_detail_sheet_title) else stringResource(R.string.trip_detail_peek_format, distance, duration),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!expanded) {
+                        Text(
+                            text = stringResource(R.string.trip_detail_sheet_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+            }
+            if (expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    LargeNumbersRow(
+                        stringResource(R.string.trip_detail_distance_label) to distance,
+                        stringResource(R.string.trip_detail_duration_label) to duration,
+                    )
+                    TripNumbersCard(trip, motion, elevation)
+                    if (elevation != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = stringResource(R.string.trip_detail_elevation_label),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TripHeightChartCard(elevation = elevation, aboveSeaLevel = heightsAboveSeaLevel)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Two big numbers side by side, label over value, with a thin line between them. */
+@Composable
+private fun LargeNumbersRow(start: Pair<String, String>, end: Pair<String, String>) {
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        LargeNumber(label = start.first, value = start.second, modifier = Modifier.weight(1f))
+        VerticalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        LargeNumber(label = end.first, value = end.second, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun LargeNumber(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.semantics(mergeDescendants = true) {}) {
+        Text(text = label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+/**
+ * The rest of the trip's numbers in a card of two rows and two columns, with thin lines between
+ * them: when it ran and the moving time, then the climb and descent and the top speed. Mirrors in
+ * right-to-left languages.
+ */
+@Composable
+private fun TripNumbersCard(trip: TripSummary, motion: TripMotion.Motion?, elevation: TripElevation.Elevation?) {
     val zoneId = ZoneId.of(trip.startZoneId)
     val locale = LocalConfiguration.current.locales[0]
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        SummaryGrid(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-            SummaryCell(
-                label = stringResource(R.string.trip_detail_time_label),
-                value = stringResource(
-                    R.string.trip_detail_time_range_format,
-                    formatClockTimeInZone(trip.startEpochSecond, zoneId),
-                    trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
-                ),
-                maxLines = 2,
-            )
-            SummaryCell(stringResource(R.string.trip_detail_duration_label), formatElapsed(tripDurationSeconds(trip)))
-            SummaryCell(stringResource(R.string.trip_detail_distance_label), formatDistance(trip.distanceMeters))
-            if (motion != null || elevation != null) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                SummaryCell(
+                    label = stringResource(R.string.trip_detail_time_label),
+                    value = stringResource(
+                        R.string.trip_detail_time_range_format,
+                        formatClockTimeInZone(trip.startEpochSecond, zoneId),
+                        trip.endEpochSecond?.let { formatClockTimeInZone(it, zoneId) } ?: "-",
+                    ),
+                    maxLines = 2,
+                    modifier = Modifier.weight(1f),
+                )
+                VerticalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+                SummaryCell(
+                    label = stringResource(R.string.trip_detail_moving_time_label),
+                    value = motion?.let { formatElapsed(it.movingSeconds) } ?: NO_VALUE,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            HorizontalDivider()
+            Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 if (elevation != null) {
                     val climb = formatHeightNumber(elevation.climbMeters, locale)
                     val descent = formatHeightNumber(elevation.descentMeters, locale)
@@ -353,60 +515,34 @@ private fun TripSummaryCard(trip: TripSummary, motion: TripMotion.Motion?, eleva
                             stringResource(R.string.trip_height_meters_format, climb),
                             stringResource(R.string.trip_height_meters_format, descent),
                         ),
+                        modifier = Modifier.weight(1f),
                     )
                 } else {
-                    Spacer(Modifier)
+                    SummaryCell(stringResource(R.string.trip_detail_climb_descent_label), NO_VALUE, modifier = Modifier.weight(1f))
                 }
-                if (motion != null) {
-                    SummaryCell(stringResource(R.string.trip_detail_moving_time_label), formatElapsed(motion.movingSeconds))
-                    SummaryCell(
-                        label = stringResource(R.string.trip_detail_top_speed_label),
-                        // Formatted like the speed legend's ends, so the two always agree on the map's scale.
-                        value = motion.topSpeedMetersPerSecond?.let {
-                            stringResource(R.string.trip_map_speed_format, formatLegendSpeed(it * METERS_PER_SECOND_TO_KMH, locale))
-                        } ?: "–",
-                    )
-                }
+                VerticalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp))
+                SummaryCell(
+                    label = stringResource(R.string.trip_detail_top_speed_label),
+                    // Formatted like the speed legend's ends, so the two always agree on the map's scale.
+                    value = motion?.topSpeedMetersPerSecond?.let {
+                        stringResource(R.string.trip_map_speed_format, formatLegendSpeed(it * METERS_PER_SECOND_TO_KMH, locale))
+                    } ?: NO_VALUE,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
 }
 
 /**
- * Lays its cells out in rows of three, like a table. The second and third columns are as wide as
- * their widest cell; the first takes what is left, so a long time range wraps instead of running
- * into the next column. The columns are spread across the width with at least [columnSpacing]
- * between them, and each row is as tall as its tallest cell, so the rows always line up. Mirrors in
- * right-to-left languages.
+ * Where a drag on the details panel leaves it: a drag up of at least [thresholdPx] opens it, a drag
+ * down of at least that closes it, and anything shorter leaves it as it was. [dragPx] is the total
+ * movement, negative upward as on screen.
  */
-@Composable
-private fun SummaryGrid(
-    modifier: Modifier = Modifier,
-    rowSpacing: Dp = 12.dp,
-    columnSpacing: Dp = 12.dp,
-    content: @Composable () -> Unit,
-) {
-    Layout(content = content, modifier = modifier) { measurables, constraints ->
-        val columns = 3
-        val rows = (measurables.size + columns - 1) / columns
-        fun widest(column: Int) = (column until measurables.size step columns).maxOfOrNull { measurables[it].maxIntrinsicWidth(Constraints.Infinity) } ?: 0
-        val width = constraints.maxWidth
-        val gap = columnSpacing.roundToPx()
-        val widths = IntArray(columns) { if (it == 0) 0 else widest(it) }
-        widths[0] = min(widest(0), (width - widths[1] - widths[2] - 2 * gap).coerceAtLeast(0))
-        val placeables = measurables.mapIndexed { i, measurable -> measurable.measure(Constraints(maxWidth = widths[i % columns])) }
-        val rowHeights = IntArray(rows) { row -> (0 until columns).maxOf { placeables.getOrNull(row * columns + it)?.height ?: 0 } }
-        val rowGap = rowSpacing.roundToPx()
-        val free = width - widths.sum()
-        val x = intArrayOf(0, widths[0] + free / 2, width - widths[2])
-        layout(width, rowHeights.sum() + rowGap * (rows - 1).coerceAtLeast(0)) {
-            var y = 0
-            for (row in 0 until rows) {
-                for (column in 0 until columns) placeables.getOrNull(row * columns + column)?.placeRelative(x[column], y)
-                y += rowHeights[row] + rowGap
-            }
-        }
-    }
+internal fun panelExpandedAfterDrag(expanded: Boolean, dragPx: Float, thresholdPx: Float): Boolean = when {
+    dragPx <= -thresholdPx -> true
+    dragPx >= thresholdPx -> false
+    else -> expanded
 }
 
 /**
@@ -596,31 +732,34 @@ private fun RenameSpotDialog(initialName: String, defaultName: String, onSave: (
 }
 
 /**
- * One label-over-value cell of the summary card: time, climb and descent, duration, moving time,
- * distance or top speed. [valueDescription], when given, is what TalkBack reads instead of [value]
- * (for "↑230 ↓222 m").
+ * One label-over-value cell of the numbers card: time, moving time, climb and descent, or top speed.
+ * [valueDescription], when given, is what TalkBack reads instead of [value] (for "↑230 ↓222 m").
  */
 @Composable
-private fun SummaryCell(label: String, value: String, maxLines: Int = 1, valueDescription: String? = null) {
-    Column(modifier = Modifier.semantics(mergeDescendants = true) {}) {
+private fun SummaryCell(label: String, value: String, modifier: Modifier = Modifier, maxLines: Int = 1, valueDescription: String? = null) {
+    Column(modifier = modifier.padding(vertical = 12.dp).semantics(mergeDescendants = true) {}) {
         Text(text = label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             text = value,
             style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
             maxLines = maxLines,
             modifier = if (valueDescription != null) Modifier.clearAndSetSemantics { contentDescription = valueDescription } else Modifier,
         )
     }
 }
 
-/** The space between the screen's parts: title, numbers, map, height chart and Share button. */
-private val SECTION_SPACING = 12.dp
+/** A number the trip doesn't have (too few points, or none with a height). */
+private const val NO_VALUE = "–"
 
-/**
- * The map never gets less than this for the height chart's sake: room for the route between the
- * scale bar and legend at the top and the "Show whole route" button at the bottom.
- */
-private val MIN_MAP_HEIGHT = 200.dp
+/** The details panel never covers more than this share of the map. */
+private const val MAX_PANEL_FRACTION = 0.7f
+
+/** The details panel's rounded top corners. */
+private val PANEL_CORNER = 24.dp
+
+/** How far a drag on the details panel must go to open or close it. */
+private val PANEL_DRAG_THRESHOLD = 24.dp
 
 private fun tripDate(startEpochSecond: Long, startZoneId: String) =
     Instant.ofEpochSecond(startEpochSecond).atZone(ZoneId.of(startZoneId)).toLocalDate()

@@ -143,6 +143,11 @@
     <string name="trip_detail_time_range_format">%1$s – %2$s</string>
     <string name="trip_detail_moving_time_label">זמן בתנועה</string>
     <string name="trip_detail_top_speed_label">מהירות מרבית</string>
+    <string name="trip_detail_sheet_title">פרטי הטיול</string>
+    <string name="trip_detail_peek_format">%1$s • %2$s</string>
+    <string name="trip_detail_elevation_label">גובה</string>
+    <string name="cd_trip_details_show">הצגת פרטי הטיול</string>
+    <string name="cd_trip_details_hide">הסתרת פרטי הטיול</string>
     <string name="trip_detail_climb_descent_label">עלייה / ירידה</string>
     <string name="trip_detail_climb_descent_format">↑%1$s ↓%2$s מ׳</string>
     <string name="trip_height_meters_format">%1$s מ׳</string>

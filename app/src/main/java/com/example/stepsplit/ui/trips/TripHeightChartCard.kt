@@ -35,13 +35,13 @@ import kotlin.math.roundToLong
 /** The chart never stretches less than this many meters of height across its full height, so a flat walk's few meters of leftover wobble stay a nearly flat line. */
 private const val MIN_CHART_RANGE_METERS = 20.0
 
-/** The height chart card's height, so the trip screen can tell whether it fits under the map. */
-internal val TripHeightChartHeight = 64.dp
+/** The height chart card's height. */
+internal val TripHeightChartHeight = 72.dp
 
 /**
- * The trip's height chart, between the map and Share GPX: the smoothed heights along the trip's
- * distance, with the highest and lowest point at the end side, next to the top and bottom of the
- * chart they belong to. The climb and descent are in the numbers card above.
+ * The trip's height chart, at the bottom of the open trip details panel: the smoothed heights along
+ * the trip's distance, with the highest and lowest point at the end side, next to the top and bottom
+ * of the chart they belong to. The climb and descent are in the numbers card above it.
  *
  * The highest and lowest point are absolute heights, so they show only when [aboveSeaLevel] (Android
  * 14 and newer converted them - see `SeaLevelHeights`). Otherwise the heights are as stored, above

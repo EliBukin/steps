@@ -143,6 +143,11 @@
     <string name="trip_detail_time_range_format">%1$s – %2$s</string>
     <string name="trip_detail_moving_time_label">Moving time</string>
     <string name="trip_detail_top_speed_label">Top speed</string>
+    <string name="trip_detail_sheet_title">Trip details</string>
+    <string name="trip_detail_peek_format">%1$s • %2$s</string>
+    <string name="trip_detail_elevation_label">Elevation</string>
+    <string name="cd_trip_details_show">Show trip details</string>
+    <string name="cd_trip_details_hide">Hide trip details</string>
     <string name="trip_detail_climb_descent_label">Climb / descent</string>
     <string name="trip_detail_climb_descent_format">↑%1$s ↓%2$s m</string>
     <string name="trip_height_meters_format">%1$s m</string>

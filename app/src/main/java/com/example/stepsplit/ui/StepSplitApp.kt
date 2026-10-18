@@ -38,6 +38,7 @@ import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.navigation.bottomNavScreens
+import com.example.stepsplit.ui.navigation.isSelectedFor
 import com.example.stepsplit.ui.settings.SettingsScreen
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.stats.StatsScreen
@@ -168,7 +169,7 @@ private fun StepSplitBottomBar(navController: NavHostController) {
     NavigationBar {
         bottomNavScreens.forEach { screen ->
             NavigationBarItem(
-                selected = currentRoute == screen.route,
+                selected = screen.isSelectedFor(currentRoute),
                 onClick = {
                     navController.navigate(screen.route) {
                         popUpTo(navController.graph.findStartDestination().id) { saveState = true }
