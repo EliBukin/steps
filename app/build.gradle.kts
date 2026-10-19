@@ -149,7 +149,14 @@ dependencies {
     // consumed directly as a plain Android AAR (no Kotlin Multiplatform plugin needed; its
     // Android-target Compose dependencies resolve to the same real androidx Compose artifacts
     // already pinned by this project's own compose-bom). See README's "Trip detail map" section.
-    implementation(libs.maplibre.compose.android)
+    implementation(libs.maplibre.compose.android) {
+        // Its default MapLibre Android SDK draws with Vulkan only and makes the merged manifest
+        // require android.hardware.vulkan.version, so Google Play would hide the whole app from
+        // phones without Vulkan. Use MapLibre's OpenGL ES build instead: same API, same version
+        // (maplibre-compose's documented "Revert to OpenGL on Android" setup).
+        exclude(group = "org.maplibre.gl", module = "android-sdk")
+    }
+    implementation(libs.maplibre.android.opengl)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

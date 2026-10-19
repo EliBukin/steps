@@ -549,6 +549,13 @@ with platform 36.
   below 20.
 - **Emulator.** Trips can be tested on an emulator by feeding it positions with
   `adb emu geo fix <longitude> <latitude>`, about one per second.
+- **Map renderer.** The trip map uses MapLibre's OpenGL ES build (`android-sdk-opengl`) instead of
+  the Vulkan one maplibre-compose brings, so Google Play doesn't hide the app from phones without
+  Vulkan. Keep `maplibreAndroid` in `gradle/libs.versions.toml` at the version maplibre-compose
+  asks for. On an emulator started with `-gpu swiftshader_indirect`, the map then misses its
+  labels, spot numbers and gap lines, a known emulator bug
+  ([maplibre-native#3648](https://github.com/maplibre/maplibre-native/issues/3648)); start it with
+  `-gpu swangle` instead.
 - **Debug tools.** Debug builds (`com.example.stepsplit.debug`) add a *Debug tools* section in
   Settings:
   - *Generate sample data*: a week of fake steps, stored under a separate source so they never
