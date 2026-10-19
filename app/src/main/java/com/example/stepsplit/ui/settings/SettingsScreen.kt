@@ -58,6 +58,7 @@ fun SettingsScreen(
     onSetKeepDeletedTripsInStats: (Boolean) -> Unit,
     onGenerateSampleData: () -> Unit,
     onRunStepSourceCheck: () -> Unit,
+    onOpenHealthConnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Privacy, SettingsSection.Debug) }
@@ -73,7 +74,7 @@ fun SettingsScreen(
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)
                 SettingsSection.Advanced -> AdvancedThresholdsSection(uiState.thresholds, onSetThresholds, onResetThresholds)
                 SettingsSection.Trips -> TripsSection(uiState.keepDeletedTripsInStats, onSetKeepDeletedTripsInStats)
-                SettingsSection.Status -> StatusSection(uiState)
+                SettingsSection.Status -> StatusSection(uiState, onOpenHealthConnect)
                 SettingsSection.Privacy -> PrivacySection()
                 SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
             }
@@ -223,9 +224,13 @@ private fun ThresholdField(label: String, value: Int, onValueChange: (Int) -> Un
  * actually succeeding - see [com.example.stepsplit.domain.model.SyncFailure] - which is not the
  * same thing: availability being fine does not mean the last sync actually succeeded, so this
  * must never just echo the availability text back a second time under a different heading.
+ *
+ * Without the permission, it offers Health Connect's own screen for this app - the same way out as
+ * the Today banner after a denial. Settings has no dialog button: this one works whether or not
+ * Health Connect still shows its dialog.
  */
 @Composable
-private fun StatusSection(uiState: SettingsUiState) {
+private fun StatusSection(uiState: SettingsUiState, onOpenHealthConnect: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(stringResource(R.string.settings_permission_status_title), style = MaterialTheme.typography.titleSmall)
@@ -233,6 +238,16 @@ private fun StatusSection(uiState: SettingsUiState) {
                 text = uiState.availability?.statusText() ?: stringResource(R.string.status_unknown),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (uiState.availability is StepSourceAvailability.PermissionNotGranted) {
+                Text(
+                    text = stringResource(R.string.status_permission_open_health_connect_hint, stringResource(R.string.app_name)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = onOpenHealthConnect, modifier = Modifier.padding(top = 4.dp)) {
+                    Text(stringResource(R.string.action_open_health_connect))
+                }
+            }
             Text(
                 stringResource(R.string.settings_data_collection_status_title),
                 style = MaterialTheme.typography.titleSmall,

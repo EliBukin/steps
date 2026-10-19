@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 fun StepSplitApp(
     container: AppContainer,
     onRequestPermission: (onResult: (Boolean) -> Unit) -> Unit,
+    onOpenHealthConnectPermissions: (onReturn: () -> Unit) -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
     navigationEvent: TripNotificationNavigationEvent? = null,
 ) {
@@ -99,8 +100,9 @@ fun StepSplitApp(
                     // Activity, so TodayScreen's own resume effect fires an overlapping refresh()
                     // around the same moment - viewModel.refresh() coalesces that redundancy away
                     // rather than either caller needing to avoid the other (see its own doc
-                    // comment).
-                    onGrantPermission = { onRequestPermission { granted -> if (granted) viewModel.refresh() } },
+                    // comment). A denial switches the banner to Health Connect's own screen.
+                    onGrantPermission = { onRequestPermission(viewModel::onPermissionRequestResult) },
+                    onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::recheckPermission) },
                 )
             }
             composable(Screen.History.route) {
@@ -155,6 +157,7 @@ fun StepSplitApp(
                         coroutineScope.launch { DebugDataSeeder.seed(container) }
                     },
                     onRunStepSourceCheck = viewModel::runStepSourceCheck,
+                    onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::refreshAvailability) },
                 )
             }
         }

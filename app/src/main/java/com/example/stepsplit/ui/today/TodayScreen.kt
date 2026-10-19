@@ -66,6 +66,7 @@ fun TodayScreen(
     uiState: TodayUiState,
     onRefresh: () -> Unit,
     onGrantPermission: () -> Unit,
+    onOpenHealthConnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -114,7 +115,12 @@ fun TodayScreen(
                 }
 
                 TodayItem.Availability -> uiState.availability?.let { availability ->
-                    CollectionStatusBanner(availability = availability, onGrantPermission = onGrantPermission)
+                    CollectionStatusBanner(
+                        availability = availability,
+                        permissionAction = uiState.permissionAction,
+                        onGrantPermission = onGrantPermission,
+                        onOpenHealthConnect = onOpenHealthConnect,
+                    )
                 }
 
                 TodayItem.SyncFailure -> uiState.syncFailure?.let { failure -> SyncFailureBanner(failure) }

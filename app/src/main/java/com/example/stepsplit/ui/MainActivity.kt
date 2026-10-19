@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.health.connect.client.PermissionController
+import com.example.stepsplit.R
 import com.example.stepsplit.StepSplitApplication
 import com.example.stepsplit.data.stepsource.READ_STEPS_PERMISSION
 import com.example.stepsplit.ui.navigation.Screen
@@ -42,6 +44,14 @@ class MainActivity : ComponentActivity() {
         pendingHealthConnectPermissionResult?.invoke(grantedPermissions.contains(READ_STEPS_PERMISSION))
         pendingHealthConnectPermissionResult = null
     }
+
+    // Called when the owner comes back from the screen openHealthConnectPermissions opened, so the
+    // caller re-checks the permission at once (see TodayViewModel.recheckPermission). "Back" means
+    // resumed after that screen stopped this one (see onStop/onResume) - not an activity result:
+    // a screen Android refuses to open still posts a RESULT_CANCELED, which lands right after the
+    // next screen in the list has opened, long before the owner is done there.
+    private var pendingHealthConnectScreenReturn: (() -> Unit)? = null
+    private var leftForHealthConnectScreen = false
 
     // A single registered launcher, forwarded to whichever Compose-side caller is currently
     // waiting - registerForActivityResult must be called at a fixed point in the Activity's
@@ -76,6 +86,7 @@ class MainActivity : ComponentActivity() {
                 StepSplitApp(
                     container = container,
                     onRequestPermission = ::requestHealthConnectPermission,
+                    onOpenHealthConnectPermissions = ::openHealthConnectPermissions,
                     onRequestTripPermissions = ::requestTripPermissions,
                     navigationEvent = navigationEvent,
                 )
@@ -88,6 +99,21 @@ class MainActivity : ComponentActivity() {
     // instance. Every redelivery - even a repeat tap that resolves to the same route as last time -
     // must still produce a *new* event id, or the second navigation would silently never fire (see
     // [TripNotificationNavigationEvent]'s own doc comment).
+    override fun onStop() {
+        super.onStop()
+        if (pendingHealthConnectScreenReturn != null) leftForHealthConnectScreen = true
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (leftForHealthConnectScreen) {
+            leftForHealthConnectScreen = false
+            val onReturn = pendingHealthConnectScreenReturn
+            pendingHealthConnectScreenReturn = null
+            onReturn?.invoke()
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -112,6 +138,23 @@ class MainActivity : ComponentActivity() {
     private fun requestHealthConnectPermission(onResult: (Boolean) -> Unit) {
         pendingHealthConnectPermissionResult = onResult
         requestHealthConnectPermissionLauncher.launch(setOf(READ_STEPS_PERMISSION))
+    }
+
+    /**
+     * Opens a screen where the owner can allow Steps themselves - the way out once Health
+     * Connect's own dialog has stopped appearing (see [healthConnectPermissionScreenIntents] for
+     * which screen, and why). [onReturn] runs when the owner comes back. If the phone has none of
+     * those screens, a short message says so instead, and [onReturn] never runs.
+     */
+    @VisibleForTesting
+    internal fun openHealthConnectPermissions(onReturn: () -> Unit) {
+        val opened = launchFirstAvailable(healthConnectPermissionScreenIntents(packageName), ::startActivity)
+        if (opened == null) {
+            Toast.makeText(this, R.string.health_connect_screen_unavailable, Toast.LENGTH_LONG).show()
+            return
+        }
+        pendingHealthConnectScreenReturn = onReturn
+        leftForHealthConnectScreen = false
     }
 
     private fun requestTripPermissions(onResult: (Map<String, Boolean>) -> Unit) {

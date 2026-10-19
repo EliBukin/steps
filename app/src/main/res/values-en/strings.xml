@@ -34,6 +34,9 @@
     <string name="sync_failure_time_label">Last failed: %1$s</string>
 
     <string name="action_grant_permission">Grant permission</string>
+    <string name="action_open_health_connect">Open Health Connect</string>
+    <string name="status_permission_open_health_connect_hint">In Health Connect, open \"App permissions\" &gt; \"%1$s\" and turn on \"Steps\". Then come back here.</string>
+    <string name="health_connect_screen_unavailable">Couldn\'t open Health Connect on this phone.</string>
 
     <string name="health_permissions_rationale_title">How Steps GPS Route uses Health Connect</string>
     <string name="health_permissions_rationale_body">This app reads your step count from Health Connect to show daily and weekly totals, and to automatically tell apart workout walks from everyday incidental movement. Step data is never written back to Health Connect, and is never shared with anyone else.</string>

@@ -103,6 +103,12 @@ layout runs right to left, including the speed legend and the height chart.
 On the left, Health Connect's permission screen. On the right, what its *privacy policy* link
 opens: how the app uses Health Connect, then the app's full privacy policy (also in **Settings**).
 
+If you tap **Don't allow**, the banner changes to **Open Health Connect**. It opens Health
+Connect: go to *App permissions → Steps GPS Route*, switch on **Steps**, and press Back until
+you're in the app again; it picks the permission up at once. After two "Don't allow" answers Health
+Connect stops asking, so this button is the way back in. **Settings → Permission status** has the
+same button.
+
 Your steps appear within a few seconds. The app copies them in whenever you open it, so **open it
 at least once every 30 days**: it reaches back only that far.
 
@@ -225,6 +231,8 @@ through the app's import option or by opening the file from your Files app.
 - **Keep deleted trips in Stats:** off by default. When on, a deleted trip's date, time, distance
   and type keep counting in Stats.
 - **Permission status** and **Data collection status** tell you whether step reading works.
+  Without the permission, **Open Health Connect** opens Health Connect, where you allow **Steps**
+  under *App permissions → Steps GPS Route*.
 - **Privacy policy:** the app's full privacy policy (in English), the same screen Health Connect's
   privacy-policy link opens. It's built into the app, so it works offline; a link at the top opens
   the latest version online.
@@ -251,9 +259,10 @@ through the app's import option or by opening the file from your Files app.
 
 | Problem | What to do |
 |---|---|
-| Steps stay at 0, or *Waiting for first step data* | Health Connect has no steps: see *First launch* above. |
+| Steps stay at 0, or *Waiting for first step data* | If the banner asks for permission, allow **Steps** (see *First launch* above). Otherwise Health Connect has no steps: see *If steps stay at 0* above. |
 | *Step tracking is not available on this device* | The phone runs Android 13 or older, or has no Health Connect step counting. Trips still work. |
-| *Grant permission* does nothing | After you've said no twice, Android stops asking. Open Health Connect's settings, then *App permissions → Steps GPS Route*, and allow **Steps**. |
+| Health Connect no longer asks for permission | After two "Don't allow" answers it stops asking. Once a request comes back without permission, the banner shows **Open Health Connect** instead (if it still says *Grant permission*, tap that once). Tap it, go to *App permissions → Steps GPS Route*, switch on **Steps**, and press Back. |
+| *Open Health Connect* opens the app's Android settings | The phone's Health Connect couldn't be opened directly. Tap *Permissions → Health, fitness and wellness* (the name varies by phone) and switch on **Steps**. |
 | *The newest step data is too old* | No new steps came in for 2 days. Check the Health Connect permission and the app that writes your steps. |
 | A trip says *interrupted* | Android stopped the app. Resume or finish it, and set the app's battery use to **Unrestricted**. |
 | *Precise location required* | You chose approximate location. Tap **Open app settings** and turn on *Use precise location*. |
@@ -274,7 +283,8 @@ through the app's import option or by opening the file from your Files app.
   or unsupported phone, the app says step tracking isn't available; trips still work.
 - **When steps update.** The phone counts steps all the time, whether the app is open or not. The
   app copies the counts in only while it's open: when you open it, about once a minute while
-  *Today* is on screen, and right after you grant permission. It never runs in the background.
+  *Today* is on screen, and right after you grant permission (in the dialog, or in Health
+  Connect's own page and back). It never runs in the background.
 - **Catching up.** Each update re-reads the last 6 hours, so late or corrected counts are picked
   up. The first update, or one after a long break, reaches back **30 days**. Steps older than that
   are never copied in, so open the app at least once a month.
@@ -427,7 +437,7 @@ database file and its screens.
 
 | Permission | Used for | When it's asked |
 |---|---|---|
-| Health Connect: *Read steps* | Your step counts | When you tap *Grant permission* on *Today* |
+| Health Connect: *Read steps* | Your step counts | When you tap *Grant permission* on *Today*. If you said no, *Open Health Connect* opens Health Connect, where you can allow it under *App permissions*. |
 | Precise location | Recording a trip's route | When you tap *Start trip* or *Resume*, after the app's own explanation |
 | Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |

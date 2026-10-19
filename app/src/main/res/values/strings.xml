@@ -34,6 +34,9 @@
     <string name="sync_failure_time_label">נכשל לאחרונה: %1$s</string>
 
     <string name="action_grant_permission">הענקת הרשאה</string>
+    <string name="action_open_health_connect">פתיחת Health Connect</string>
+    <string name="status_permission_open_health_connect_hint">יש לפתוח ב-Health Connect את \"הרשאות שניתנות לאפליקציות\" &gt; \"%1$s\", להפעיל את \"צעדים\" ולחזור לכאן.</string>
+    <string name="health_connect_screen_unavailable">לא ניתן לפתוח את Health Connect במכשיר זה.</string>
 
     <string name="health_permissions_rationale_title">כיצד Steps GPS Route משתמשת ב-Health Connect</string>
     <string name="health_permissions_rationale_body">האפליקציה קוראת את מספר הצעדים שלך מ-Health Connect כדי להציג סיכומים יומיים ושבועיים, ולהבחין אוטומטית בין הליכות אימון לתנועה יומיומית מזדמנת. נתוני הצעדים לעולם אינם נכתבים חזרה ל-Health Connect ואינם משותפים עם אף אחד אחר.</string>

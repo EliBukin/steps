@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -24,11 +25,16 @@ import com.example.stepsplit.domain.model.SyncFailure
  * zero as though it were real. This is a separate concern from [SyncFailureBanner] below: a
  * device can be fully available (permission granted, API present) while sync attempts still fail
  * for other reasons, and vice versa a temporarily unavailable source doesn't erase a past failure.
+ *
+ * [permissionAction] picks the button (see [stepPermissionAction]): Health Connect's dialog at
+ * first, and after a denial its own screen, with a line saying what to switch on there.
  */
 @Composable
 fun CollectionStatusBanner(
     availability: StepSourceAvailability,
+    permissionAction: StepPermissionAction?,
     onGrantPermission: () -> Unit,
+    onOpenHealthConnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (availability is StepSourceAvailability.Available) return
@@ -37,19 +43,39 @@ fun CollectionStatusBanner(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = availability.statusText(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.weight(1f),
-            )
-            if (availability is StepSourceAvailability.PermissionNotGranted) {
-                TextButton(onClick = onGrantPermission) {
-                    Text(stringResource(R.string.action_grant_permission))
+        if (permissionAction == StepPermissionAction.OPEN_HEALTH_CONNECT) {
+            Column(modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 8.dp, bottom = 8.dp)) {
+                Text(
+                    text = availability.statusText(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(
+                    text = stringResource(R.string.status_permission_open_health_connect_hint, stringResource(R.string.app_name)),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(top = 4.dp, end = 8.dp),
+                )
+                TextButton(onClick = onOpenHealthConnect, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.action_open_health_connect))
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = availability.statusText(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                if (permissionAction == StepPermissionAction.GRANT_PERMISSION) {
+                    TextButton(onClick = onGrantPermission) {
+                        Text(stringResource(R.string.action_grant_permission))
+                    }
                 }
             }
         }

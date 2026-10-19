@@ -33,6 +33,7 @@ class TodayViewModel(
 ) : ViewModel() {
 
     private val availability = MutableStateFlow<StepSourceAvailability?>(null)
+    private val permissionRequestDenied = MutableStateFlow(false)
 
     private fun weekDatesToDate(today: LocalDate): List<LocalDate> =
         generateSequence(WeekWindow.startOfWeek(today)) { it.plusDays(1) }
@@ -54,7 +55,8 @@ class TodayViewModel(
         settingsRepository.settings,
         availability,
         stepSourceHealthStore.snapshot,
-    ) { (today, breakdowns), settings, currentAvailability, health ->
+        permissionRequestDenied,
+    ) { (today, breakdowns), settings, currentAvailability, health, denied ->
         val weekDates = weekDatesToDate(today)
         TodayUiState(
             isLoading = false,
@@ -79,6 +81,7 @@ class TodayViewModel(
                 latestSampleEpochSecond = health.latestSampleEpochSecond,
                 nowEpochSecond = clock.instant().epochSecond,
             ),
+            permissionRequestDenied = denied,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayUiState())
 
@@ -110,6 +113,31 @@ class TodayViewModel(
             availability.value = repository.checkAvailability()
             repository.syncNow()
             availability.value = repository.checkAvailability()
+        }
+    }
+
+    /**
+     * The outcome of Health Connect's permission dialog. Granted: import at once (see
+     * [recheckPermission]). Denied: the banner offers Health Connect's own screen from now on (see
+     * [com.example.stepsplit.ui.common.stepPermissionAction]); it stays that way while this
+     * ViewModel lives, and a new one starts with the dialog again.
+     */
+    fun onPermissionRequestResult(granted: Boolean) {
+        if (granted) recheckPermission() else permissionRequestDenied.value = true
+    }
+
+    /**
+     * The permission may have just changed: the dialog said yes, or the owner is back from the
+     * screen the banner opened, where they may have allowed Steps. Re-checks, and imports if it's
+     * allowed now, without another tap. The resume that comes with the return asks for the same
+     * [refresh], and only one of the two runs. A refresh still running from before can't see the
+     * new permission, so this waits for it to finish and then checks again, rather than being
+     * dropped as an overlap.
+     */
+    fun recheckPermission() {
+        viewModelScope.launch {
+            refreshJob?.join()
+            refresh()
         }
     }
 }

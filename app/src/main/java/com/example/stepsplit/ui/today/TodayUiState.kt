@@ -5,6 +5,8 @@ import com.example.stepsplit.domain.aggregation.DateStepBreakdown
 import com.example.stepsplit.domain.model.GoalProgress
 import com.example.stepsplit.domain.model.StepCollectionHealth
 import com.example.stepsplit.domain.model.SyncFailure
+import com.example.stepsplit.ui.common.StepPermissionAction
+import com.example.stepsplit.ui.common.stepPermissionAction
 import java.time.Instant
 
 data class TodayUiState(
@@ -19,7 +21,12 @@ data class TodayUiState(
     val syncFailure: SyncFailure? = null,
     /** See [StepCollectionHealth] - distinguishes a source that has never observed a step from one that has (historical evidence only - never a claim that collection is working *right now*, see that enum's own doc comment). */
     val collectionHealth: StepCollectionHealth? = null,
+    /** A permission request on this screen came back without Steps - see [stepPermissionAction]. */
+    val permissionRequestDenied: Boolean = false,
 ) {
+    val permissionAction: StepPermissionAction?
+        get() = stepPermissionAction(availability, permissionRequestDenied)
+
     val dailyProgress: GoalProgress
         get() = GoalProgress(today?.totalSteps ?: 0, dailyGoal)
 
