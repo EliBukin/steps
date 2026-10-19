@@ -37,6 +37,7 @@
 
     <string name="health_permissions_rationale_title">How Steps GPS Route uses Health Connect</string>
     <string name="health_permissions_rationale_body">This app reads your step count from Health Connect to show daily and weekly totals, and to automatically tell apart workout walks from everyday incidental movement. Step data is never written back to Health Connect, and is never shared with anyone else.</string>
+    <string name="privacy_policy_below_note">The full privacy policy is below. Its latest version is always online at:</string>
 
     <string name="history_title">Last 7 days</string>
     <string name="history_today_label">Today</string>
@@ -68,6 +69,7 @@
     <string name="settings_classification_limitation_note">A phone cannot know your intent with certainty - a continuous walk to a store can look identical to a walking workout. Classification uses a transparent heuristic only, and you can adjust its thresholds right here in Settings.</string>
     <string name="settings_permission_status_title">Permission status</string>
     <string name="settings_data_collection_status_title">Data collection status</string>
+    <string name="settings_privacy_policy_label">Privacy policy</string>
     <string name="settings_debug_section_title">Debug tools (debug builds only)</string>
     <string name="settings_debug_seed_action">Generate sample data</string>
     <string name="settings_debug_diagnostics_title">Step source diagnostics</string>

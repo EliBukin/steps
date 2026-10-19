@@ -97,11 +97,11 @@ layout runs right to left, including the speed legend and the height chart.
 
 <p align="center">
   <img src="docs/screenshots/health-connect-permission.webp" width="220" alt="Health Connect asking to allow Steps GPS Route to read steps">
-  <img src="docs/screenshots/health-connect-rationale.webp" width="320" alt="How Steps GPS Route uses Health Connect">
+  <img src="docs/screenshots/health-connect-rationale.webp" width="220" alt="How Steps GPS Route uses Health Connect, followed by the full privacy policy">
 </p>
 
-On the left, Health Connect's permission screen. On the right, the app's explanation of how it
-uses Health Connect, which is there for Health Connect's privacy-policy link.
+On the left, Health Connect's permission screen. On the right, what its *privacy policy* link
+opens: how the app uses Health Connect, then the app's full privacy policy (also in **Settings**).
 
 Your steps appear within a few seconds. The app copies them in whenever you open it, so **open it
 at least once every 30 days**: it reaches back only that far.
@@ -225,6 +225,9 @@ through the app's import option or by opening the file from your Files app.
 - **Keep deleted trips in Stats:** off by default. When on, a deleted trip's date, time, distance
   and type keep counting in Stats.
 - **Permission status** and **Data collection status** tell you whether step reading works.
+- **Privacy policy:** the app's full privacy policy (in English), the same screen Health Connect's
+  privacy-policy link opens. It's built into the app, so it works offline; a link at the top opens
+  the latest version online.
 
 ### Tips for hikes and 4x4 drives
 
@@ -434,7 +437,8 @@ The app never asks for background location. It uses location only while a trip i
 
 ## Privacy and data
 
-The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.html>. In short:
+The full privacy policy is at <https://elibukin.github.io/steps/privacy-policy.html>, and in the
+app under **Settings → Privacy policy**. In short:
 
 - Steps, trips and settings are stored only on the phone. Android's cloud backup is turned off for
   this app.
@@ -505,8 +509,14 @@ app/src/main/java/com/example/stepsplit/
 ```
 
 The privacy policy's source is `docs/privacy-policy.html`. It's published on GitHub Pages from the
-`gh-pages` branch, as `index.html` and `privacy-policy.html`. A draft of the Google Play store
-listing is in `docs/store-listing.md`, and the README's screenshots are in `docs/screenshots/`.
+`gh-pages` branch, as `index.html` and `privacy-policy.html`. Each build also copies it into the
+app's assets (`CopyPrivacyPolicyTask` in `app/build.gradle.kts`), where the Health Connect
+rationale screen, `ui/PermissionsRationaleActivity.kt`, shows it in a WebView with network loads
+blocked. Health Connect requires that screen to show the same policy as the Play listing, so
+publish the policy whenever a release ships a changed copy. The page must stay self-contained (no
+scripts, images, stylesheets or fonts from elsewhere); a unit test checks this. A draft of the
+Google Play store listing is in `docs/store-listing.md`, and the README's screenshots are in
+`docs/screenshots/`.
 
 ### Build, install, test
 

@@ -1,6 +1,7 @@
 package com.example.stepsplit.ui.settings
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
@@ -29,12 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
+import com.example.stepsplit.ui.PermissionsRationaleActivity
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.data.stepsource.StepSourceHealthSnapshot
 import com.example.stepsplit.domain.classification.ClassificationThresholds
@@ -56,7 +60,7 @@ fun SettingsScreen(
     onRunStepSourceCheck: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Debug) }
+    val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Privacy, SettingsSection.Debug) }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -70,13 +74,14 @@ fun SettingsScreen(
                 SettingsSection.Advanced -> AdvancedThresholdsSection(uiState.thresholds, onSetThresholds, onResetThresholds)
                 SettingsSection.Trips -> TripsSection(uiState.keepDeletedTripsInStats, onSetKeepDeletedTripsInStats)
                 SettingsSection.Status -> StatusSection(uiState)
+                SettingsSection.Privacy -> PrivacySection()
                 SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
             }
         }
     }
 }
 
-private enum class SettingsSection { Goals, Advanced, Trips, Status, Debug }
+private enum class SettingsSection { Goals, Advanced, Trips, Status, Privacy, Debug }
 
 @Composable
 private fun GoalsSection(uiState: SettingsUiState, onSetDailyGoal: (Long) -> Unit) {
@@ -237,6 +242,28 @@ private fun StatusSection(uiState: SettingsUiState) {
                 text = collectionStatusText(uiState),
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+    }
+}
+
+/** Opens the privacy policy: the same screen Health Connect opens from its own privacy-policy link. */
+@Composable
+private fun PrivacySection() {
+    val context = LocalContext.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button) { context.startActivity(PermissionsRationaleActivity.intent(context)) }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.settings_privacy_policy_label),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
         }
     }
 }

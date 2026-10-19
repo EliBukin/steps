@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.StepSplit" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      The privacy policy screen (PermissionsRationaleActivity). Its WebView shows the page light or
+      dark by the window theme, not by the Compose colors, so this theme has a dark variant in
+      values-night.
+    -->
+    <style name="Theme.StepSplit.PrivacyPolicy" />
 </resources>

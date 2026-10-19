@@ -68,6 +68,37 @@ android {
     }
 }
 
+/**
+ * Copies the privacy policy's source, `docs/privacy-policy.html` (the page published on GitHub
+ * Pages), into the app's assets, where `PermissionsRationaleActivity` shows it. Health Connect
+ * requires that screen to show the same policy as the Play listing, so the app never keeps a copy
+ * of its own: every build takes the current source.
+ */
+abstract class CopyPrivacyPolicyTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val policy: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val directory = outputDirectory.get().asFile
+        directory.deleteRecursively()
+        policy.get().asFile.copyTo(directory.resolve("privacy-policy.html"))
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val copyPolicy = tasks.register<CopyPrivacyPolicyTask>("copy${variant.name.replaceFirstChar(Char::uppercase)}PrivacyPolicy") {
+            policy.set(rootProject.layout.projectDirectory.file("docs/privacy-policy.html"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(copyPolicy, CopyPrivacyPolicyTask::outputDirectory)
+    }
+}
+
 tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
