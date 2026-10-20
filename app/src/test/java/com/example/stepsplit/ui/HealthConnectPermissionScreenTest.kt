@@ -18,7 +18,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class HealthConnectPermissionScreenTest {
 
-    private val packageName = "com.example.stepsplit.debug"
+    private val packageName = "bukin.stepsgpsroute.debug"
 
     @Test
     fun `on Android 14 and later Health Connect's page for this app comes first`() {

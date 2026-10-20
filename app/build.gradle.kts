@@ -9,13 +9,17 @@ plugins {
 }
 
 android {
+    // The Kotlin package and R class stay com.example.stepsplit; only applicationId is the app's
+    // identity on devices and Google Play.
     namespace = "com.example.stepsplit"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.stepsplit"
+        // Permanent from the first Play upload: it can never change after that. See docs/RELEASING.md.
+        applicationId = "bukin.stepsgpsroute"
         minSdk = 26
         targetSdk = 36
+        // versionCode goes up by 1 for every upload to Play, on any track; see docs/RELEASING.md.
         versionCode = 1
         versionName = "1.0"
 
