@@ -64,6 +64,16 @@ android {
         }
     }
 
+    bundle {
+        // Every language stays in the base APK, as in the release APK that gets tested: with
+        // language splits, Play installs only the phone's languages, so English picked later as the
+        // app's language in Android's settings could be missing. It adds about 0.4 MB to the
+        // installed app and 70 KB to the download.
+        language {
+            enableSplit = false
+        }
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
