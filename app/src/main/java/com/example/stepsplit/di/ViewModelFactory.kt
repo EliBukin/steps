@@ -3,6 +3,7 @@ package com.example.stepsplit.di
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.stepsplit.ui.history.HistoryViewModel
+import com.example.stepsplit.ui.map.OpenMapViewModel
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayViewModel
@@ -40,6 +41,8 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
         )
 
         TripsViewModel::class.java -> TripsViewModel(container.tripRepository, container.clock, container.tripSpotMarker::markSpot)
+
+        OpenMapViewModel::class.java -> OpenMapViewModel(container.tripRepository, container.mapLocationClient)
 
         else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     } as T

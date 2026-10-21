@@ -33,35 +33,28 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.trip.RoutePoint
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
+import com.example.stepsplit.ui.map.MapStyles
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
-import org.maplibre.compose.expressions.dsl.asNumber
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.dsl.convertToColor
-import org.maplibre.compose.expressions.dsl.convertToString
 import org.maplibre.compose.expressions.dsl.feature
-import org.maplibre.compose.expressions.dsl.format
-import org.maplibre.compose.expressions.dsl.span
 import org.maplibre.compose.expressions.value.LineCap
 import org.maplibre.compose.expressions.value.LineJoin
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.LineLayer
-import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.GestureOptions
 import org.maplibre.compose.map.MapOptions
 import org.maplibre.compose.map.MaplibreMap
@@ -69,25 +62,11 @@ import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.util.ClickResult
-import org.maplibre.compose.util.FeaturesClickHandler
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.LineString
 import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
-
-/**
- * OpenFreeMap (https://openfreemap.org) - a free, keyless vector tile provider with no request
- * limits and no account/API key, explicitly permitting commercial and hobby app use. Style choice
- * follows the system light/dark setting; both styles carry their own OSM/OpenMapTiles attribution,
- * shown automatically by MapLibre's built-in attribution control (see [MaplibreMap]'s default
- * `MapOptions.ornamentOptions`, never disabled here). Only ever requested while this composable is
- * part of the composition, i.e. only while the trip-detail screen showing it is visible - no
- * prefetching, no offline pack download, no background loading.
- */
-private const val LIGHT_STYLE_URL = "https://tiles.openfreemap.org/styles/positron"
-private const val DARK_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
 
 /** Matches [RouteTraceCanvas]'s fixed "start" marker color, independent of theme accent. */
 private val StartMarkerColor = Color(0xFF2E7D32)
@@ -111,34 +90,6 @@ private val LightStyleGapColor = Color(0xFF757575)
 private val DarkStyleGapColor = Color(0xFFBDBDBD)
 private const val START_LAYER_ID = "trip-route-start"
 private const val FINISH_LAYER_ID = "trip-route-finish"
-
-private const val SPOT_HIT_LAYER_ID = "trip-spots-hit"
-private const val SPOT_LAYER_ID = "trip-spots"
-private const val SPOT_NUMBER_LAYER_ID = "trip-spots-number"
-
-/**
- * The feature properties of a spot marker: its database id (for the tap), its number (the label),
- * and minus its number, so the newest spot's label wins where two collide (labels with the lower
- * sort key are placed first).
- */
-private const val SPOT_ID_PROPERTY = "spotId"
-private const val SPOT_NUMBER_PROPERTY = "number"
-private const val SPOT_LABEL_ORDER_PROPERTY = "labelOrder"
-
-/**
- * A marked spot: a white disc with a dark green ring and its number - nothing like the red, yellow
- * and green route, the gray gaps, or the small solid start (green) and finish (red) dots, and the
- * same on the light and dark map styles (white stands out on both).
- */
-private val SpotFillColor = Color.White
-private val SpotRingAndNumberColor = Color(0xFF1B6D5A)
-private val SPOT_RADIUS = 11.dp
-
-/** Taps within this radius of a spot open it, so the 22 dp disc gets a finger-sized target. */
-private val SPOT_TAP_RADIUS = 22.dp
-
-/** A font the OpenFreeMap styles' glyph server has; MapLibre's default fonts aren't there, and the numbers would not draw. */
-private const val SPOT_NUMBER_FONT = "Noto Sans Bold"
 
 /**
  * The completed-trip route on a real geographic basemap, in a rounded Material 3 card that fills
@@ -209,7 +160,7 @@ private fun LiveMap(
     bottomInset: Dp,
     onLoadFailed: () -> Unit,
 ) {
-    val styleUrl = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
+    val styleUrl = MapStyles.styleUrl(isDark)
     val first = points.first()
     val cameraState = rememberCameraState(
         firstPosition = CameraPosition(target = Position(longitude = first.longitude, latitude = first.latitude), zoom = 14.0),
@@ -304,53 +255,7 @@ private fun LiveMap(
             CircleLayer(id = FINISH_LAYER_ID, source = finishSource, color = const(MaterialTheme.colorScheme.error), radius = const(7.dp))
 
             // Spots last, so they sit on top of the route and the start and finish dots.
-            if (spots.isNotEmpty()) {
-                val spotsSource = rememberGeoJsonSource(data = remember(spots) { spotsGeoJson(spots) })
-                val onSpotFeaturesClick: FeaturesClickHandler = { features ->
-                    val spotId = features.firstNotNullOfOrNull { it.properties?.get(SPOT_ID_PROPERTY)?.jsonPrimitive?.longOrNull }
-                    if (spotId != null) {
-                        onSpotClick(spotId)
-                        ClickResult.Consume
-                    } else {
-                        ClickResult.Pass
-                    }
-                }
-                // An almost invisible, bigger disc under each marker: the tap target.
-                CircleLayer(
-                    id = SPOT_HIT_LAYER_ID,
-                    source = spotsSource,
-                    color = const(SpotFillColor),
-                    opacity = const(0.01f),
-                    radius = const(SPOT_TAP_RADIUS),
-                    onClick = onSpotFeaturesClick,
-                )
-                // Spots close together (a stop, a spring right after it) overlap at the whole-route
-                // zoom: the newer one is drawn on top and only its number shows, so the numbers never
-                // run into each other. Zooming in separates them.
-                CircleLayer(
-                    id = SPOT_LAYER_ID,
-                    source = spotsSource,
-                    sortKey = feature.get(SPOT_NUMBER_PROPERTY).asNumber(),
-                    color = const(SpotFillColor),
-                    radius = const(SPOT_RADIUS),
-                    strokeColor = const(SpotRingAndNumberColor),
-                    strokeWidth = const(2.5.dp),
-                    onClick = onSpotFeaturesClick,
-                )
-                SymbolLayer(
-                    id = SPOT_NUMBER_LAYER_ID,
-                    source = spotsSource,
-                    textField = format(span(feature.get(SPOT_NUMBER_PROPERTY).convertToString())),
-                    textFont = const(listOf(SPOT_NUMBER_FONT)),
-                    textSize = const(12.sp),
-                    textColor = const(SpotRingAndNumberColor),
-                    // Placed before the map's own labels (this layer is on top), which give way to it;
-                    // the padding makes a label collide whenever the discs under two labels overlap.
-                    sortKey = feature.get(SPOT_LABEL_ORDER_PROPERTY).asNumber(),
-                    textPadding = const(5.dp),
-                    onClick = onSpotFeaturesClick,
-                )
-            }
+            if (spots.isNotEmpty()) SpotMarkerLayers(spots, onSpotClick = onSpotClick)
         }
 
         MetricScaleBar(
@@ -391,21 +296,6 @@ private fun RouteSpeedColoring.SpeedColoredRoute.runsGeoJson() = GeoJsonData.Fea
             Feature(
                 LineString(run.points.map { Position(longitude = it.longitude, latitude = it.latitude) }),
                 buildJsonObject { put(COLOR_PROPERTY, String.format(Locale.ROOT, "#%06X", run.color and 0xFFFFFF)) },
-            )
-        },
-    ),
-)
-
-private fun spotsGeoJson(spots: List<TripSpot>) = GeoJsonData.Features(
-    FeatureCollection(
-        spots.map { spot ->
-            Feature(
-                Point(longitude = spot.longitude, latitude = spot.latitude),
-                buildJsonObject {
-                    put(SPOT_ID_PROPERTY, spot.id)
-                    put(SPOT_NUMBER_PROPERTY, spot.number)
-                    put(SPOT_LABEL_ORDER_PROPERTY, -spot.number)
-                },
             )
         },
     ),

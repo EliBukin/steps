@@ -106,15 +106,29 @@
 
     <string name="trips_title">טיולים</string>
     <string name="trips_status_off_title">הקלטת מסלול כבויה</string>
-    <string name="trips_status_off_description">המיקום ישמש רק לאחר שתתחיל/י טיול - שום דבר לא מוקלט כל עוד הלשונית הזו פתוחה בלבד.</string>
+    <string name="trips_status_off_description">המיקום משמש רק בזמן הקלטת טיול או כשהמפה פתוחה - שום דבר לא מוקלט כל עוד הלשונית הזו פתוחה בלבד.</string>
     <string name="trips_start_button">התחלת טיול</string>
     <string name="trips_history_title">טיולים קודמים</string>
     <string name="trips_history_empty">עדיין לא נרשמו טיולים</string>
+    <string name="trips_open_map_button">מפה</string>
+    <string name="cd_open_map_action">פתיחת המפה</string>
+
+    <string name="open_map_title">מפה</string>
+    <string name="open_map_recording_subtitle">טיול בהקלטה · %1$s</string>
+    <string name="open_map_permission_message">יש לאשר גישה למיקום כדי לראות איפה את/ה על המפה.</string>
+    <string name="open_map_permission_action">אישור</string>
+    <string name="open_map_permission_settings_message">הגישה למיקום לא אושרה לאפליקציה. אפשר לאשר אותה בהגדרות האפליקציה כדי לראות איפה את/ה.</string>
+    <string name="open_map_location_off_message">המיקום במכשיר כבוי.</string>
+    <string name="open_map_finding_location">מאתרים את המיקום שלך…</string>
+    <string name="open_map_offline_message">אין חיבור לאינטרנט, ולכן המפה לא נטענת. המיקום והמסלול שלך עדיין מוצגים.</string>
+    <string name="open_map_my_location_action">מעקב אחר המיקום שלי</string>
+    <string name="cd_open_map">מפה עם המיקום שלך</string>
+    <string name="cd_open_map_with_recording">מפה עם המיקום שלך והטיול שמוקלט</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
     <string name="trip_card_title_format">%1$s %2$s · %3$s</string>
 
     <string name="trip_permission_rationale_title">נדרש מיקום לטיול הזה</string>
-    <string name="trip_permission_rationale_message">Steps GPS Route זקוקה למיקום מדויק כדי לתעד את מסלול הטיול שלך. המיקום ישמש רק בזמן הקלטת טיול, ולעולם לא ברקע מעבר לכך.</string>
+    <string name="trip_permission_rationale_message">Steps GPS Route זקוקה למיקום מדויק כדי לתעד את מסלול הטיול שלך. המיקום ישמש רק בזמן הקלטת טיול או כשהמפה פתוחה, ולעולם לא ברקע מעבר לכך.</string>
     <string name="trip_permission_rationale_continue">המשך</string>
     <string name="trip_permission_precise_required_title">נדרש מיקום מדויק</string>
     <string name="trip_permission_denied_message">מסלול הטיול דורש הרשאת מיקום מדויק (GPS). מיקום משוער אינו מדויק מספיק כדי לתעד מסלול שימושי.</string>

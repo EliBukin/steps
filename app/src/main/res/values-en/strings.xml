@@ -106,15 +106,29 @@
 
     <string name="trips_title">Trips</string>
     <string name="trips_status_off_title">Route recording is off</string>
-    <string name="trips_status_off_description">Location is only used after you start a trip - nothing is recorded while this tab is just open.</string>
+    <string name="trips_status_off_description">Location is used only while a trip records or the map is open - nothing is recorded while this tab is just open.</string>
     <string name="trips_start_button">Start trip</string>
     <string name="trips_history_title">Previous trips</string>
     <string name="trips_history_empty">No trips recorded yet</string>
+    <string name="trips_open_map_button">Map</string>
+    <string name="cd_open_map_action">Open map</string>
+
+    <string name="open_map_title">Map</string>
+    <string name="open_map_recording_subtitle">Recording a trip · %1$s</string>
+    <string name="open_map_permission_message">Allow location to see where you are on the map.</string>
+    <string name="open_map_permission_action">Allow</string>
+    <string name="open_map_permission_settings_message">Location isn\'t allowed for this app. Allow it in the app\'s settings to see where you are.</string>
+    <string name="open_map_location_off_message">Location is turned off.</string>
+    <string name="open_map_finding_location">Finding your location…</string>
+    <string name="open_map_offline_message">No internet, so the map can\'t load. Your location and route still show.</string>
+    <string name="open_map_my_location_action">Follow my location</string>
+    <string name="cd_open_map">Map with your location</string>
+    <string name="cd_open_map_with_recording">Map with your location and the trip being recorded</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
     <string name="trip_card_title_format">%1$s %2$s · %3$s</string>
 
     <string name="trip_permission_rationale_title">Location needed for this trip</string>
-    <string name="trip_permission_rationale_message">Steps GPS Route needs precise location to record your trip\'s route. Location is only used while a trip is being recorded, never in the background otherwise.</string>
+    <string name="trip_permission_rationale_message">Steps GPS Route needs precise location to record your trip\'s route. Location is used only while a trip is being recorded or the map is open, and never in the background otherwise.</string>
     <string name="trip_permission_rationale_continue">Continue</string>
     <string name="trip_permission_precise_required_title">Precise location required</string>
     <string name="trip_permission_denied_message">Route recording requires precise (GPS) location. Approximate location isn\'t accurate enough to record a useful route.</string>

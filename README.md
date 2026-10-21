@@ -211,6 +211,29 @@ Tap a trip in **Previous trips** to open it.
 Heights above sea level need Android 14 or newer; older phones show the climb, the descent and the
 chart's shape only.
 
+### The map
+
+Tap **Map** beside *Start trip*, or the map icon at the top of **Trips** (it's there while a trip
+records, too).
+
+- **Where you are.** A blue dot, with a circle for how sure the phone is of it and, while you
+  move, a small arrow for your direction. The map follows you as you go; drag, pinch or rotate it
+  and it stops following, and the round **My location** button (crosshairs) follows you again.
+  While the map follows you, the screen stays on; it turns off as usual once you move the map
+  away or leave it.
+- **The trip you're recording,** if one is: its route so far in orange, its start (green) and the
+  spots you marked, growing as you go. The button with four arrows shows the whole route and
+  where you are.
+- **Location permission.** The first time, the map asks for location (approximate is enough here;
+  the circle is just bigger). If location is off, it says so, with **Turn on location**. Until the
+  first fix comes in, it says *Finding your location...*; an old fix shows as a gray dot.
+- **Without internet** the map can't load. It then shows a plain background with your dot, the
+  trip's route and its spots still on it (the spots without their numbers), and **Retry map**.
+  Areas you looked at before may still show from the map cache.
+
+The map uses your location only while it's open, with the app on screen, and nothing it shows is
+saved. The trip itself keeps recording as always, whether the map is open or not.
+
 ### Sharing or saving a GPX file
 
 1. On the trip's screen, tap **Share** (the icon at the top).
@@ -245,8 +268,9 @@ through the app's import option or by opening the file from your Files app.
   Background usage limits*). Don't force-stop the app while recording.
 - **Keep location on**, and check the card says *GPS: Good* before you start moving. Deep wadis,
   canyons and dense trees weaken the signal.
-- **No mobile data needed for recording.** GPS works offline. Only the map on a trip's screen
-  needs internet; offline you see a plain outline of the route with a **Retry map** button.
+- **No mobile data needed for recording.** GPS works offline. Only the map itself needs internet:
+  offline, a trip's screen shows a plain outline of the route, and the **Map** screen your dot and
+  route on a plain background, each with a **Retry map** button.
 - **In a vehicle,** put the phone in a mount where it sees the sky (a windshield mount works
   well), keep it charging on long drives, and keep it out of direct sun on the dashboard. Mark
   spots from the lock screen without unlocking.
@@ -269,7 +293,8 @@ through the app's import option or by opening the file from your Files app.
 | No recording notification | Notifications are off for the app. Recording still works; turn them on in the app's settings to get *Mark spot* on the lock screen. |
 | The notification isn't on the lock screen | Allow notifications on the lock screen in Android's settings (lock screen or notification settings). |
 | *GPS: Searching* while you stand still | Normal: no new points are kept while you don't move. It goes back to *Good* when you walk on. |
-| The map doesn't load | No internet. You get an outline of the route; tap **Retry map** when you're back online. |
+| The map doesn't load | No internet. A trip's screen shows an outline of the route, and the **Map** screen a plain background with your dot and route; tap **Retry map** when you're back online. |
+| No blue dot on the map | Tap **Allow** above the map, or **Turn on location**. If it says *Finding your location...*, step outside or wait a little. |
 | No heights, climb or chart | The phone didn't report heights for most of the trip. |
 
 ## How it works
@@ -424,8 +449,15 @@ through the app's import option or by opening the file from your Files app.
   point, and the GPX file gets the heights as stored.
 - **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org), in a light or dark style to
   match the phone. You can pan, zoom and rotate the map; tilting is off. The scale bar is always in
-  meters and kilometers. Without internet, the screen shows a plain outline of the route instead,
-  with a *Retry map* button.
+  meters and kilometers. Without internet, a trip's screen shows a plain outline of the route
+  instead, with a *Retry map* button.
+- **The Map screen.** The same OpenFreeMap map, with your location from Google Play services'
+  location service, asked for every 2 seconds at high accuracy, only while the screen is open and
+  the app is in the foreground; leaving the map or the app stops it at once. Nothing it gets is
+  stored. Without internet, the map switches to a style that is a single background color, with
+  no tiles, fonts or icons to download, so your dot and the trip's route still draw on it. While a
+  trip records with the map open, Android shares fixes between the two requests, so the recording
+  may get a point every 5 seconds instead of every 10; its own rules still decide which it keeps.
 
 ### Steps and trips are separate
 
@@ -441,9 +473,11 @@ database file and its screens.
 | Precise location | Recording a trip's route | When you tap *Start trip* or *Resume*, after the app's own explanation |
 | Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |
-| Internet | Loading the map on a trip's screen | Granted automatically |
+| Location (approximate is enough) | Your blue dot on the **Map** screen | When you tap *Allow* above the map. Already granted if you've recorded a trip. |
+| Internet | Loading the map on a trip's screen and the **Map** screen | Granted automatically |
 
-The app never asks for background location. It uses location only while a trip is recording.
+The app never asks for background location. It uses location only while a trip is recording or
+the **Map** screen is open.
 
 ## Privacy and data
 
@@ -453,8 +487,9 @@ app under **Settings → Privacy policy**. In short:
 - Steps, trips and settings are stored only on the phone. Android's cloud backup is turned off for
   this app.
 - The app sends nothing to the developer or anyone else. Its only internet traffic is loading the
-  map from OpenFreeMap while a trip's screen is open. Those requests don't include your GPS points,
-  but like any map they show OpenFreeMap which area you're looking at, and your IP address.
+  map from OpenFreeMap while a trip's screen or the **Map** screen is open. Those requests don't
+  include your GPS points, but like any map they show OpenFreeMap which area you're looking at (on
+  the Map screen, usually the area around you), and your IP address.
 - Locations come from Google Play services' location service on the phone, which may also use
   Wi-Fi and mobile networks, depending on the phone's location settings.
 - A GPX file leaves the app only when you save or share it yourself.
@@ -501,7 +536,7 @@ ViewModels (`StateFlow`), and from there to the Compose screens.
 
 ```
 app/src/main/java/com/example/stepsplit/
-  ui/               Compose screens (today, history, stats, trips, settings), navigation, theme
+  ui/               Compose screens (today, history, stats, trips, map, settings), navigation, theme
   di/               AppContainer and ViewModelFactory
   domain/           Pure Kotlin, no Android: walk classification, aggregation, time,
                     lifetime stats, and the trip route logic (point acceptance, cleanup, smoothing,

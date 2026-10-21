@@ -21,6 +21,11 @@ class ScreenSelectionTest {
     }
 
     @Test
+    fun `the map keeps Trips highlighted`() {
+        assertEquals(listOf(Screen.Trips), bottomNavScreens.filter { it.isSelectedFor(Screen.OpenMap.route) })
+    }
+
+    @Test
     fun `nothing is highlighted before navigation starts`() {
         bottomNavScreens.forEach { assertFalse(it.isSelectedFor(null)) }
     }

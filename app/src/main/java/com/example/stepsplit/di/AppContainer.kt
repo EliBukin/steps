@@ -12,7 +12,9 @@ import com.example.stepsplit.data.stepsource.PlatformHealthConnectGateway
 import com.example.stepsplit.data.stepsource.StepSource
 import com.example.stepsplit.data.stepsource.StepSourceHealthSink
 import com.example.stepsplit.data.stepsource.StepSourceHealthStore
+import com.example.stepsplit.data.trip.FusedMapLocationClient
 import com.example.stepsplit.data.trip.FusedTripLocationClient
+import com.example.stepsplit.data.trip.MapLocationClient
 import com.example.stepsplit.data.trip.PlatformSeaLevelHeights
 import com.example.stepsplit.data.trip.SeaLevelHeights
 import com.example.stepsplit.data.trip.TripLocationClient
@@ -43,6 +45,8 @@ class AppContainer(
     context: Context,
     /** Live GPS fixes for trip recording; only tests pass another (a [com.example.stepsplit.data.trip.FakeTripLocationClient]). */
     val locationClient: TripLocationClient = FusedTripLocationClient(context),
+    /** Where the phone is, for the Open map screen's dot only; never used by trip recording. */
+    val mapLocationClient: MapLocationClient = FusedMapLocationClient(context),
 ) {
     // Not Clock.systemDefaultZone(): that freezes the zone at construction time, so a device
     // timezone change while the process stays alive would go unnoticed until restart.

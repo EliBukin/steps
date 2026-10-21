@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -45,6 +46,8 @@ import com.example.stepsplit.ui.stats.StatsScreen
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayScreen
 import com.example.stepsplit.ui.today.TodayViewModel
+import com.example.stepsplit.ui.map.OpenMapScreen
+import com.example.stepsplit.ui.map.OpenMapViewModel
 import com.example.stepsplit.ui.trips.TripDetailScreen
 import com.example.stepsplit.ui.trips.TripDetailViewModel
 import com.example.stepsplit.ui.trips.TripsScreen
@@ -125,6 +128,20 @@ fun StepSplitApp(
                     onRequestTripPermissions = onRequestTripPermissions,
                     onMarkSpot = viewModel::markSpot,
                     spotMarkResults = viewModel.spotMarkResults,
+                    onOpenMap = { navController.navigate(Screen.OpenMap.route) { launchSingleTop = true } },
+                )
+            }
+            composable(Screen.OpenMap.route) {
+                val viewModel: OpenMapViewModel = viewModel(factory = factory)
+                val uiState by viewModel.uiState.collectAsState()
+                // Collected only while the screen is at least started, so leaving the app stops the
+                // location request (see OpenMapViewModel.location).
+                val location by viewModel.location.collectAsStateWithLifecycle()
+                OpenMapScreen(
+                    uiState = uiState,
+                    location = location,
+                    onLocationAvailableChange = viewModel::setLocationAvailable,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable(
@@ -194,6 +211,7 @@ private fun Screen.icon(): ImageVector = when (this) {
     Screen.Trips -> Icons.Filled.Place
     Screen.Settings -> Icons.Filled.Settings
     is Screen.TripDetail -> Icons.Filled.Place
+    Screen.OpenMap -> Icons.Filled.Place
 }
 
 private fun Screen.labelRes(): Int = when (this) {
@@ -203,4 +221,5 @@ private fun Screen.labelRes(): Int = when (this) {
     Screen.Trips -> R.string.nav_trips
     Screen.Settings -> R.string.nav_settings
     is Screen.TripDetail -> R.string.nav_trips
+    Screen.OpenMap -> R.string.nav_trips
 }

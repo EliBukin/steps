@@ -12,10 +12,13 @@ sealed class Screen(val route: String) {
         const val ARG_TRIP_ID = "tripId"
         fun createRoute(tripId: Long) = "trips/$tripId"
     }
+
+    /** Not a bottom-nav destination - reached from the Map button and the map icon on [Trips]. */
+    data object OpenMap : Screen("map")
 }
 
 val bottomNavScreens = listOf(Screen.Today, Screen.History, Screen.Stats, Screen.Trips, Screen.Settings)
 
-/** Whether this bottom-bar tab is highlighted while [route] is on screen: its own route, and Trips for an open trip too. */
+/** Whether this bottom-bar tab is highlighted while [route] is on screen: its own route, and Trips for an open trip and the map too. */
 fun Screen.isSelectedFor(route: String?): Boolean =
-    route == this.route || (this == Screen.Trips && route == Screen.TripDetail.route)
+    route == this.route || (this == Screen.Trips && (route == Screen.TripDetail.route || route == Screen.OpenMap.route))

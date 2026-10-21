@@ -38,6 +38,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -97,6 +98,8 @@ fun TripsScreen(
     onMarkSpot: () -> Unit,
     /** Each Mark spot outcome, once - shown as a snackbar. */
     spotMarkResults: Flow<SpotMarkResult>,
+    /** Opens the Open map screen: where you are, and the trip being recorded. */
+    onOpenMap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -155,7 +158,16 @@ fun TripsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item { ScreenHeader(title = stringResource(R.string.trips_title)) }
+            // The map icon is there in every state, recording included; when not recording, the card
+            // below also has a Map button beside Start trip.
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ScreenHeader(title = stringResource(R.string.trips_title), modifier = Modifier.weight(1f))
+                    IconButton(onClick = onOpenMap) {
+                        Icon(painterResource(R.drawable.ic_map_24), contentDescription = stringResource(R.string.cd_open_map_action))
+                    }
+                }
+            }
 
             uiState.interruptedTrip?.let { trip ->
                 item {
@@ -177,7 +189,7 @@ fun TripsScreen(
                 }
             } else if (uiState.interruptedTrip == null) {
                 item {
-                    IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) })
+                    IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) }, onOpenMap = onOpenMap)
                 }
             }
 
@@ -256,16 +268,24 @@ fun TripsScreen(
     }
 }
 
+/** Not recording: Start trip, the main action, and beside it Map, which opens the map without recording anything. */
 @Composable
-private fun IdleStatusCard(onStartClick: () -> Unit) {
+private fun IdleStatusCard(onStartClick: () -> Unit, onOpenMap: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = stringResource(R.string.trips_status_off_title), style = MaterialTheme.typography.titleMedium)
             Text(text = stringResource(R.string.trips_status_off_description), style = MaterialTheme.typography.bodyMedium)
-            Button(onClick = onStartClick, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                Text(stringResource(R.string.trips_start_button))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onStartClick, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.trips_start_button), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                OutlinedButton(onClick = onOpenMap) {
+                    Icon(painterResource(R.drawable.ic_map_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                    Text(stringResource(R.string.trips_open_map_button), maxLines = 1)
+                }
             }
         }
     }
@@ -528,7 +548,7 @@ internal fun formatElapsed(totalSeconds: Long): String {
     }
 }
 
-private fun isSystemLocationEnabled(context: Context): Boolean {
+internal fun isSystemLocationEnabled(context: Context): Boolean {
     val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
     return LocationManagerCompat.isLocationEnabled(manager)
 }
@@ -563,7 +583,7 @@ private fun sendFinishCommand(context: Context) {
     )
 }
 
-private fun appSettingsIntent(context: Context): Intent = Intent(
+internal fun appSettingsIntent(context: Context): Intent = Intent(
     Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
     Uri.fromParts("package", context.packageName, null),
 )
