@@ -11,3 +11,16 @@
 local.properties
 app/build/
 *.hprof
+
+# Release signing: keystores, certificates and signing properties never belong in Git (keep them
+# outside the repository, see docs/RELEASING.md); release records and signed bundles go to dist/.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+signing.properties
+upload*.properties
+/dist/

@@ -489,8 +489,9 @@ app under **Settings → Privacy policy**. In short:
 
 ## For developers
 
-> The project and its package are still called **StepSplit** (`com.example.stepsplit`). Only the
-> name shown to users changed.
+> The project and its Kotlin package are still called **StepSplit** (`com.example.stepsplit`).
+> The app's ID on phones and Google Play is `bukin.stepsgpsroute` (`bukin.stepsgpsroute.debug` for
+> debug builds).
 
 ### Project structure
 
@@ -556,7 +557,7 @@ with platform 36.
   labels, spot numbers and gap lines, a known emulator bug
   ([maplibre-native#3648](https://github.com/maplibre/maplibre-native/issues/3648)); start it with
   `-gpu swangle` instead.
-- **Debug tools.** Debug builds (`com.example.stepsplit.debug`) add a *Debug tools* section in
+- **Debug tools.** Debug builds (`bukin.stepsgpsroute.debug`) add a *Debug tools* section in
   Settings:
   - *Generate sample data*: a week of fake steps, stored under a separate source so they never
     count toward lifetime stats;
@@ -564,6 +565,22 @@ with platform 36.
   - device diagnostics.
 
   None of this exists in release builds.
+
+### Releasing
+
+Google Play releases are built, checked and signed with `scripts/release.sh`, from one commit in
+an isolated checkout, into a read-only, git-ignored `dist/` folder. The upload key stays outside
+the repository, and `jarsigner` asks for its password. See [docs/RELEASING.md](docs/RELEASING.md)
+for the upload key, version codes and the release steps:
+
+```bash
+scripts/release.sh build main                      # gates + checks -> dist/<release>/
+scripts/release.sh sign dist/<release> <keystore> upload
+scripts/release.sh test-apk dist/<release>         # debug-key copy of the release APK for testing
+```
+
+Debug builds installed before the ID change (`com.example.stepsplit.debug`) are a separate app;
+docs/RELEASING.md also explains how to move their data.
 
 ### Database
 
