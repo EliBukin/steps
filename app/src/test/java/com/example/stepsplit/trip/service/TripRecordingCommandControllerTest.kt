@@ -139,7 +139,8 @@ class TripRecordingCommandControllerTest {
     private lateinit var coordinator: TripRecordingCoordinator
     private lateinit var coordinatorScope: CoroutineScope
     private lateinit var controller: TripRecordingCommandController
-    private val stoppedStartIds = mutableListOf<Int>()
+    // Written from the coordinator's background scope when a collector fails, read by the test.
+    private val stoppedStartIds = CopyOnWriteArrayList<Int>()
     private val fixedNow = Instant.parse("2026-03-10T10:00:00Z")
     private lateinit var clock: MutableClock
 
@@ -201,6 +202,17 @@ class TripRecordingCommandControllerTest {
 
     private suspend fun awaitFlushInvoked(client: FakeTripLocationClient, timeoutMs: Long = 5_000) {
         withTimeout(timeoutMs) { while (!client.flushInvoked) yield() }
+    }
+
+    /**
+     * Waits until the service has been asked to stop [expected]`.size` times, then checks for which
+     * start ids. Use this, not an immediate assertEquals, when the stop comes from a collector
+     * failure: that runs on the coordinator's background scope and asks for the stop only after it
+     * has written INTERRUPTED, so the trip can already read INTERRUPTED before the stop arrives.
+     */
+    private suspend fun awaitStoppedStartIds(expected: List<Int>, timeoutMs: Long = 5_000) {
+        withTimeout(timeoutMs) { while (stoppedStartIds.size < expected.size) yield() }
+        assertEquals(expected, stoppedStartIds)
     }
 
     // 1. Explicit Start with no active trip creates exactly one trip and starts one collector.
@@ -346,7 +358,7 @@ class TripRecordingCommandControllerTest {
         awaitTripState(tripId, TripState.INTERRUPTED)
 
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
-        assertEquals(listOf(2), stoppedStartIds)
+        awaitStoppedStartIds(listOf(2))
     }
 
     // Defensive: a malformed/missing EXTRA_TRIP_ID (-1) must never create or touch any trip - it safely stops instead.
@@ -397,7 +409,7 @@ class TripRecordingCommandControllerTest {
         locationClient.failActiveCollection(IllegalStateException("registration lost"))
         awaitTripState(tripId, TripState.INTERRUPTED)
 
-        assertEquals(listOf(1), stoppedStartIds)
+        awaitStoppedStartIds(listOf(1))
         awaitSubscriptionCount(0)
     }
 
