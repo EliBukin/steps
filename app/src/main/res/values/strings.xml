@@ -6,6 +6,7 @@
     <string name="nav_history">היסטוריה</string>
     <string name="nav_stats">סטטיסטיקה</string>
     <string name="nav_trips">טיולים</string>
+    <string name="nav_map">מפה</string>
     <string name="nav_settings">הגדרות</string>
 
     <string name="label_workout_steps">צעדי אימון</string>
@@ -106,12 +107,10 @@
 
     <string name="trips_title">טיולים</string>
     <string name="trips_status_off_title">הקלטת מסלול כבויה</string>
-    <string name="trips_status_off_description">המיקום משמש רק בזמן הקלטת טיול או כשהמפה פתוחה - שום דבר לא מוקלט כל עוד הלשונית הזו פתוחה בלבד.</string>
+    <string name="trips_status_off_description">המיקום משמש רק בזמן הקלטת טיול או כשלשונית המפה פתוחה - שום דבר לא מוקלט כל עוד הלשונית הזו פתוחה בלבד.</string>
     <string name="trips_start_button">התחלת טיול</string>
     <string name="trips_history_title">טיולים קודמים</string>
     <string name="trips_history_empty">עדיין לא נרשמו טיולים</string>
-    <string name="trips_open_map_button">מפה</string>
-    <string name="cd_open_map_action">פתיחת המפה</string>
 
     <string name="open_map_title">מפה</string>
     <string name="open_map_recording_subtitle">טיול בהקלטה · %1$s</string>

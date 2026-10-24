@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.callbackFlow
  * ([FusedTripLocationClient.MIN_UPDATE_INTERVAL_MILLIS]) instead of every 10 seconds. Its own
  * acceptance rules still decide which points it keeps.
  *
- * `@SuppressLint("MissingPermission")`: the Open map screen collects this only with location
+ * `@SuppressLint("MissingPermission")`: the Map tab collects this only with location
  * permission (fine or coarse). Without it, `requestLocationUpdates` throws [SecurityException] or
  * fails its `Task`, and either closes the flow with that exception rather than crashing.
  */

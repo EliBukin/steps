@@ -21,8 +21,22 @@ class ScreenSelectionTest {
     }
 
     @Test
-    fun `the map keeps Trips highlighted`() {
-        assertEquals(listOf(Screen.Trips), bottomNavScreens.filter { it.isSelectedFor(Screen.OpenMap.route) })
+    fun `the bottom bar is Today, History, Map, Trips and Stats, with no Settings tab`() {
+        assertEquals(listOf(Screen.Today, Screen.History, Screen.OpenMap, Screen.Trips, Screen.Stats), bottomNavScreens)
+    }
+
+    @Test
+    fun `Settings keeps the tab it was opened from highlighted`() {
+        bottomNavScreens.forEach { tab ->
+            val highlighted = highlightedRoute(currentRoute = Screen.Settings.route, previousRoute = tab.route)
+            assertEquals(listOf(tab), bottomNavScreens.filter { it.isSelectedFor(highlighted) })
+        }
+    }
+
+    @Test
+    fun `away from Settings the current screen decides`() {
+        assertEquals(Screen.OpenMap.route, highlightedRoute(currentRoute = Screen.OpenMap.route, previousRoute = Screen.Trips.route))
+        assertEquals(listOf(Screen.Trips), bottomNavScreens.filter { it.isSelectedFor(highlightedRoute(Screen.TripDetail.route, Screen.Trips.route)) })
     }
 
     @Test

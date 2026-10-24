@@ -40,6 +40,8 @@ import kotlin.math.roundToInt
 fun HistoryScreen(
     uiState: HistoryUiState,
     onRefresh: () -> Unit,
+    /** The gear icon in the header: opens Settings. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LifecycleResumeEffect(Unit) {
@@ -53,7 +55,7 @@ fun HistoryScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            ScreenHeader(title = stringResource(R.string.nav_history), subtitle = stringResource(R.string.history_title))
+            ScreenHeader(title = stringResource(R.string.nav_history), subtitle = stringResource(R.string.history_title), onOpenSettings = onOpenSettings)
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {

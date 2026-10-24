@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -39,6 +40,7 @@ import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.navigation.bottomNavScreens
+import com.example.stepsplit.ui.navigation.highlightedRoute
 import com.example.stepsplit.ui.navigation.isSelectedFor
 import com.example.stepsplit.ui.settings.SettingsScreen
 import com.example.stepsplit.ui.settings.SettingsViewModel
@@ -65,6 +67,8 @@ fun StepSplitApp(
     val navController = rememberNavController()
     val factory = remember(container) { ViewModelFactory(container) }
     val coroutineScope = rememberCoroutineScope()
+    // The gear icon in every tab's header. Settings opens over the tab, which stays highlighted.
+    val openSettings: () -> Unit = { navController.navigate(Screen.Settings.route) { launchSingleTop = true } }
 
     // Set by MainActivity when launched/redelivered from the trip-recording notification -
     // navigates there once per event rather than changing the NavHost's own start destination, so
@@ -75,11 +79,7 @@ fun StepSplitApp(
     // identical value) and the second tap's navigation would silently never fire.
     LaunchedEffect(navigationEvent?.id) {
         val route = navigationEvent?.route ?: return@LaunchedEffect
-        navController.navigate(route) {
-            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-            launchSingleTop = true
-            restoreState = true
-        }
+        navController.navigateToTab(route)
     }
 
     Scaffold(
@@ -106,17 +106,18 @@ fun StepSplitApp(
                     // comment). A denial switches the banner to Health Connect's own screen.
                     onGrantPermission = { onRequestPermission(viewModel::onPermissionRequestResult) },
                     onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::recheckPermission) },
+                    onOpenSettings = openSettings,
                 )
             }
             composable(Screen.History.route) {
                 val viewModel: HistoryViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
-                HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh)
+                HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
             }
             composable(Screen.Stats.route) {
                 val viewModel: StatsViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
-                StatsScreen(uiState = uiState, onRefresh = viewModel::refresh)
+                StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
             }
             composable(Screen.Trips.route) {
                 val viewModel: TripsViewModel = viewModel(factory = factory)
@@ -128,20 +129,21 @@ fun StepSplitApp(
                     onRequestTripPermissions = onRequestTripPermissions,
                     onMarkSpot = viewModel::markSpot,
                     spotMarkResults = viewModel.spotMarkResults,
-                    onOpenMap = { navController.navigate(Screen.OpenMap.route) { launchSingleTop = true } },
+                    onOpenSettings = openSettings,
                 )
             }
             composable(Screen.OpenMap.route) {
                 val viewModel: OpenMapViewModel = viewModel(factory = factory)
                 val uiState by viewModel.uiState.collectAsState()
-                // Collected only while the screen is at least started, so leaving the app stops the
-                // location request (see OpenMapViewModel.location).
+                // Collected only while this tab's back stack entry is at least started: switching to
+                // another tab or leaving the app stops the location request at once (see
+                // OpenMapViewModel.location).
                 val location by viewModel.location.collectAsStateWithLifecycle()
                 OpenMapScreen(
                     uiState = uiState,
                     location = location,
                     onLocationAvailableChange = viewModel::setLocationAvailable,
-                    onBack = { navController.popBackStack() },
+                    onOpenSettings = openSettings,
                 )
             }
             composable(
@@ -175,9 +177,24 @@ fun StepSplitApp(
                     },
                     onRunStepSourceCheck = viewModel::runStepSourceCheck,
                     onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::refreshAvailability) },
+                    onBack = { navController.popBackStack() },
                 )
             }
         }
+    }
+}
+
+/**
+ * Switches to a tab, keeping each tab's own state (scroll position, an open trip, the map's camera).
+ * Settings closes first: otherwise it would be saved with the tab under it, and come back the next
+ * time that tab is opened.
+ */
+private fun NavHostController.navigateToTab(route: String) {
+    if (currentDestination?.route == Screen.Settings.route) popBackStack()
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }
 
@@ -185,18 +202,13 @@ fun StepSplitApp(
 private fun StepSplitBottomBar(navController: NavHostController) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+    val highlighted = highlightedRoute(currentRoute, navController.previousBackStackEntry?.destination?.route)
 
     NavigationBar {
         bottomNavScreens.forEach { screen ->
             NavigationBarItem(
-                selected = screen.isSelectedFor(currentRoute),
-                onClick = {
-                    navController.navigate(screen.route) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
+                selected = screen.isSelectedFor(highlighted),
+                onClick = { navController.navigateToTab(screen.route) },
                 icon = { Icon(imageVector = screen.icon(), contentDescription = null) },
                 label = { Text(stringResource(screen.labelRes())) },
             )
@@ -204,14 +216,15 @@ private fun StepSplitBottomBar(navController: NavHostController) {
     }
 }
 
+@Composable
 private fun Screen.icon(): ImageVector = when (this) {
     Screen.Today -> Icons.Filled.Home
     Screen.History -> Icons.Filled.DateRange
     Screen.Stats -> Icons.Filled.Star
     Screen.Trips -> Icons.Filled.Place
+    Screen.OpenMap -> ImageVector.vectorResource(R.drawable.ic_map_24)
     Screen.Settings -> Icons.Filled.Settings
     is Screen.TripDetail -> Icons.Filled.Place
-    Screen.OpenMap -> Icons.Filled.Place
 }
 
 private fun Screen.labelRes(): Int = when (this) {
@@ -219,7 +232,7 @@ private fun Screen.labelRes(): Int = when (this) {
     Screen.History -> R.string.nav_history
     Screen.Stats -> R.string.nav_stats
     Screen.Trips -> R.string.nav_trips
+    Screen.OpenMap -> R.string.nav_map
     Screen.Settings -> R.string.nav_settings
     is Screen.TripDetail -> R.string.nav_trips
-    Screen.OpenMap -> R.string.nav_trips
 }

@@ -67,6 +67,8 @@ fun TodayScreen(
     onRefresh: () -> Unit,
     onGrantPermission: () -> Unit,
     onOpenHealthConnect: () -> Unit,
+    /** The gear icon in the header: opens Settings. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -111,6 +113,7 @@ fun TodayScreen(
                     ScreenHeader(
                         title = stringResource(R.string.nav_today),
                         subtitle = "${formatDayLabel(today)} ${formatDateLabel(today)}",
+                        onOpenSettings = onOpenSettings,
                     )
                 }
 

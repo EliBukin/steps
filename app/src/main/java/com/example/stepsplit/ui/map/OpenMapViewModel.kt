@@ -81,7 +81,7 @@ internal fun splitAtGaps(route: List<TripPoint>): RouteParts {
 }
 
 /**
- * The Open map screen: where the phone is, and the trip being recorded, if any.
+ * The Map tab: where the phone is, and the trip being recorded, if any.
  *
  * [location] asks [MapLocationClient] for fixes only while two things hold: the screen collects it
  * (it does so only while it's on screen with the app in the foreground - leaving the map, or the

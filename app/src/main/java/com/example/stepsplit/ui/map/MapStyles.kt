@@ -6,7 +6,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
-/** The map backgrounds of the trip screen's map and the Open map screen. */
+/** The map backgrounds of the trip screen's map and the Map tab. */
 internal object MapStyles {
     /**
      * OpenFreeMap (https://openfreemap.org) - a free, keyless vector tile provider with no request
@@ -14,7 +14,7 @@ internal object MapStyles {
      * follows the system light/dark setting; both styles carry their own OSM/OpenMapTiles attribution,
      * shown automatically by MapLibre's built-in attribution control (see `MaplibreMap`'s default
      * `MapOptions.ornamentOptions`, never disabled here). Only ever requested while a map is on
-     * screen - the trip screen's or the Open map screen's - no prefetching, no offline pack download,
+     * screen - the trip screen's or the Map tab's - no prefetching, no offline pack download,
      * no background loading.
      */
     private const val LIGHT_STYLE_URL = "https://tiles.openfreemap.org/styles/positron"
@@ -27,7 +27,7 @@ internal object MapStyles {
     fun styleUrl(isDark: Boolean): String = if (isDark) DARK_STYLE_URL else LIGHT_STYLE_URL
 
     /**
-     * The Open map's background without internet: one plain color and nothing else. It has no
+     * The Map tab's background without internet: one plain color and nothing else. It has no
      * tiles, fonts ("glyphs") or icons ("sprite") to download, so it draws offline at once, and the
      * location dot, the route and the spots still draw on it - the spots without their numbers,
      * which need the map server's fonts.

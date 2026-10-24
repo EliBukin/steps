@@ -3,7 +3,7 @@ package com.example.stepsplit.data.trip
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Where the phone is, for the "you are here" dot on the Open map screen - nothing else. Kept apart
+ * Where the phone is, for the "you are here" dot on the Map tab - nothing else. Kept apart
  * from [TripLocationClient], which only trip recording uses, so the recording's own guarantees stay
  * as they are. Cold: [locationUpdates] asks for location only while something collects it, and
  * [com.example.stepsplit.ui.map.OpenMapViewModel] collects it only while the map is on screen with

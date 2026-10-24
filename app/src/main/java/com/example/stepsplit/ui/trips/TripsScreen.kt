@@ -38,7 +38,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -98,8 +97,8 @@ fun TripsScreen(
     onMarkSpot: () -> Unit,
     /** Each Mark spot outcome, once - shown as a snackbar. */
     spotMarkResults: Flow<SpotMarkResult>,
-    /** Opens the Open map screen: where you are, and the trip being recorded. */
-    onOpenMap: () -> Unit,
+    /** The gear icon in the header: opens Settings. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -158,16 +157,7 @@ fun TripsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // The map icon is there in every state, recording included; when not recording, the card
-            // below also has a Map button beside Start trip.
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ScreenHeader(title = stringResource(R.string.trips_title), modifier = Modifier.weight(1f))
-                    IconButton(onClick = onOpenMap) {
-                        Icon(painterResource(R.drawable.ic_map_24), contentDescription = stringResource(R.string.cd_open_map_action))
-                    }
-                }
-            }
+            item { ScreenHeader(title = stringResource(R.string.trips_title), onOpenSettings = onOpenSettings) }
 
             uiState.interruptedTrip?.let { trip ->
                 item {
@@ -189,7 +179,7 @@ fun TripsScreen(
                 }
             } else if (uiState.interruptedTrip == null) {
                 item {
-                    IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) }, onOpenMap = onOpenMap)
+                    IdleStatusCard(onStartClick = { beginRecording(PendingRecordingAction.Start) })
                 }
             }
 
@@ -268,24 +258,16 @@ fun TripsScreen(
     }
 }
 
-/** Not recording: Start trip, the main action, and beside it Map, which opens the map without recording anything. */
 @Composable
-private fun IdleStatusCard(onStartClick: () -> Unit, onOpenMap: () -> Unit) {
+private fun IdleStatusCard(onStartClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = stringResource(R.string.trips_status_off_title), style = MaterialTheme.typography.titleMedium)
             Text(text = stringResource(R.string.trips_status_off_description), style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onStartClick, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.trips_start_button), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                OutlinedButton(onClick = onOpenMap) {
-                    Icon(painterResource(R.drawable.ic_map_24), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-                    Text(stringResource(R.string.trips_open_map_button), maxLines = 1)
-                }
+            Button(onClick = onStartClick, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                Text(stringResource(R.string.trips_start_button))
             }
         }
     }

@@ -51,6 +51,8 @@ private const val BURGER_ICON = "🍔"
 fun StatsScreen(
     uiState: StatsUiState,
     onRefresh: () -> Unit,
+    /** The gear icon in the header: opens Settings. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LifecycleResumeEffect(Unit) {
@@ -63,7 +65,7 @@ fun StatsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { ScreenHeader(title = stringResource(R.string.nav_stats), subtitle = stringResource(R.string.stats_subtitle)) }
+        item { ScreenHeader(title = stringResource(R.string.nav_stats), subtitle = stringResource(R.string.stats_subtitle), onOpenSettings = onOpenSettings) }
 
         if (!uiState.stats.hasData) {
             item { ZeroDataCard() }

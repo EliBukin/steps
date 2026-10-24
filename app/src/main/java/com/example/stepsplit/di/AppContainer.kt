@@ -45,7 +45,7 @@ class AppContainer(
     context: Context,
     /** Live GPS fixes for trip recording; only tests pass another (a [com.example.stepsplit.data.trip.FakeTripLocationClient]). */
     val locationClient: TripLocationClient = FusedTripLocationClient(context),
-    /** Where the phone is, for the Open map screen's dot only; never used by trip recording. */
+    /** Where the phone is, for the Map tab's dot only; never used by trip recording. */
     val mapLocationClient: MapLocationClient = FusedMapLocationClient(context),
 ) {
     // Not Clock.systemDefaultZone(): that freezes the zone at construction time, so a device

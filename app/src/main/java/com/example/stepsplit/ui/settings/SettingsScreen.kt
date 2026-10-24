@@ -59,6 +59,8 @@ fun SettingsScreen(
     onGenerateSampleData: () -> Unit,
     onRunStepSourceCheck: () -> Unit,
     onOpenHealthConnect: () -> Unit,
+    /** Settings opens from a tab's gear icon, over that tab; the back arrow returns to it. */
+    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Privacy, SettingsSection.Debug) }
@@ -68,7 +70,7 @@ fun SettingsScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { ScreenHeader(title = stringResource(R.string.settings_title)) }
+        item { ScreenHeader(title = stringResource(R.string.settings_title), onBack = onBack) }
         items(sections) { section ->
             when (section) {
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)

@@ -13,9 +13,9 @@
       Trip Route Recording (see TripRecordingService): requested only when the user taps "Start
       trip", never on app start. No ACCESS_BACKGROUND_LOCATION - this MVP only records while a
       trip is actively running and explicitly foregrounded via TripRecordingService, never as a
-      passive background collector. The Open map screen (ui/map/OpenMapScreen.kt) also uses
+      passive background collector. The Map tab (ui/map/OpenMapScreen.kt) also uses
       location, for its "you are here" dot: asked for when the user taps Allow there, used only
-      while that screen is open with the app in the foreground, and never stored.
+      while that tab is on screen with the app in the foreground, and never stored.
     -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -27,7 +27,7 @@
     <!--
       The maps only (ui/trips/TripRouteMap.kt and ui/map/OpenMapScreen.kt): fetches basemap
       style/vector tiles from OpenFreeMap (a free, keyless tile provider - no API key/secret is
-      stored anywhere in this app) while the trip-detail screen or the Open map screen is visible.
+      stored anywhere in this app) while the trip-detail screen or the Map tab is visible.
       No location is ever sent: the requests are for the map's style, fonts and tiles only. Never
       used for background loading - see README's "Map" and "The Map screen" sections. No other
       feature in this app performs any network request.

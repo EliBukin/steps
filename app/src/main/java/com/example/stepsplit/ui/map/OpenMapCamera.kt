@@ -9,7 +9,7 @@ import kotlin.math.min
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.spatialk.geojson.Position
 
-/** Pure camera rules for the Open map screen, kept apart from the screen so the JVM tests can check them. */
+/** Pure camera rules for the Map tab, kept apart from the screen so the JVM tests can check them. */
 internal object OpenMapCamera {
     /** Following the dot: paths and streets readable, a few hundred meters around. */
     const val FOLLOW_ZOOM = 16.0

@@ -23,12 +23,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
@@ -53,15 +50,14 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
 import com.example.stepsplit.data.trip.MapFix
+import com.example.stepsplit.ui.common.ScreenHeader
 import com.example.stepsplit.ui.trips.MetricScaleBar
 import com.example.stepsplit.ui.trips.RouteCameraBounds
 import com.example.stepsplit.ui.trips.SpotMarkerLayers
@@ -149,7 +145,7 @@ private val FOLLOW_ANIMATION = 600.milliseconds
 private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.dp, bottom = 64.dp)
 
 /**
- * The Open map screen: a full map with where the phone is, and the trip being recorded, if any.
+ * The Map tab: a full map with where the phone is, and the trip being recorded, if any.
  *
  * - **Your location.** A blue dot with a circle for its accuracy, and a small arrow for the
  *   direction of travel while moving. The map follows it until the user pans, zooms or rotates; the
@@ -162,8 +158,9 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  *   fix yet, and no internet - then the map draws a plain background ([MapStyles.offlineStyleJson])
  *   with the dot and the route still on it, and Retry map tries the real map again.
  *
- * Location is asked for only while this screen is on screen, with the app in the foreground - see
- * [OpenMapViewModel]. Approximate location is enough here (the circle is just bigger); recording a
+ * Location is asked for only while this tab is on screen, with the app in the foreground - switching
+ * to another tab or app stops it at once (see [OpenMapViewModel]). The camera is kept for when the
+ * tab comes back (`rememberCameraState` is saved with the tab's state). Approximate location is enough here (the circle is just bigger); recording a
  * trip still needs precise location, as before.
  *
  * Like the trip screen's map, the map must not go inside a vertically scrollable container.
@@ -174,7 +171,8 @@ fun OpenMapScreen(
     location: MapFix?,
     /** Tells the ViewModel whether it may ask for location: permission granted, and location on. */
     onLocationAvailableChange: (Boolean) -> Unit,
-    onBack: () -> Unit,
+    /** The gear icon in the header: opens Settings. */
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -239,7 +237,12 @@ fun OpenMapScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        OpenMapTopBar(uiState = uiState, onBack = onBack)
+        ScreenHeader(
+            title = stringResource(R.string.open_map_title),
+            subtitle = uiState.recording?.let { stringResource(R.string.open_map_recording_subtitle, formatDistance(it.distanceMeters)) },
+            onOpenSettings = onOpenSettings,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+        )
 
         when {
             !hasPermission -> if (permissionDeniedForGood) {
@@ -285,32 +288,6 @@ fun OpenMapScreen(
                 offline = mapLoadFailed,
                 onLoadFailed = { mapLoadFailed = true },
             )
-        }
-    }
-}
-
-@Composable
-private fun OpenMapTopBar(uiState: OpenMapUiState, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_navigate_back))
-        }
-        Column(modifier = Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
-            Text(
-                text = stringResource(R.string.open_map_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            uiState.recording?.let { recording ->
-                Text(
-                    text = stringResource(R.string.open_map_recording_subtitle, formatDistance(recording.distanceMeters)),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }

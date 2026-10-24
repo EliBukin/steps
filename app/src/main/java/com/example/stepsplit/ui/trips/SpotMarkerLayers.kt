@@ -57,7 +57,7 @@ private const val SPOT_NUMBER_FONT = "Noto Sans Bold"
 
 /**
  * A trip's marked spots as numbered markers - on the trip screen's map ([TripRouteMapCard]) and on
- * the Open map screen. Put it after the route's layers, so the spots sit on top of the route.
+ * the Map tab. Put it after the route's layers, so the spots sit on top of the route.
  */
 @Composable
 @MaplibreComposable
