@@ -30,4 +30,6 @@ data class MapFix(
     val bearingDegrees: Float?,
     /** When the fix was taken, on Android's elapsed-realtime clock, so its age is right even if the phone's clock changes. */
     val elapsedRealtimeNanos: Long,
+    /** How fast the phone moves, in meters per second; null when the fix doesn't say. */
+    val speedMetersPerSecond: Float? = null,
 )

@@ -3,7 +3,9 @@ package com.example.stepsplit.ui.map
 import com.example.stepsplit.data.trip.MapFix
 import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.ui.trips.RouteCameraBounds
+import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.log2
 import kotlin.math.min
 import org.maplibre.compose.camera.CameraPosition
@@ -63,6 +65,28 @@ internal object OpenMapCamera {
         val metersPerDpAtZoomZero = EARTH_CIRCUMFERENCE_METERS * cos(Math.toRadians(fix.latitude)) / TILE_SIZE_DP
         return log2(metersPerDpAtZoomZero * MAX_ACCURACY_RADIUS_DP / accuracy).coerceIn(WORLD_ZOOM, FOLLOW_ZOOM)
     }
+
+    /**
+     * How much of the way to go in one frame of [frameSeconds] when gliding with [timeConstantSeconds]:
+     * the same smooth glide whatever the frame rate, about two thirds of the way per time constant.
+     */
+    fun glideFraction(frameSeconds: Double, timeConstantSeconds: Double): Double =
+        if (frameSeconds <= 0.0) 0.0 else 1.0 - exp(-frameSeconds / timeConstantSeconds)
+
+    /**
+     * One frame of gliding from [current] toward [target] ([fraction] of the way): [target] itself once
+     * within about a centimeter, null when there's no target.
+     */
+    fun glideStep(current: Position, target: Position?, fraction: Double): Position? {
+        if (target == null) return null
+        val dLongitude = target.longitude - current.longitude
+        val dLatitude = target.latitude - current.latitude
+        if (abs(dLongitude) < ARRIVED_DEGREES && abs(dLatitude) < ARRIVED_DEGREES) return target
+        return Position(longitude = current.longitude + dLongitude * fraction, latitude = current.latitude + dLatitude * fraction)
+    }
+
+    /** About a centimeter, in degrees of latitude. */
+    private const val ARRIVED_DEGREES = 1e-7
 
     /** "Show whole route": the route recorded so far, and where the phone is now. */
     fun wholeRouteFit(route: List<TripPoint>, fix: MapFix?): RouteCameraBounds.Fit? {

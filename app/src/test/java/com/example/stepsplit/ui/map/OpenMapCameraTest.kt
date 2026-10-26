@@ -87,6 +87,28 @@ class OpenMapCameraTest {
     }
 
     /** MapLibre's meters per dp: 512 dp tiles. */
+    @Test
+    fun `a glide goes the same way whatever the frame rate`() {
+        val oneFrameAt30 = OpenMapCamera.glideFraction(1.0 / 30, 0.18)
+        val twoFramesAt60 = 1 - (1 - OpenMapCamera.glideFraction(1.0 / 60, 0.18)).let { it * it }
+
+        assertEquals(oneFrameAt30, twoFramesAt60, 1e-9)
+        assertEquals(1 - Math.exp(-1.0), OpenMapCamera.glideFraction(0.18, 0.18), 1e-9)
+        assertEquals(0.0, OpenMapCamera.glideFraction(0.0, 0.18), 0.0)
+    }
+
+    @Test
+    fun `a glide step moves part of the way, and lands on the target once within a centimeter`() {
+        val from = Position(longitude = 35.0, latitude = 31.0)
+        val to = Position(longitude = 35.01, latitude = 31.02)
+
+        val halfway = OpenMapCamera.glideStep(from, to, 0.5)!!
+        assertEquals(35.005, halfway.longitude, 1e-9)
+        assertEquals(31.01, halfway.latitude, 1e-9)
+        assertEquals(to, OpenMapCamera.glideStep(Position(longitude = 35.01 - 5e-8, latitude = 31.02 + 5e-8), to, 0.1))
+        assertNull(OpenMapCamera.glideStep(from, null, 0.5))
+    }
+
     private fun metersPerDp(latitude: Double, zoom: Double) = 40_075_016.686 * Math.cos(Math.toRadians(latitude)) / (512.0 * Math.pow(2.0, zoom))
 
     private fun point(latitude: Double, longitude: Double) =

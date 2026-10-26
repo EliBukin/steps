@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,6 +42,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -63,11 +65,13 @@ import com.example.stepsplit.ui.trips.SpotMarkerLayers
 import com.example.stepsplit.ui.trips.appSettingsIntent
 import com.example.stepsplit.ui.trips.formatDistance
 import com.example.stepsplit.ui.trips.isSystemLocationEnabled
+import kotlin.math.abs
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.TimeSource
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
@@ -124,10 +128,17 @@ private const val ROUTE_CASING_LAYER_ID = "recording-route-casing"
 private const val ROUTE_LAYER_ID = "recording-route-line"
 private const val GAP_LAYER_ID = "recording-route-gaps"
 private const val START_LAYER_ID = "recording-route-start"
+private const val HEADING_LAYER_ID = "you-are-here-heading"
 private const val LOCATION_LAYER_PREFIX = "you-are-here"
 
 /** Following the dot moves the map this smoothly to each new fix (they come about every 2 seconds). */
 private val FOLLOW_ANIMATION = 600.milliseconds
+
+/**
+ * "Map turns with me" turns and moves the map this smoothly toward each new heading and fix: about
+ * two thirds of the way in this time, frame by frame (see [OpenMapCamera.glideFraction]).
+ */
+private const val TURN_GLIDE_SECONDS = 0.18
 
 /** Around the whole route; more at the bottom end, which the map's buttons cover. */
 private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.dp, bottom = 64.dp)
@@ -135,11 +146,14 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
 /**
  * The Map tab: a full map with where the phone is, and the trip being recorded, if any.
  *
- * - **Your location.** A blue dot with a circle for its accuracy, and a small arrow for the
- *   direction of travel while moving. The map follows it until the user pans, zooms or rotates; the
- *   My location button follows it again. While it follows, the screen stays on (it turns off as
- *   usual once the map stops following, or the screen closes). An old fix stays as a gray dot, with
- *   "Finding your location...".
+ * - **Your location.** A blue dot with a circle for its accuracy, a soft cone for the way the phone
+ *   points (its compass - see [rememberDeviceHeading]), and a small arrow for the direction of travel
+ *   while moving. The map follows it until the user pans, zooms or rotates; the My location button
+ *   follows it again. While it follows, the screen stays on (it turns off as usual once the map stops
+ *   following, or the screen closes). An old fix stays as a gray dot, with "Finding your location...".
+ * - **Map turns with me.** The compass button turns the map with the phone, so what's ahead is up -
+ *   with the GPS direction of travel instead while moving fast (see [MapBearing]); tapping it again
+ *   turns the map back to north up. Turning the map by hand is off meanwhile.
  * - **The trip being recorded:** its route so far, its start and its spots, updating as it grows.
  * - **What can go wrong** is said above the map, with the way out: no location permission (Allow,
  *   or the app's settings once Android stops asking), location turned off (Turn on location), no
@@ -149,9 +163,9 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  *   loads, with the map tiles viewed before (from MapLibre's cache) on its plain land color.
  *
  * Location is asked for only while this tab is on screen, with the app in the foreground - switching
- * to another tab or app stops it at once (see [OpenMapViewModel]). The map is the light outdoor
- * style in dark mode too (see [rememberOutdoorStyle]), and what's drawn on it keeps its light-map
- * colors; the buttons and banners follow the app's theme. The camera is kept for when the
+ * to another tab or app stops it at once (see [OpenMapViewModel]); so does the compass. The map is
+ * the light outdoor style in dark mode too (see [rememberOutdoorStyle]), and what's drawn on it keeps
+ * its light-map colors; the buttons and banners follow the app's theme. The camera is kept for when the
  * tab comes back (`rememberCameraState` is saved with the tab's state). Approximate location is enough here (the circle is just bigger); recording a
  * trip still needs precise location, as before.
  *
@@ -218,7 +232,9 @@ fun OpenMapScreen(
     }
 
     var following by rememberSaveable { mutableStateOf(true) }
+    var rotateWithMe by rememberSaveable { mutableStateOf(false) }
     var mapLoadFailed by rememberSaveable { mutableStateOf(false) }
+    val hasCompass = rememberHasCompass()
 
     // The screen stays on while the map follows the dot, as a navigation app's does.
     val view = LocalView.current
@@ -259,6 +275,7 @@ fun OpenMapScreen(
             )
             !fixIsFresh -> StatusBanner(text = stringResource(R.string.open_map_finding_location), showProgress = true)
         }
+        if (rotateWithMe && !hasCompass) StatusBanner(text = stringResource(R.string.open_map_no_compass_message))
         if (mapLoadFailed) {
             StatusBanner(
                 text = stringResource(R.string.open_map_offline_message),
@@ -277,6 +294,8 @@ fun OpenMapScreen(
                 fixIsFresh = fixIsFresh,
                 following = following,
                 onFollowingChange = { following = it },
+                rotateWithMe = rotateWithMe,
+                onRotateWithMeChange = { rotateWithMe = it },
                 offline = mapLoadFailed,
                 onLoadFailed = { mapLoadFailed = true },
             )
@@ -325,6 +344,8 @@ private fun OpenMapView(
     fixIsFresh: Boolean,
     following: Boolean,
     onFollowingChange: (Boolean) -> Unit,
+    rotateWithMe: Boolean,
+    onRotateWithMeChange: (Boolean) -> Unit,
     offline: Boolean,
     onLoadFailed: () -> Unit,
 ) {
@@ -338,22 +359,50 @@ private fun OpenMapView(
     val coroutineScope = rememberCoroutineScope()
     val mapDescription = stringResource(if (recording != null) R.string.cd_open_map_with_recording else R.string.cd_open_map)
 
+    // The compass runs while there's a dot to draw its cone on, or the map turns with it.
+    val heading = rememberDeviceHeading(enabled = location != null || rotateWithMe, near = location)
+
     // Any pan, zoom or rotate by the user stops following.
     val currentOnFollowingChange by rememberUpdatedState(onFollowingChange)
     LaunchedEffect(cameraState) {
         snapshotFlow { cameraState.moveReason }.collect { if (it == CameraMoveReason.GESTURE) currentOnFollowingChange(false) }
     }
-    // While following, each new fix moves the map to it: at once from far away (the first fix after
-    // the world view), smoothly otherwise.
-    LaunchedEffect(following, location) {
-        if (!following || location == null) return@LaunchedEffect
+    // The map's turn while following north up: as the user left it when they asked to follow, north
+    // after "Back to north up".
+    var followBearing by rememberSaveable { mutableDoubleStateOf(cameraState.position.bearing) }
+    // While following (and the map doesn't turn with the phone), each new fix moves the map to it: at
+    // once from far away (the first fix after the world view), smoothly otherwise.
+    LaunchedEffect(following, location, rotateWithMe, followBearing) {
+        if (!following || location == null || rotateWithMe) return@LaunchedEffect
         val current = cameraState.position
         val target = CameraPosition(
             target = Position(longitude = location.longitude, latitude = location.latitude),
             zoom = OpenMapCamera.followZoom(current.zoom, location),
-            bearing = current.bearing,
+            bearing = followBearing,
         )
         if (OpenMapCamera.isFarOut(current.zoom, location)) cameraState.position = target else cameraState.animateTo(target, FOLLOW_ANIMATION)
+    }
+    // Map turns with me: whenever the heading or the fix changes, the map glides toward the new turn
+    // (and, while following, the new fix) frame by frame; a newer change takes over from where it is.
+    val currentLocation by rememberUpdatedState(location)
+    val currentFollowing by rememberUpdatedState(following)
+    LaunchedEffect(rotateWithMe, cameraState) {
+        if (!rotateWithMe) return@LaunchedEffect
+        var source = MapBearing.Source.COMPASS
+        snapshotFlow { Triple(heading.value, currentLocation, currentFollowing) }.collectLatest { (compass, fix, follow) ->
+            val choice = MapBearing.choose(compass, fix, SystemClock.elapsedRealtimeNanos(), source)
+            source = choice.source
+            val goal = if (follow && fix != null) Position(longitude = fix.longitude, latitude = fix.latitude) else null
+            if (fix != null && follow && OpenMapCamera.isFarOut(cameraState.position.zoom, fix)) {
+                cameraState.position = CameraPosition(
+                    target = goal!!,
+                    zoom = OpenMapCamera.fittingZoom(fix),
+                    bearing = choice.bearing?.toDouble() ?: cameraState.position.bearing,
+                )
+                return@collectLatest
+            }
+            cameraState.glideTo(bearing = choice.bearing, target = goal)
+        }
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -363,8 +412,10 @@ private fun OpenMapView(
             cameraState = cameraState,
             options = MapOptions(
                 // As on the trip screen: pan, zoom and rotate, no tilt; the app's own metric scale bar.
-                gestureOptions = GestureOptions(isTiltEnabled = false),
-                ornamentOptions = OrnamentOptions(isScaleBarEnabled = false),
+                // While the map turns with the phone, turning it by hand is off, and so is MapLibre's
+                // compass: the app's compass button turns it back to north.
+                gestureOptions = GestureOptions(isTiltEnabled = false, isRotateEnabled = !rotateWithMe),
+                ornamentOptions = OrnamentOptions(isScaleBarEnabled = false, isCompassEnabled = !rotateWithMe),
             ),
             onMapLoadFailed = { onLoadFailed() },
         ) {
@@ -407,7 +458,13 @@ private fun OpenMapView(
             val spots = recording?.spots.orEmpty()
             if (spots.isNotEmpty()) SpotMarkerLayers(spots, showNumbers = !offline)
 
-            // The dot last, on top of everything.
+            // The dot last, on top of everything, with the compass cone just under it.
+            HeadingCone(
+                id = HEADING_LAYER_ID,
+                location = location,
+                heading = { heading.value },
+                color = if (fixIsFresh) FreshDotColor else StaleDotColor,
+            )
             LocationPuck(
                 idPrefix = LOCATION_LAYER_PREFIX,
                 location = remember(location) { location?.toPuckLocation() },
@@ -435,6 +492,8 @@ private fun OpenMapView(
             if (route.size >= 2) {
                 SmallFloatingActionButton(
                     onClick = {
+                        // The whole route is shown north up.
+                        onRotateWithMeChange(false)
                         onFollowingChange(false)
                         coroutineScope.launch { cameraState.showWholeRoute(OpenMapCamera.wholeRouteFit(route, location)) }
                     },
@@ -444,8 +503,31 @@ private fun OpenMapView(
                     Icon(painterResource(R.drawable.ic_fit_route_24), contentDescription = stringResource(R.string.trip_detail_map_show_route_action))
                 }
             }
+            val rotateLabel = stringResource(if (rotateWithMe) R.string.open_map_north_up_action else R.string.open_map_rotate_with_me_action)
             SmallFloatingActionButton(
-                onClick = { onFollowingChange(true) },
+                onClick = {
+                    if (rotateWithMe) {
+                        onRotateWithMeChange(false)
+                        followBearing = 0.0
+                        if (!following) coroutineScope.launch { cameraState.animateTo(cameraState.position.copy(bearing = 0.0)) }
+                    } else {
+                        onRotateWithMeChange(true)
+                    }
+                },
+                modifier = Modifier.semantics { contentDescription = rotateLabel },
+                containerColor = if (rotateWithMe) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+            ) {
+                // Shows where north is while the map turns; plain north up otherwise.
+                CompassNeedle(
+                    bearing = { if (rotateWithMe) cameraState.position.bearing.toFloat() else 0f },
+                    southColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SmallFloatingActionButton(
+                onClick = {
+                    followBearing = if (rotateWithMe) 0.0 else cameraState.position.bearing
+                    onFollowingChange(true)
+                },
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = if (following) FreshDotColor else MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
@@ -457,6 +539,32 @@ private fun OpenMapView(
         }
     }
 }
+
+/**
+ * Glides the map toward [bearing] (null: keeps its turn) and [target] (null: stays where it is), a
+ * little each frame, until it's there - or this is cancelled by a newer heading or fix, which then
+ * glides on from wherever the map got to.
+ */
+private suspend fun CameraState.glideTo(bearing: Float?, target: Position?) {
+    var lastFrame = withFrameNanos { it }
+    while (true) {
+        val frame = withFrameNanos { it }
+        val fraction = OpenMapCamera.glideFraction((frame - lastFrame) / 1e9, TURN_GLIDE_SECONDS)
+        lastFrame = frame
+        val current = position
+        val turnLeft = bearing?.let { HeadingMath.shortestTurn(current.bearing.toFloat(), it) } ?: 0f
+        val turned = abs(turnLeft) < ARRIVED_DEGREES
+        val nextTarget = OpenMapCamera.glideStep(current.target, target, fraction)
+        position = current.copy(
+            bearing = if (turned) bearing?.toDouble() ?: current.bearing else HeadingMath.normalize(current.bearing.toFloat() + turnLeft * fraction.toFloat()).toDouble(),
+            target = nextTarget ?: current.target,
+        )
+        if (turned && nextTarget == target) return
+    }
+}
+
+/** Closer than this, the glide just finishes the turn. */
+private const val ARRIVED_DEGREES = 0.2f
 
 private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?) {
     when (fit) {

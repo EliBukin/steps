@@ -84,4 +84,5 @@ private fun Location.toMapFix() = MapFix(
     accuracyMeters = if (hasAccuracy()) accuracy else null,
     bearingDegrees = if (hasBearing() && hasSpeed() && speed >= FusedMapLocationClient.MIN_SPEED_FOR_BEARING_METERS_PER_SECOND) bearing else null,
     elapsedRealtimeNanos = elapsedRealtimeNanos,
+    speedMetersPerSecond = if (hasSpeed()) speed else null,
 )

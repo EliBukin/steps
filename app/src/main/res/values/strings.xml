@@ -121,6 +121,9 @@
     <string name="open_map_finding_location">מאתרים את המיקום שלך…</string>
     <string name="open_map_offline_message">אין חיבור לאינטרנט, ולכן המפה לא נטענת. המיקום והמסלול שלך עדיין מוצגים.</string>
     <string name="open_map_my_location_action">מעקב אחר המיקום שלי</string>
+    <string name="open_map_rotate_with_me_action">סיבוב המפה איתי</string>
+    <string name="open_map_north_up_action">חזרה לצפון למעלה</string>
+    <string name="open_map_no_compass_message">אין מצפן בטלפון הזה, ולכן המפה מסתובבת רק בזמן תנועה.</string>
     <!-- The language of the names on the map ("he" or "en"): the app's own language. -->
     <string name="map_label_language">he</string>
     <string name="cd_open_map">מפה עם המיקום שלך</string>
