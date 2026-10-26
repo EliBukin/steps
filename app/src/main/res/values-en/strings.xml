@@ -121,6 +121,8 @@
     <string name="open_map_finding_location">Finding your location…</string>
     <string name="open_map_offline_message">No internet, so the map can\'t load. Your location and route still show.</string>
     <string name="open_map_my_location_action">Follow my location</string>
+    <!-- The language of the names on the map ("he" or "en"): the app's own language. -->
+    <string name="map_label_language">en</string>
     <string name="cd_open_map">Map with your location</string>
     <string name="cd_open_map_with_recording">Map with your location and the trip being recorded</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>

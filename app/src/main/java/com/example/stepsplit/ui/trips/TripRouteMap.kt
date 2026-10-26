@@ -1,6 +1,5 @@
 package com.example.stepsplit.ui.trips
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -38,7 +36,8 @@ import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.trip.RoutePoint
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
-import com.example.stepsplit.ui.map.MapStyles
+import com.example.stepsplit.ui.map.OnMapColors
+import com.example.stepsplit.ui.map.rememberOutdoorStyle
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -61,15 +60,11 @@ import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
-import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.LineString
 import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
-
-/** Matches [RouteTraceCanvas]'s fixed "start" marker color, independent of theme accent. */
-private val StartMarkerColor = Color(0xFF2E7D32)
 
 private const val ROUTE_LAYER_ID = "trip-route-line"
 private const val ROUTE_CASING_LAYER_ID = "trip-route-casing"
@@ -78,16 +73,6 @@ private const val GAP_LAYER_ID = "trip-route-gaps"
 /** The feature property holding each speed-colored run's color, as "#RRGGBB". */
 private const val COLOR_PROPERTY = "color"
 
-/**
- * A thin outline under the colored route, so every color - the bright yellow middle included - stays
- * readable: dark on the light map style, light on the dark one.
- */
-private val LightStyleCasingColor = Color(0x99212121)
-private val DarkStyleCasingColor = Color(0xB3FFFFFF)
-
-/** A gap (see [RouteSpeedColoring.isGap]): gray, dashed, no outline - clearly not a recorded stretch. */
-private val LightStyleGapColor = Color(0xFF757575)
-private val DarkStyleGapColor = Color(0xFFBDBDBD)
 private const val START_LAYER_ID = "trip-route-start"
 private const val FINISH_LAYER_ID = "trip-route-finish"
 
@@ -102,14 +87,19 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
  * the user's live position, and never associates the route with step data.
  *
  * Falls back to the offline, non-geographic [RouteTraceCanvas] trace - with an honest "map
- * unavailable" message and a manual "Retry map" action - if the basemap fails to load (e.g. no
- * network). Retry only ever runs when the user taps it (never automatically/on a loop): toggling
+ * unavailable" message and a manual "Retry map" action - if the map fails to load (rare now that
+ * its style is inside the app; no network alone doesn't do it - see below). Retry only ever runs when the user taps it (never automatically/on a loop): toggling
  * [mapLoadFailed] back to `false` here leaves the live-map branch below and re-enters it, which -
  * being a plain Compose conditional, not a `key()`-stabilized call - disposes the previous (failed)
  * [LiveMap] instance and its underlying native map entirely and composes a brand-new one, so the
- * real style URL is attempted fresh rather than reusing whatever broke before. The failure is also
- * reset (without user action) whenever [points] or the light/dark style actually changes, so a
- * stale failure from a different trip or a theme switch never blocks an otherwise-healthy load.
+ * real style is attempted fresh rather than reusing whatever broke before. The failure is also
+ * reset (without user action) whenever [points] actually changes, so a stale failure from a
+ * different trip never blocks an otherwise-healthy load.
+ *
+ * The map is the app's light outdoor style (see [rememberOutdoorStyle]) in dark mode too, and what's
+ * drawn on it keeps its light-map colors ([OnMapColors]); the card, the buttons and the legend
+ * still follow the app's theme. Without internet the style still loads - it's inside the app - and
+ * shows the map tiles viewed before, from MapLibre's cache, on its plain land color.
  */
 @Composable
 fun TripRouteMapCard(
@@ -130,9 +120,8 @@ fun TripRouteMapCard(
     require(points.isNotEmpty()) { "TripRouteMapCard requires at least one point; callers show their own empty state." }
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         var mapLoadFailed by remember { mutableStateOf(false) }
-        val isDark = isSystemInDarkTheme()
 
-        LaunchedEffect(points, isDark) { mapLoadFailed = false }
+        LaunchedEffect(points) { mapLoadFailed = false }
 
         if (mapLoadFailed) {
             OfflineFallback(points = points, bottomInset = bottomInset, onRetry = { mapLoadFailed = false })
@@ -142,7 +131,6 @@ fun TripRouteMapCard(
                 speedColoring = speedColoring,
                 spots = spots,
                 onSpotClick = onSpotClick,
-                isDark = isDark,
                 bottomInset = bottomInset,
                 onLoadFailed = { mapLoadFailed = true },
             )
@@ -156,11 +144,10 @@ private fun LiveMap(
     speedColoring: RouteSpeedColoring.SpeedColoredRoute?,
     spots: List<TripSpot>,
     onSpotClick: (Long) -> Unit,
-    isDark: Boolean,
     bottomInset: Dp,
     onLoadFailed: () -> Unit,
 ) {
-    val styleUrl = MapStyles.styleUrl(isDark)
+    val baseStyle = rememberOutdoorStyle()
     val first = points.first()
     val cameraState = rememberCameraState(
         firstPosition = CameraPosition(target = Position(longitude = first.longitude, latitude = first.latitude), zoom = 14.0),
@@ -190,7 +177,7 @@ private fun LiveMap(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         MaplibreMap(
             modifier = Modifier.fillMaxSize().semantics { contentDescription = mapDescription },
-            baseStyle = BaseStyle.Uri(styleUrl),
+            baseStyle = baseStyle,
             cameraState = cameraState,
             options = MapOptions(
                 // Pan, zoom, double-tap and two-finger rotate stay on; MapLibre's compass appears once
@@ -208,7 +195,7 @@ private fun LiveMap(
                 LineLayer(
                     id = ROUTE_CASING_LAYER_ID,
                     source = runsSource,
-                    color = const(if (isDark) DarkStyleCasingColor else LightStyleCasingColor),
+                    color = const(OnMapColors.RouteCasing),
                     width = const(6.dp),
                     cap = const(LineCap.Round),
                     join = const(LineJoin.Round),
@@ -228,7 +215,7 @@ private fun LiveMap(
                 LineLayer(
                     id = ROUTE_LAYER_ID,
                     source = routeSource,
-                    color = const(MaterialTheme.colorScheme.primary),
+                    color = const(OnMapColors.PlainRoute),
                     width = const(4.dp),
                 )
             }
@@ -237,7 +224,7 @@ private fun LiveMap(
                 LineLayer(
                     id = GAP_LAYER_ID,
                     source = gapsSource,
-                    color = const(if (isDark) DarkStyleGapColor else LightStyleGapColor),
+                    color = const(OnMapColors.Gap),
                     width = const(3.dp),
                     dasharray = const(listOf<Number>(2, 2)),
                 )
@@ -247,12 +234,12 @@ private fun LiveMap(
             val startSource = rememberGeoJsonSource(
                 data = GeoJsonData.Features(Point(longitude = first.longitude, latitude = first.latitude)),
             )
-            CircleLayer(id = START_LAYER_ID, source = startSource, color = const(StartMarkerColor), radius = const(7.dp))
+            CircleLayer(id = START_LAYER_ID, source = startSource, color = const(OnMapColors.Start), radius = const(7.dp))
 
             val finishSource = rememberGeoJsonSource(
                 data = GeoJsonData.Features(Point(longitude = last.longitude, latitude = last.latitude)),
             )
-            CircleLayer(id = FINISH_LAYER_ID, source = finishSource, color = const(MaterialTheme.colorScheme.error), radius = const(7.dp))
+            CircleLayer(id = FINISH_LAYER_ID, source = finishSource, color = const(OnMapColors.Finish), radius = const(7.dp))
 
             // Spots last, so they sit on top of the route and the start and finish dots.
             if (spots.isNotEmpty()) SpotMarkerLayers(spots, onSpotClick = onSpotClick)

@@ -12,7 +12,6 @@ import android.provider.Settings
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -103,17 +102,6 @@ import org.maplibre.spatialk.units.extensions.meters
 /** The trip being recorded: one strong color, unlike the trip screen's speed colors - it's still growing, and has no speed scale yet. */
 private val RecordingRouteColor = Color(0xFFE8590C)
 
-/** The same thin outline as the trip screen's route: dark on the light map, light on the dark one. */
-private val LightStyleCasingColor = Color(0x99212121)
-private val DarkStyleCasingColor = Color(0xB3FFFFFF)
-
-/** A gap (see [splitAtGaps]): gray and dashed, as on the trip screen. */
-private val LightStyleGapColor = Color(0xFF757575)
-private val DarkStyleGapColor = Color(0xFFBDBDBD)
-
-/** Matches the trip screen's start marker. */
-private val StartMarkerColor = Color(0xFF2E7D32)
-
 /** The "you are here" dot: blue while its fix is fresh, gray once it's old (see [remainingFreshMillis]). */
 private val FreshDotColor = Color(0xFF1A73E8)
 private val StaleDotColor = Color(0xFF8A8F94)
@@ -155,11 +143,15 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  * - **The trip being recorded:** its route so far, its start and its spots, updating as it grows.
  * - **What can go wrong** is said above the map, with the way out: no location permission (Allow,
  *   or the app's settings once Android stops asking), location turned off (Turn on location), no
- *   fix yet, and no internet - then the map draws a plain background ([MapStyles.offlineStyleJson])
- *   with the dot and the route still on it, and Retry map tries the real map again.
+ *   fix yet, and a map that can't load - then the map draws a plain background
+ *   ([MapStyles.offlineStyleJson]) with the dot and the route still on it, and Retry map tries the
+ *   real map again. No internet alone doesn't do that: the outdoor style is inside the app, so it
+ *   loads, with the map tiles viewed before (from MapLibre's cache) on its plain land color.
  *
  * Location is asked for only while this tab is on screen, with the app in the foreground - switching
- * to another tab or app stops it at once (see [OpenMapViewModel]). The camera is kept for when the
+ * to another tab or app stops it at once (see [OpenMapViewModel]). The map is the light outdoor
+ * style in dark mode too (see [rememberOutdoorStyle]), and what's drawn on it keeps its light-map
+ * colors; the buttons and banners follow the app's theme. The camera is kept for when the
  * tab comes back (`rememberCameraState` is saved with the tab's state). Approximate location is enough here (the circle is just bigger); recording a
  * trip still needs precise location, as before.
  *
@@ -336,11 +328,10 @@ private fun OpenMapView(
     offline: Boolean,
     onLoadFailed: () -> Unit,
 ) {
-    val isDark = isSystemInDarkTheme()
     val baseStyle = if (offline) {
-        remember(isDark) { BaseStyle.Json(MapStyles.offlineStyleJson(isDark)) }
+        remember { BaseStyle.Json(MapStyles.offlineStyleJson()) }
     } else {
-        BaseStyle.Uri(MapStyles.styleUrl(isDark))
+        rememberOutdoorStyle()
     }
     val route = recording?.route.orEmpty()
     val cameraState = rememberCameraState(firstPosition = OpenMapCamera.initialPosition(location, route))
@@ -383,7 +374,7 @@ private fun OpenMapView(
                 LineLayer(
                     id = ROUTE_CASING_LAYER_ID,
                     source = routeSource,
-                    color = const(if (isDark) DarkStyleCasingColor else LightStyleCasingColor),
+                    color = const(OnMapColors.RouteCasing),
                     width = const(6.dp),
                     cap = const(LineCap.Round),
                     join = const(LineJoin.Round),
@@ -401,7 +392,7 @@ private fun OpenMapView(
                     LineLayer(
                         id = GAP_LAYER_ID,
                         source = gapsSource,
-                        color = const(if (isDark) DarkStyleGapColor else LightStyleGapColor),
+                        color = const(OnMapColors.Gap),
                         width = const(3.dp),
                         dasharray = const(listOf<Number>(2, 2)),
                     )
@@ -411,7 +402,7 @@ private fun OpenMapView(
                 val startSource = rememberGeoJsonSource(
                     data = remember(start) { GeoJsonData.Features(Point(longitude = start.longitude, latitude = start.latitude)) },
                 )
-                CircleLayer(id = START_LAYER_ID, source = startSource, color = const(StartMarkerColor), radius = const(7.dp))
+                CircleLayer(id = START_LAYER_ID, source = startSource, color = const(OnMapColors.Start), radius = const(7.dp))
             }
             val spots = recording?.spots.orEmpty()
             if (spots.isNotEmpty()) SpotMarkerLayers(spots, showNumbers = !offline)

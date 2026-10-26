@@ -121,6 +121,8 @@
     <string name="open_map_finding_location">מאתרים את המיקום שלך…</string>
     <string name="open_map_offline_message">אין חיבור לאינטרנט, ולכן המפה לא נטענת. המיקום והמסלול שלך עדיין מוצגים.</string>
     <string name="open_map_my_location_action">מעקב אחר המיקום שלי</string>
+    <!-- The language of the names on the map ("he" or "en"): the app's own language. -->
+    <string name="map_label_language">he</string>
     <string name="cd_open_map">מפה עם המיקום שלך</string>
     <string name="cd_open_map_with_recording">מפה עם המיקום שלך והטיול שמוקלט</string>
     <string name="trip_card_distance_duration_format">%1$s · %2$s</string>
