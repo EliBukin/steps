@@ -6,7 +6,8 @@ checked the same day (sources at the end).
 
 **Re-check these answers** whenever the app gains a new SDK or network use, or another way to send
 data off the phone. The Open map work that's in progress counts, as do any changes to OpenFreeMap
-or the map library.
+or the map library. Re-checked 2026-10-26 for the outdoor map: the hill shading adds Mapterhorn
+(see its row and point 1), with the same answer as OpenFreeMap.
 
 ## The answers
 
@@ -37,7 +38,8 @@ Google's definitions:
 | **Steps (Health Connect)** | Read-only `READ_STEPS`, only while the app is open. Stored in the app's private database. Never written back to Health Connect, never sent. | Processed on the device only: **not collected**. |
 | **Precise location (trips)** | GPS points while a trip the user started is recording. Stored only on the device. | Processed on the device only: **not collected**. |
 | **Google Play services location** | The app gets positions from Google Play services' fused location provider (`play-services-location`). Depending on the phone's location settings, Play services may use Wi-Fi and mobile networks, under Google's own privacy policy. | That traffic belongs to the phone's location service, not to this app. The app's own code and its client library send nothing. **Not declared.** ⚠ Google doesn't say this outright; see *Uncertain points*. |
-| **Map tiles (OpenFreeMap)** | While a trip's screen is open, MapLibre loads the map's style, fonts and vector tiles over HTTPS from `tiles.openfreemap.org`. The requests carry the tile numbers of the area shown (zoom 14 at most), plus the IP address and the usual request headers. They never carry GPS points, times or trip data. | **Not treated as collection** (recommended). ⚠ This is the one real judgment call; see below. |
+| **Map tiles (OpenFreeMap)** | While a trip's screen or the **Map** tab is open, MapLibre loads the map's vector tiles, fonts and icons over HTTPS from `tiles.openfreemap.org`. The map's style itself is inside the app. The requests carry the tile numbers of the area shown (zoom 14 at most), plus the IP address and the usual request headers. They never carry GPS points, times or trip data. | **Not treated as collection** (recommended). ⚠ This is the one real judgment call; see below. |
+| **Hill shading (Mapterhorn)** | On the same maps, MapLibre loads terrain tiles (elevation as WebP images) over HTTPS from `tiles.mapterhorn.com`, only up to zoom 12: squares about 8 km across in Israel. The requests carry the tile numbers, the IP address and the usual request headers, never GPS points, times or trip data. Mapterhorn logs requests, with the IP address, for up to 30 days. | **Not treated as collection**, for the same reasons as OpenFreeMap (below). Its tiles are coarser than OpenFreeMap's, so they say less about where the user is. |
 | **GPX share and Save file** | Sent only when the user taps **Share** on a trip and picks an app, or **Save file** and picks a folder. | A specific user-initiated action where the user expects the data to go there: the sharing exception applies. The app itself transmits nothing, so it isn't collection either. **Not declared.** |
 | **Phone-to-phone transfer** | Cloud backup is off (`allowBackup="false"`), but Android's device-to-device transfer may copy app data. | Done by Android at the user's request. **Not declared.** |
 | **Play install stats and crash reports** | Google collects these about every Play app, if the user agreed. | Not the app's own collection. **Not declared.** |
@@ -45,7 +47,7 @@ Google's definitions:
 
 ## ⚠ Uncertain points: the owner decides
 
-### 1. OpenFreeMap map tiles
+### 1. OpenFreeMap map tiles and Mapterhorn hill shading
 
 **Why I recommend "No":**
 
@@ -56,10 +58,15 @@ Google's definitions:
 - OpenFreeMap says its access logs keep **no IP addresses by default**. Error logs may hold the IP
   address and the URL, and all logs are deleted after 7 days (incident logs after at most 30).
 - The privacy policy already describes this traffic in plain words.
+- **Mapterhorn** (hill shading, added 2026-10-26) is the same kind of request: pictures of an area,
+  not the user's location. Its tiles stop at zoom 12, about 64-70 km² each in Israel, far above
+  Google's 3 km² line. Its [privacy policy](https://mapterhorn.com/privacy-policy/) says it keeps
+  request logs, with IP addresses, for up to 30 days. The privacy policy names it.
 
 **Why it's arguable:**
 
-- The area loaded is the area of a trip, which usually is where the user was.
+- The area loaded is the area of a trip, which usually is where the user was. On the **Map** tab,
+  it's where the user is now.
 - A zoom-14 tile in Israel covers about 4.2-4.5 km². That's above Google's 3 km² line between
   *approximate* and *precise*.
 
@@ -69,11 +76,11 @@ changes.
 | Question | Alternative answer |
 |---|---|
 | Collect or share required data types? | **Yes** |
-| Encrypted in transit? | **Yes**: every request goes to `https://tiles.openfreemap.org`. |
-| Users can request deletion? | **No**. The developer holds no data to delete. OpenFreeMap deletes its logs itself, after 7 days. |
+| Encrypted in transit? | **Yes**: every request goes to `https://tiles.openfreemap.org` or `https://tiles.mapterhorn.com`. |
+| Users can request deletion? | **No**. The developer holds no data to delete. OpenFreeMap deletes its logs itself, after 7 days; Mapterhorn after 30. |
 | Data types | **Location → Approximate location** only |
-| Collected / shared | Collected: **Yes**. Shared: **No**. OpenFreeMap only sends the map back to the app. |
-| Processed ephemerally? | **No**. OpenFreeMap's error logs can keep the URL for up to 7 days. |
+| Collected / shared | Collected: **Yes**. Shared: **No**. OpenFreeMap and Mapterhorn only send the map back to the app. |
+| Processed ephemerally? | **No**. OpenFreeMap's error logs can keep the URL for up to 7 days, Mapterhorn's logs up to 30. |
 | Required or optional? | **Required**. Opening a trip's screen always loads its map. |
 | Purpose | **App functionality** |
 
@@ -90,10 +97,10 @@ outside a browser.
 
 ## Keep consistent with
 
-- **Privacy policy:** it describes every flow above, including OpenFreeMap and Play services
-  location.
+- **Privacy policy:** it describes every flow above, including OpenFreeMap, Mapterhorn and Play
+  services location.
 - **Store listing:** "Your data stays on your phone … The only internet use is loading the map
-  (from OpenFreeMap)". That matches "No data collected".
+  (from OpenFreeMap, with hill shading from Mapterhorn)". That matches "No data collected".
 - **Health apps declaration and Health Connect:** see `health-connect-declaration.md`. Steps
   never leave the phone.
 - **Advertising ID:** "No". See `content-and-audience.md`.
@@ -104,5 +111,7 @@ outside a browser.
 - [Maps SDK for Android: Google Play data disclosure](https://developers.google.com/maps/documentation/android-sdk/play-data-disclosure)
 - [OpenFreeMap privacy policy](https://openfreemap.org/privacy/), and its TileJSON at
   `https://tiles.openfreemap.org/planet` (`"maxzoom": 14`)
+- [Mapterhorn privacy policy](https://mapterhorn.com/privacy-policy/) and
+  [data access](https://mapterhorn.com/data-access/) (checked 2026-10-26)
 - The app: `AndroidManifest.xml`, the merged debug manifest (`processDebugManifest`), and
-  `ui/trips/TripRouteMap.kt` (HTTPS style URLs)
+  `app/src/main/assets/map/outdoor-style.json` (the map's HTTPS addresses; checked by `MapStylesTest`)

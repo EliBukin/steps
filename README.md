@@ -194,8 +194,9 @@ Tap a trip in **Previous trips** to open it.
 
 - **Top bar.** The walk or car icon, the trip's name (or its date, if it has no name), then
   **Share**, **Edit** (pencil) and **Delete** (trash).
-- **The map.** Drag, pinch to zoom and twist to rotate. The button with four arrows shows the whole
-  route again. The green dot is the start and the red dot the finish.
+- **The map.** An outdoor map (see *Reading the map* below). Drag, pinch to zoom and twist to
+  rotate. The button with four arrows shows the whole route again. The green dot is the start and
+  the red dot the finish.
 - **Colors.** The route is colored by speed, from red (slow) through yellow to green (fast). The
   small legend under the scale bar gives this trip's own km/h at each end, so a walk and a jeep
   drive both use the full range. A gray dashed stretch has no recorded points (the GPS lost its
@@ -219,24 +220,51 @@ chart's shape only.
 
 Open the **Map** tab at the bottom. It works whether or not a trip is recording.
 
-- **Where you are.** A blue dot, with a circle for how sure the phone is of it and, while you
-  move, a small arrow for your direction. The map follows you as you go; drag, pinch or rotate it
-  and it stops following, and the round **My location** button (crosshairs) follows you again.
-  While the map follows you, the screen stays on; it turns off as usual once you move the map
-  away or leave it.
+- **Where you are.** A blue dot, with a circle for how sure the phone is of it, a soft blue cone
+  for the way the phone points (its compass) and, while you move, a small arrow for your
+  direction of travel. The map follows you as you go; drag, pinch or rotate it and it stops
+  following, and the round **My location** button (crosshairs) follows you again. While the map
+  follows you, the screen stays on; it turns off as usual once you move the map away or leave it.
+- **Map turns with me.** The compass button, above **My location**, turns the map with the phone,
+  so what's in front of you is up. Above 15 km/h (driving, cycling) it turns with your GPS
+  direction of travel instead, which a phone in a car holder gets right and its compass often
+  doesn't; below 10 km/h it's the compass again. The needle on the button points north; tap it
+  to go back to north up. Twisting the map by hand is off meanwhile. On a phone without a
+  compass, the map turns only while you move.
 - **The trip you're recording,** if one is: its route so far in orange, its start (green) and the
   spots you marked, growing as you go. The button with four arrows shows the whole route and
   where you are.
 - **Location permission.** The first time, the map asks for location (approximate is enough here;
   the circle is just bigger). If location is off, it says so, with **Turn on location**. Until the
   first fix comes in, it says *Finding your location...*; an old fix shows as a gray dot.
-- **Without internet** the map can't load. It then shows a plain background with your dot, the
-  trip's route and its spots still on it (the spots without their numbers), and **Retry map**.
-  Areas you looked at before may still show from the map cache.
+- **Without internet** the map shows the areas you looked at before, from the map cache, and plain
+  ground elsewhere, with your dot, the trip's route and its spots still on it. It fills in by
+  itself once you're back online. If the map can't load at all, you get a plain background and
+  **Retry map**.
 
 The map uses your location only while the Map tab is on screen, with the app in front: switching
 to another tab or app stops it at once. Nothing it shows is saved. The trip itself keeps recording
 as always, whether the map is open or not. Coming back to the tab, the map is where you left it.
+The compass also runs only while the tab is on screen; it needs no permission.
+
+### Reading the map
+
+Both maps use the app's own outdoor map, made for hikes and 4x4 drives in the desert:
+
+- **Unpaved roads and tracks:** brown dashes (solid brown for a paved track). Jeep tracks show
+  from about the 1 km scale; below that the map data leaves most of them out.
+- **Hiking paths:** red dashes. Footways and sidewalks in towns are paler and thinner.
+- **Wadis and seasonal streams:** blue dashes, with their names when zoomed in. A light blue patch
+  on a track is a **ford**.
+- **Peaks:** a brown triangle with the name and height in meters. Cliffs are a dark line.
+- **Ground:** sand and dunes yellow, bare rock gray, woods and fields green. Nature reserves and
+  national parks have a green edge, military areas and firing zones a faint red one.
+- **Hill shading:** soft shadows show the shape of the land: ridges, valleys and crater walls.
+- **Roads** are white with a gray edge, and labels are in the app's language where the map has
+  them (Hebrew in Hebrew, English in English), else in the local language.
+
+The map stays light in dark mode: it reads better outdoors, and the route's colors are made for
+it. The app's own buttons and panels still follow dark mode.
 
 ### Sharing or saving a GPX file
 
@@ -275,8 +303,11 @@ Tap the gear icon at the top of any tab; the back arrow, or Back, returns to tha
 - **Keep location on**, and check the card says *GPS: Good* before you start moving. Deep wadis,
   canyons and dense trees weaken the signal.
 - **No mobile data needed for recording.** GPS works offline. Only the map itself needs internet:
-  offline, a trip's screen shows a plain outline of the route, and the **Map** tab your dot and
-  route on a plain background, each with a **Retry map** button.
+  offline, the maps show the areas you looked at before (from the map cache) and plain ground
+  elsewhere, with your dot and route still on them.
+- **Compass.** If the cone points the wrong way, move the phone in a figure 8 a few times to
+  calibrate it, away from the car and other metal. A magnet in a phone case or holder throws it
+  off.
 - **In a vehicle,** put the phone in a mount where it sees the sky (a windshield mount works
   well), keep it charging on long drives, and keep it out of direct sun on the dashboard. Mark
   spots from the lock screen without unlocking.
@@ -299,7 +330,8 @@ Tap the gear icon at the top of any tab; the back arrow, or Back, returns to tha
 | No recording notification | Notifications are off for the app. Recording still works; turn them on in the app's settings to get *Mark spot* on the lock screen. |
 | The notification isn't on the lock screen | Allow notifications on the lock screen in Android's settings (lock screen or notification settings). |
 | *GPS: Searching* while you stand still | Normal: no new points are kept while you don't move. It goes back to *Good* when you walk on. |
-| The map doesn't load | No internet. A trip's screen shows an outline of the route, and the **Map** tab a plain background with your dot and route; tap **Retry map** when you're back online. |
+| The map is blank or plain | No internet. Areas you looked at before still show; elsewhere the ground is plain, with your dot and route on it. It fills in once you're back online. If it says *Retry map*, tap that. |
+| The cone or the turning map points the wrong way | Calibrate the compass: move the phone in a figure 8, away from cars and metal. Above 15 km/h, *map turns with me* uses the GPS direction of travel instead. |
 | No blue dot on the map | Tap **Allow** above the map, or **Turn on location**. If it says *Finding your location...*, step outside or wait a little. |
 | No heights, climb or chart | The phone didn't report heights for most of the trip. |
 
@@ -453,17 +485,32 @@ Tap the gear icon at the top of any tab; the back arrow, or Back, returns to tha
   converted, old ones included. Android 13 and older have no converter: there the trip shows
   climb, descent and the chart's shape, which don't depend on it, but no highest or lowest
   point, and the GPX file gets the heights as stored.
-- **Map.** Map tiles come from [OpenFreeMap](https://openfreemap.org), in a light or dark style to
-  match the phone. You can pan, zoom and rotate the map; tilting is off. The scale bar is always in
-  meters and kilometers. Without internet, a trip's screen shows a plain outline of the route
-  instead, with a *Retry map* button.
-- **The Map tab.** The same OpenFreeMap map, with your location from Google Play services'
+- **Map.** The app's own outdoor style (`app/src/main/assets/map/outdoor-style.json`), drawn by
+  MapLibre on [OpenFreeMap](https://openfreemap.org)'s vector tiles (OpenStreetMap data in the
+  OpenMapTiles schema, zoom 14 at most), with hill shading from
+  [Mapterhorn](https://mapterhorn.com)'s terrain tiles, asked for only up to zoom 12 (squares
+  about 8 km across in Israel) and stretched for closer zooms. The style ships inside the app; its
+  tiles, fonts and icons are loaded as needed and cached. It's the same light style in dark mode,
+  and the route, gaps and dots keep their light-map colors. Labels use the Hebrew or English name
+  to match the app's language, else the local name. You can pan, zoom and rotate the map; tilting
+  is off. The scale bar is always in meters and kilometers. Without internet the style still
+  loads, so the map shows what's cached on its plain land color. Only if the map can't load at
+  all does a trip's screen show a plain outline of the route, with a *Retry map* button.
+- **The Map tab.** The same outdoor map, with your location from Google Play services'
   location service, asked for every 2 seconds at high accuracy, only while the tab is on screen and
   the app is in the foreground; switching tabs or leaving the app stops it at once. Nothing it gets is
-  stored. Without internet, the map switches to a style that is a single background color, with
-  no tiles, fonts or icons to download, so your dot and the trip's route still draw on it. While a
+  stored. If the map can't load at all, it switches to a style that is a single background color,
+  with no tiles, fonts or icons to download, so your dot and the trip's route still draw on it. While a
   trip records with the map open, Android shares fixes between the two requests, so the recording
   may get a point every 5 seconds instead of every 10; its own rules still decide which it keeps.
+- **The compass.** Android's rotation vector sensor (or its magnetometer-only version), read about
+  15 times a second only while the Map tab is on screen with the app in front, and only while
+  there's a dot or the map turns with it. The heading is where the screen's top edge and the
+  phone's back point, so it doesn't jump as the phone tilts from flat to upright, and it follows
+  the screen in landscape. It's lightly smoothed, and turned from magnetic to true north with
+  Android's model of the Earth's magnetic field at your position (about 5 degrees in Israel).
+  *Map turns with me* uses the GPS direction of travel instead from 15 km/h, from a fix under 5
+  seconds old, and the compass again below 10 km/h; the gap keeps it from flipping at one speed.
 
 ### Steps and trips are separate
 
@@ -480,10 +527,10 @@ database file and its screens.
 | Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |
 | Location (approximate is enough) | Your blue dot on the **Map** tab | When you tap *Allow* above the map. Already granted if you've recorded a trip. |
-| Internet | Loading the map on a trip's screen and the **Map** tab | Granted automatically |
+| Internet | Loading the map (OpenFreeMap) and its hill shading (Mapterhorn) on a trip's screen and the **Map** tab | Granted automatically |
 
 The app never asks for background location. It uses location only while a trip is recording or
-the **Map** tab is open.
+the **Map** tab is open. The compass needs no permission.
 
 ## Privacy and data
 
@@ -493,13 +540,31 @@ app under **Settings → Privacy policy**. In short:
 - Steps, trips and settings are stored only on the phone. Android's cloud backup is turned off for
   this app.
 - The app sends nothing to the developer or anyone else. Its only internet traffic is loading the
-  map from OpenFreeMap while a trip's screen or the **Map** tab is open. Those requests don't
-  include your GPS points, but like any map they show OpenFreeMap which area you're looking at (on
-  the Map tab, usually the area around you), and your IP address.
+  map from OpenFreeMap, and its hill shading from Mapterhorn, while a trip's screen or the **Map**
+  tab is open. Those requests don't include your GPS points, but like any map they show
+  OpenFreeMap and Mapterhorn which area you're looking at (on the Map tab, usually the area around
+  you), and your IP address. Mapterhorn keeps request logs, with IP addresses, for up to 30 days.
+- The compass reads the phone's sensors only while the Map tab is open, and nothing it reads is
+  stored or sent.
 - Locations come from Google Play services' location service on the phone, which may also use
   Wi-Fi and mobile networks, depending on the phone's location settings.
 - A GPX file leaves the app only when you save or share it yourself.
 - Step data is never written back to Health Connect.
+
+## Map data and licenses
+
+The map's (i) button lists these credits too.
+
+- **Map data** © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, under the
+  Open Database License.
+- **Vector tiles** in the [OpenMapTiles](https://openmaptiles.org) schema (© OpenMapTiles), served
+  free by [OpenFreeMap](https://openfreemap.org), which also serves the map's fonts and icons.
+- **Hill shading** © [Mapterhorn](https://mapterhorn.com/attribution), built from open elevation
+  data; that page lists each source, such as Copernicus GLO-30 worldwide and a 10 m model of Israel.
+- **The outdoor style** is the app's own, written for it. A few of its rules, such as the road
+  number signs, follow OpenMapTiles' [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
+  style (© MapTiler.com & OpenMapTiles contributors, © Mapbox; code BSD 3-Clause, design CC BY 4.0).
+- **MapLibre Native** and **maplibre-compose** draw the map (BSD 2-Clause and BSD 3-Clause).
 
 ## Known limitations
 
@@ -527,6 +592,11 @@ app under **Settings → Privacy policy**. In short:
   are. Their heights show only on Android 14 and newer.
 - **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
   tap *Start trip* again.
+- **The map's detail.** Zoomed out past about the 1 km scale, the map data leaves out most tracks
+  and paths. There are no contour lines, no marked-trail colors (red, blue, green, black) and no
+  4x4 grades, and offline the map has only what's cached. Offline maps by region may come later.
+- **The compass is only as good as the phone's.** Near a car, metal or a magnet it can be off by
+  tens of degrees until it's calibrated.
 
 ## For developers
 

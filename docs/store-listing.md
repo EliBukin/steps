@@ -17,7 +17,7 @@ for the text inside the code blocks (Play counts characters, not bytes).
 Daily steps at a glance, and GPS routes of hikes and drives to share as GPX.
 ```
 
-**Full description** (2,268 of 4,000 characters)
+**Full description** (2,303 of 4,000 characters)
 
 ```text
 Steps GPS Route does two simple things. It shows how much you walk each day, and it records the GPS route of trips you start yourself, such as a hike, a nature walk or an off-road drive, so you can see them on a map and share them as GPX files.
@@ -45,7 +45,7 @@ Your data stays on your phone
 • No account, no ads, no analytics
 • Nothing is sent to the developer
 • Location is used only while a trip you started is recording, or while the map is open
-• The only internet use is loading the map (from OpenFreeMap)
+• The only internet use is loading the map (from OpenFreeMap, with hill shading from Mapterhorn)
 • Privacy policy: https://elibukin.github.io/steps/privacy-policy.html
 
 Not a health app
@@ -65,7 +65,7 @@ Good to know
 הצעדים שלך בכל יום במבט אחד, ומסלולי GPS של טיולים ונסיעות לשיתוף כ-GPX.
 ```
 
-**Full description** (1,939 of 4,000 characters)
+**Full description** (1,968 of 4,000 characters)
 
 ```text
 Steps GPS Route עושה שני דברים פשוטים. הוא מראה כמה הלכת בכל יום, ומקליט את מסלול ה-GPS של טיולים שאת/ה מתחיל/ה בעצמך, כמו טיול רגלי, הליכה בטבע או נסיעת שטח, כדי שתוכל/י לראות אותם על מפה ולשתף אותם כקובצי GPX.
@@ -93,7 +93,7 @@ GPX לאפליקציות אחרות
 • בלי חשבון, בלי פרסומות, בלי ניתוח נתונים
 • שום דבר לא נשלח למפתח
 • המיקום משמש רק בזמן הקלטה של טיול שהתחלת, או כשהמפה פתוחה
-• השימוש היחיד באינטרנט הוא טעינת המפה (מ-OpenFreeMap)
+• השימוש היחיד באינטרנט הוא טעינת המפה (מ-OpenFreeMap, עם הצללת תבליט מ-Mapterhorn)
 • מדיניות הפרטיות: https://elibukin.github.io/steps/privacy-policy.html
 
 לא אפליקציית בריאות
