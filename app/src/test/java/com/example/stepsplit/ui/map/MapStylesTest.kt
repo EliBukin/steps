@@ -68,19 +68,43 @@ class MapStylesTest {
     }
 
     @Test
-    fun `the map data, fonts and icons come from OpenFreeMap, over https`() {
+    fun `the map data, fonts and icons come from OpenFreeMap and the hill shading from Mapterhorn, all over https`() {
         val openMapTiles = sources.getValue("openmaptiles").jsonObject
         assertEquals("vector", openMapTiles.string("type"))
         // The TileJSON, which brings OpenFreeMap's current tiles and its OSM / OpenMapTiles attribution.
         assertEquals("https://tiles.openfreemap.org/planet", openMapTiles.string("url"))
         assertEquals("https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf", style.string("glyphs"))
         assertEquals("https://tiles.openfreemap.org/sprites/ofm_f384/ofm", style.string("sprite"))
-        assertEquals(setOf("openmaptiles"), sources.keys)
+        assertEquals(setOf("openmaptiles", "mapterhorn"), sources.keys)
 
         val addresses = Regex("""[a-z]+://[^"'<>\s{\\]+""").findAll(assetJson).map { URI(it.value) }.toList()
         assertTrue(addresses.isNotEmpty())
         addresses.forEach { assertEquals(it.toString(), "https", it.scheme) }
-        assertEquals(setOf("tiles.openfreemap.org"), addresses.map { it.host }.toSet())
+        assertEquals(setOf("tiles.openfreemap.org", "tiles.mapterhorn.com", "mapterhorn.com"), addresses.map { it.host }.toSet())
+    }
+
+    @Test
+    fun `hill shading is Mapterhorn's terrarium tiles, asked for only from zoom 5 to 12, with its attribution`() {
+        val dem = sources.getValue("mapterhorn").jsonObject
+        assertEquals("raster-dem", dem.string("type"))
+        assertEquals("terrarium", dem.string("encoding"))
+        assertEquals(listOf("https://tiles.mapterhorn.com/{z}/{x}/{y}.webp"), dem.getValue("tiles").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(512, dem.getValue("tileSize").jsonPrimitive.int)
+        assertEquals(5, dem.getValue("minzoom").jsonPrimitive.int)
+        assertEquals(12, dem.getValue("maxzoom").jsonPrimitive.int)
+        assertEquals(5, layer("hillshade").getValue("minzoom").jsonPrimitive.int)
+        val attribution = dem.string("attribution")
+        assertTrue(attribution, attribution.contains("Mapterhorn") && attribution.contains("https://mapterhorn.com/attribution"))
+    }
+
+    @Test
+    fun `the hill shading is under the water, roads, tracks, paths and every label`() {
+        val hillshade = layer("hillshade")
+        assertEquals("hillshade", hillshade.string("type"))
+        assertEquals("mapterhorn", hillshade.string("source"))
+        val firstOnTop = layers.indexOfFirst { it.string("type") == "symbol" || it.string("id") in setOf("water", "road", "road-casing", "track", "path") }
+        assertTrue(indexOf("hillshade") < firstOnTop)
+        assertTrue(indexOf("landcover-sand") < indexOf("hillshade"))
     }
 
     @Test
