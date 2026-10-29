@@ -27,7 +27,7 @@
 <li><strong>App:</strong> Steps GPS Route</li>
 <li><strong>Developer:</strong> bukin</li>
 <li><strong>Contact:</strong> dev.mechanics998877@gmail.com</li>
-<li><strong>Effective date:</strong> 2026-10-21</li>
+<li><strong>Effective date:</strong> 2026-10-26</li>
 </ul>
 <p>This policy explains what the app does with your information. Steps GPS Route shows how much you walk each day, and records GPS routes of trips you start yourself, such as hikes, nature walks or off-road drives, so you can view them on a map and export them as GPX files.</p>
 <p>Steps GPS Route is not a health or medical app. It gives no health advice, and it is not meant to diagnose, treat or track any health condition.</p>
@@ -36,7 +36,7 @@
 <ul>
 <li>The app reads only your step count from Health Connect, and uses your location only while a trip you started is recording or while you have its map open.</li>
 <li>Your steps, trips and settings are stored only on your device. The app has no account, no ads, no analytics and no crash reporting, and it does not send your information to the developer or to anyone else.</li>
-<li>The app's only internet traffic is loading the map from OpenFreeMap when you open a trip's screen or the app's map. Your GPS points are not sent.</li>
+<li>The app's only internet traffic is loading the map when you open a trip's screen or the app's map: the map from OpenFreeMap and its hill shading from Mapterhorn. Your GPS points are not sent.</li>
 <li>A trip leaves your device only when you save or share its GPX file yourself.</li>
 </ul>
 
@@ -55,7 +55,7 @@
 <p>The app uses your location only in these two cases, both started by you:</p>
 <ul>
 <li><strong>While a trip you started is recording.</strong> The app asks for precise location when you start (or resume) a trip.</li>
-<li><strong>While the app's map is open</strong> (the <strong>Map</strong> tab), to show where you are on the map. Approximate location is enough for this. The app stops asking for your location as soon as you leave the map or switch to another app. Locations used by the map are only shown: they are not stored, and they are not added to any trip.</li>
+<li><strong>While the app's map is open</strong> (the <strong>Map</strong> tab), to show where you are on the map. Approximate location is enough for this. The app stops asking for your location as soon as you leave the map or switch to another app. Locations used by the map are only shown: they are not stored, and they are not added to any trip. The map's compass, which shows which way the phone points and can turn the map with you, reads the phone's motion and magnetic sensors only while the map is open; these readings are used on the phone only, and are not stored or sent.</li>
 </ul>
 <p>The app does not ask for background location permission and never tracks your location at other times.</p>
 <p>The app gets your location from Google Play services' location service on your phone. Depending on your phone's location settings, that service may also use Wi-Fi and mobile networks to work out where you are; Google handles this under its own privacy policy. The app itself doesn't send your location anywhere.</p>
@@ -74,8 +74,9 @@
 <p>All of this is worked out on your device. The app suggests whether a trip was a walk or a drive from its speed. On Android 14 and later, it converts the heights the phone reports into heights above sea level, using a model built into Android. Nothing is sent anywhere for this.</p>
 
 <h2>Maps and internet use</h2>
-<p>When you open a trip's screen or the app's map, the app loads the map from <a href="https://openfreemap.org">OpenFreeMap</a>, a free map service. These requests ask for the map's style, fonts and tiles for the area being shown, and carry the usual technical details of any internet request, such as your IP address. They do not contain your GPS points, but like any online map they show OpenFreeMap which area you're viewing. On the app's map, which follows where you are, that is usually the area around you. OpenFreeMap handles these requests under its own terms.</p>
-<p>Map tiles you've viewed are cached in the app's private storage, so maps load faster next time. This is the app's only internet use.</p>
+<p>When you open a trip's screen or the app's map, the app loads the map from <a href="https://openfreemap.org">OpenFreeMap</a>, a free map service. These requests ask for the map's tiles, fonts and icons for the area being shown, and carry the usual technical details of any internet request, such as your IP address. They do not contain your GPS points, but like any online map they show OpenFreeMap which area you're viewing. On the app's map, which follows where you are, that is usually the area around you. OpenFreeMap handles these requests under its own terms.</p>
+<p>The map's hill shading, the soft shadows that show hills and valleys, comes from <a href="https://mapterhorn.com">Mapterhorn</a>, a free, open terrain-data service. These requests also show Mapterhorn the area you're viewing, in squares several kilometers across, and carry your IP address. They do not contain your GPS points. Mapterhorn keeps request logs, including IP addresses, for up to 30 days; see <a href="https://mapterhorn.com/privacy-policy/">Mapterhorn's privacy policy</a>.</p>
+<p>Map and hill-shading tiles you've viewed are cached in the app's private storage, so maps load faster next time and areas you've viewed before can still show without internet. OpenFreeMap and Mapterhorn are the app's only internet use.</p>
 
 <h2>Sharing and saving GPX files</h2>
 <p>A trip leaves your device only when you share it: tap the <strong>Share</strong> icon at the top of the trip's screen (labelled "Share GPX" for screen readers), then choose where it goes. The GPX file contains the trip's route (the location, time and height of each point), the trip's name if it has one, and the spots you marked (the location, time, height and name of each). The file is named after the trip's date, and apps that use a subject line, such as email apps, also get "GPS route from" and that date.</p>
