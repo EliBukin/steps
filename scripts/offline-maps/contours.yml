@@ -1,0 +1,29 @@
+schema_name: StepSplit contours
+schema_description: Contour lines from the Mapterhorn DEM (z12 tiles averaged to ~32 m), every 50 m from z12, 10 m from z13
+attribution: <a href="https://mapterhorn.com/attribution" target="_blank">&copy; Mapterhorn</a>
+args:
+  contours_path: work/contours.gpkg
+  maxzoom: 13
+sources:
+  contours:
+    type: geopackage
+    local_path: '${ args.contours_path }'
+layers:
+  - id: contour
+    features:
+      - source: contours
+        geometry: line
+        min_zoom: '${ int(feature.tags.ele) % 50 == 0 ? 12 : 13 }'
+        attributes:
+          - key: ele
+            type: integer
+            value: '${ int(feature.tags.ele) }'
+          - key: index
+            type: integer
+            value: '${ int(feature.tags.ele) % 100 == 0 ? 1 : 0 }'
+    tile_post_process:
+      merge_line_strings:
+        min_length: 4
+        tolerance: 0.5
+        min_length_at_max_zoom: 2
+        tolerance_at_max_zoom: 0.25

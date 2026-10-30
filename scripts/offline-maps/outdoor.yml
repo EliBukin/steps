@@ -1,0 +1,132 @@
+schema_name: StepSplit outdoor extras
+schema_description: Tracks, paths, minor roads and wadis from z9-z11 (OpenMapTiles has them only from z11-z14), plus marked hiking trails
+attribution: <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>
+args:
+  osm_path: work/region.osm.pbf
+  trails_path: work/trails.gpkg
+  maxzoom: 13
+sources:
+  osm:
+    type: osm
+    local_path: '${ args.osm_path }'
+  trails:
+    type: geopackage
+    local_path: '${ args.trails_path }'
+definitions:
+  merge: &merge
+    merge_line_strings:
+      min_length: 3
+      tolerance: 0.5
+      min_length_at_max_zoom: 0
+      tolerance_at_max_zoom: 0.125
+layers:
+  - id: outdoor_transportation
+    features:
+      - source: osm
+        geometry: line
+        include_when:
+          highway: [tertiary, tertiary_link, unclassified, track, path, bridleway]
+        exclude_when:
+          area: "yes"
+          tunnel: ["yes", building_passage]
+          footway: sidewalk
+        min_zoom:
+          default_value: 11
+          overrides:
+            9: { highway: [tertiary, tertiary_link] }
+            10: { highway: [unclassified, track] }
+        attributes:
+          - key: class
+            value:
+              tertiary: { highway: [tertiary, tertiary_link] }
+              minor: { highway: unclassified }
+              track: { highway: track }
+              path: otherwise
+          - key: subclass
+            type: match_value
+          - key: surface
+            value:
+              - if:
+                  surface: [paved, asphalt, cobblestone, concrete, "concrete:lanes", "concrete:plates", metal, paving_stones, sett, unhewn_cobblestone, wood]
+                value: paved
+              - if:
+                  surface: [unpaved, compacted, dirt, earth, fine_gravel, grass, grass_paver, gravel, gravel_turf, ground, ice, mud, pebblestone, salt, sand, snow, woodchips, rock]
+                value: unpaved
+              - if:
+                  tracktype: grade1
+                value: paved
+              - if:
+                  tracktype: [grade2, grade3, grade4, grade5]
+                value: unpaved
+          - key: brunnel
+            value:
+              - if: { bridge: ["yes", viaduct] }
+                value: bridge
+              - if: { ford: "yes" }
+                value: ford
+    tile_post_process: *merge
+  - id: outdoor_waterway
+    features:
+      - source: osm
+        geometry: line
+        include_when:
+          waterway: [river, stream, canal, wadi]
+        exclude_when:
+          tunnel: ["yes", culvert]
+        min_zoom:
+          default_value: 10
+          overrides:
+            9: { waterway: river }
+        attributes:
+          - key: class
+            value:
+              stream: { waterway: [stream, wadi] }
+              river: { waterway: river }
+              canal: otherwise
+          - key: intermittent
+            type: integer
+            value:
+              - if:
+                  intermittent: "yes"
+                  seasonal: "yes"
+                  waterway: wadi
+                value: 1
+              - else: 0
+          - key: name
+            tag_value: name
+            min_zoom: 12
+          - key: name:en
+            tag_value: name:en
+            min_zoom: 12
+          - key: name:he
+            tag_value: name:he
+            min_zoom: 12
+    tile_post_process:
+      merge_line_strings:
+        min_length: 6
+        tolerance: 0.5
+        min_length_at_max_zoom: 0
+        tolerance_at_max_zoom: 0.125
+  - id: trail
+    features:
+      - source: trails
+        geometry: line
+        min_zoom: 11
+        attributes:
+          - key: color
+            tag_value: color
+          - key: network
+            tag_value: network
+          - key: ref
+            tag_value: ref
+            min_zoom: 13
+          - key: name
+            tag_value: name
+            min_zoom: 13
+          - key: name:en
+            tag_value: name_en
+            min_zoom: 13
+          - key: name:he
+            tag_value: name_he
+            min_zoom: 13
+    tile_post_process: *merge
