@@ -17,7 +17,7 @@ for the text inside the code blocks (Play counts characters, not bytes).
 Daily steps at a glance, and GPS routes of hikes and drives to share as GPX.
 ```
 
-**Full description** (2,303 of 4,000 characters)
+**Full description** (2,496 of 4,000 characters)
 
 ```text
 Steps GPS Route does two simple things. It shows how much you walk each day, and it records the GPS route of trips you start yourself, such as a hike, a nature walk or an off-road drive, so you can see them on a map and share them as GPX files.
@@ -33,6 +33,7 @@ GPS trips
 • Mark a spot, such as a spring, a viewpoint or a tricky passage, from the app, the notification or the lock screen
 • See each trip on a map, colored by speed, with the spots you marked
 • Open the map to see where you are, and the route of the trip you're recording
+• Download the offline map of Israel: it works with no signal, with marked trails in their colors, jeep tracks, wadis and contour lines
 • Trip details: distance, duration, moving time, top speed, climb and descent, and a height chart
 • Name a trip and set it as a walk or a drive. Stats counts walks and drives separately.
 • Keeps recording at driving speed, for 4x4 and jeep trips
@@ -45,7 +46,7 @@ Your data stays on your phone
 • No account, no ads, no analytics
 • Nothing is sent to the developer
 • Location is used only while a trip you started is recording, or while the map is open
-• The only internet use is loading the map (from OpenFreeMap, with hill shading from Mapterhorn)
+• The only internet use is loading the map (from OpenFreeMap, with hill shading from Mapterhorn) and downloading an offline map you ask for (from GitHub)
 • Privacy policy: https://elibukin.github.io/steps/privacy-policy.html
 
 Not a health app
@@ -65,7 +66,7 @@ Good to know
 הצעדים שלך בכל יום במבט אחד, ומסלולי GPS של טיולים ונסיעות לשיתוף כ-GPX.
 ```
 
-**Full description** (1,968 of 4,000 characters)
+**Full description** (2,115 of 4,000 characters)
 
 ```text
 Steps GPS Route עושה שני דברים פשוטים. הוא מראה כמה הלכת בכל יום, ומקליט את מסלול ה-GPS של טיולים שאת/ה מתחיל/ה בעצמך, כמו טיול רגלי, הליכה בטבע או נסיעת שטח, כדי שתוכל/י לראות אותם על מפה ולשתף אותם כקובצי GPX.
@@ -81,6 +82,7 @@ Steps GPS Route עושה שני דברים פשוטים. הוא מראה כמה 
 • סימון מקום, כמו מעיין, תצפית או קטע קשה, מהאפליקציה, מההתראה או ממסך הנעילה
 • כל טיול על מפה, צבוע לפי מהירות, עם המקומות שסימנת
 • פתיחת המפה כדי לראות איפה את/ה, ואת מסלול הטיול שמוקלט
+• הורדת מפת ישראל לשימוש אופליין: עובדת בלי קליטה, עם שבילים מסומנים בצבעים שלהם, דרכי עפר, ואדיות וקווי גובה
 • פרטי הטיול: מרחק, משך, זמן בתנועה, מהירות מרבית, עלייה וירידה, וגרף גובה
 • שם לכל טיול, וסימון כהליכה או כנסיעה. הסטטיסטיקה סופרת הליכות ונסיעות בנפרד.
 • ממשיך להקליט גם במהירות נסיעה, לטיולי 4x4 וג'יפים
@@ -93,7 +95,7 @@ GPX לאפליקציות אחרות
 • בלי חשבון, בלי פרסומות, בלי ניתוח נתונים
 • שום דבר לא נשלח למפתח
 • המיקום משמש רק בזמן הקלטה של טיול שהתחלת, או כשהמפה פתוחה
-• השימוש היחיד באינטרנט הוא טעינת המפה (מ-OpenFreeMap, עם הצללת תבליט מ-Mapterhorn)
+• השימוש היחיד באינטרנט הוא טעינת המפה (מ-OpenFreeMap, עם הצללת תבליט מ-Mapterhorn) והורדת מפה אופליין שביקשת (מ-GitHub)
 • מדיניות הפרטיות: https://elibukin.github.io/steps/privacy-policy.html
 
 לא אפליקציית בריאות

@@ -9,6 +9,10 @@ data off the phone. The Open map work that's in progress counts, as do any chang
 or the map library. Re-checked 2026-10-26 for the outdoor map: the hill shading adds Mapterhorn
 (see its row and point 1), with the same answer as OpenFreeMap.
 
+**Draft, 2026-10-30, offline maps (branch `offline-maps`, not merged):** the app can download an
+offline map pack from GitHub. See the *Offline map download (GitHub)* row. The answers above stay
+the same: **No**.
+
 ## The answers
 
 | # | Question | Answer | Reason |
@@ -40,6 +44,7 @@ Google's definitions:
 | **Google Play services location** | The app gets positions from Google Play services' fused location provider (`play-services-location`). Depending on the phone's location settings, Play services may use Wi-Fi and mobile networks, under Google's own privacy policy. | That traffic belongs to the phone's location service, not to this app. The app's own code and its client library send nothing. **Not declared.** ⚠ Google doesn't say this outright; see *Uncertain points*. |
 | **Map tiles (OpenFreeMap)** | While a trip's screen or the **Map** tab is open, MapLibre loads the map's vector tiles, fonts and icons over HTTPS from `tiles.openfreemap.org`. The map's style itself is inside the app. The requests carry the tile numbers of the area shown (zoom 14 at most), plus the IP address and the usual request headers. They never carry GPS points, times or trip data. | **Not treated as collection** (recommended). ⚠ This is the one real judgment call; see below. |
 | **Hill shading (Mapterhorn)** | On the same maps, MapLibre loads terrain tiles (elevation as WebP images) over HTTPS from `tiles.mapterhorn.com`, only up to zoom 12: squares about 8 km across in Israel. The requests carry the tile numbers, the IP address and the usual request headers, never GPS points, times or trip data. Mapterhorn logs requests, with the IP address, for up to 30 days. | **Not treated as collection**, for the same reasons as OpenFreeMap (below). Its tiles are coarser than OpenFreeMap's, so they say less about where the user is. |
+| **Offline map download (GitHub)** | Only when the user opens Settings (to read `maps.json`, a few kilobytes: which maps exist and their sizes) and when they tap **Download** or **Update** (the pack files, through Android's download manager), the app requests public files from `github.com` and its download servers. The requests carry the IP address and the usual request headers. They never carry location, GPS points, steps, trip data or any identifier; the files are the same for everyone. Inside a downloaded pack's area, the map makes no network requests at all. | **Not collection**: nothing about the user is sent, only a request for a public file the user asked for, and the developer receives nothing. The same reasoning as for the map tiles (point 1) applies, with even less: the request doesn't say where the user is. **Not declared.** |
 | **GPX share and Save file** | Sent only when the user taps **Share** on a trip and picks an app, or **Save file** and picks a folder. | A specific user-initiated action where the user expects the data to go there: the sharing exception applies. The app itself transmits nothing, so it isn't collection either. **Not declared.** |
 | **Phone-to-phone transfer** | Cloud backup is off (`allowBackup="false"`), but Android's device-to-device transfer may copy app data. | Done by Android at the user's request. **Not declared.** |
 | **Play install stats and crash reports** | Google collects these about every Play app, if the user agreed. | Not the app's own collection. **Not declared.** |

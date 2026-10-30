@@ -241,6 +241,13 @@ Open the **Map** tab at the bottom. It works whether or not a trip is recording.
   ground elsewhere, with your dot, the trip's route and its spots still on it. It fills in by
   itself once you're back online. If the map can't load at all, you get a plain background and
   **Retry map**.
+- **Offline map of Israel.** Download it once (**Settings → Offline maps**) and the map works with
+  no internet anywhere in Israel, on the Map tab and on a trip's screen. It also shows more than the
+  online map: jeep tracks, paths, minor roads (such as Road 171) and wadis from far out, marked
+  trails in their trail-mark colors (red, blue, green, black, and the Israel National Trail in
+  orange) and contour lines (every 50 m, then every 10 m closer in, with heights). Outside its area
+  the app uses the online map as before. With no offline map, a phone in Israel gets a one-time
+  offer of it above the map.
 
 The map uses your location only while the Map tab is on screen, with the app in front: switching
 to another tab or app stops it at once. Nothing it shows is saved. The trip itself keeps recording
@@ -287,6 +294,10 @@ Tap the gear icon at the top of any tab; the back arrow, or Back, returns to tha
   decide what counts as a workout; **Reset to defaults** undoes it.
 - **Keep deleted trips in Stats:** off by default. When on, a deleted trip's date, time, distance
   and type keep counting in Stats.
+- **Offline maps:** **Download** the Israel map (about 151 MB). The download runs in Android's
+  download manager, with a notification, and carries on if you leave the app; it shows its progress
+  here, with **Cancel**. **Download over Wi-Fi only** is on by default. Once it's on the phone:
+  **Delete**, and **Update** when a newer map is out (the app checks only when you open Settings).
 - **Permission status** and **Data collection status** tell you whether step reading works.
   Without the permission, **Open Health Connect** opens Health Connect, where you allow **Steps**
   under *App permissions → Steps GPS Route*.
@@ -496,6 +507,18 @@ Tap the gear icon at the top of any tab; the back arrow, or Back, returns to tha
   is off. The scale bar is always in meters and kilometers. Without internet the style still
   loads, so the map shows what's cached on its plain land color. Only if the map can't load at
   all does a trip's screen show a plain outline of the route, with a *Retry map* button.
+- **Offline maps.** A pack is two [PMTiles](https://docs.protomaps.com/pmtiles/) files: one vector
+  file (OpenMapTiles layers z0-14, plus the app's own `outdoor_transportation`,
+  `outdoor_waterway`, `trail` and `contour` layers) and one terrain file (Mapterhorn z0-11). They
+  live in the app's own folder on the phone's storage (`Android/data/<app>/files/maps`), which
+  Android deletes with the app. While the camera's center is inside a pack's area (from zoom 7, or
+  at any zoom once the online map failed), the map uses the pack style (`MapPackStyle`): the
+  outdoor style pointed at the two files, with fonts and icons from the app's assets and copies of
+  its track, path, road and wadi layers reading the outdoor layers at low zoom. Nothing in it goes
+  to the network. `scripts/offline-maps/` builds the packs and their list, `maps.json`; the app
+  reads that list from the repo's `maps` GitHub release when Settings opens, and downloads with
+  Android's download manager (resume, Wi-Fi only, notification, no extra permission), then checks
+  each file's size and SHA-256 before using it.
 - **The Map tab.** The same outdoor map, with your location from Google Play services'
   location service, asked for every 2 seconds at high accuracy, only while the tab is on screen and
   the app is in the foreground; switching tabs or leaving the app stops it at once. Nothing it gets is
@@ -527,7 +550,7 @@ database file and its screens.
 | Notifications | The notification shown while a trip records | Together with location, on Android 13 and later. Recording still works if you say no. |
 | Foreground service (location) | Recording with the screen off | Granted automatically |
 | Location (approximate is enough) | Your blue dot on the **Map** tab | When you tap *Allow* above the map. Already granted if you've recorded a trip. |
-| Internet | Loading the map (OpenFreeMap) and its hill shading (Mapterhorn) on a trip's screen and the **Map** tab | Granted automatically |
+| Internet | Loading the map (OpenFreeMap) and its hill shading (Mapterhorn) on a trip's screen and the **Map** tab; downloading an offline map you ask for (GitHub) | Granted automatically |
 
 The app never asks for background location. It uses location only while a trip is recording or
 the **Map** tab is open. The compass needs no permission.
@@ -544,6 +567,9 @@ app under **Settings → Privacy policy**. In short:
   tab is open. Those requests don't include your GPS points, but like any map they show
   OpenFreeMap and Mapterhorn which area you're looking at (on the Map tab, usually the area around
   you), and your IP address. Mapterhorn keeps request logs, with IP addresses, for up to 30 days.
+- An offline map downloads only when you tap **Download** or **Update**, from GitHub, which sees
+  your IP address like any download; the app checks GitHub for a newer map only when you open
+  Settings. Inside a downloaded map's area, the map makes no internet requests at all.
 - The compass reads the phone's sensors only while the Map tab is open, and nothing it reads is
   stored or sent.
 - Locations come from Google Play services' location service on the phone, which may also use
@@ -565,6 +591,16 @@ The map's (i) button lists these credits too.
   number signs, follow OpenMapTiles' [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
   style (© MapTiler.com & OpenMapTiles contributors, © Mapbox; code BSD 3-Clause, design CC BY 4.0).
 - **MapLibre Native** and **maplibre-compose** draw the map (BSD 2-Clause and BSD 3-Clause).
+- **Offline maps** are built from the same sources: OpenStreetMap data (© OpenStreetMap
+  contributors; the packs are published under the Open Database License, and
+  `scripts/offline-maps/` is how they're made), OpenMapTiles' schema (© OpenMapTiles, CC BY 4.0),
+  Natural Earth (public domain) at low zoom, and Mapterhorn's terrain (© Mapterhorn; in Israel
+  from Copernicus GLO-30, © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018
+  provided under COPERNICUS by the European Union and ESA, and ASTER GDEM, courtesy of METI and
+  NASA). Planetiler, GDAL and tippecanoe build them; none of them ships in the app.
+- **Fonts and icons for offline maps** ship in the app: Noto Sans (© The Noto Project Authors,
+  SIL Open Font License 1.1, text in `app/src/main/assets/map/glyphs/OFL.txt`) and OpenFreeMap's
+  map icons (MIT; the POI icons are Maki, CC0).
 
 ## Known limitations
 
@@ -592,9 +628,13 @@ The map's (i) button lists these credits too.
   are. Their heights show only on Android 14 and newer.
 - **A permission answer can be lost.** If the screen rotates while a permission dialog is open,
   tap *Start trip* again.
-- **The map's detail.** Zoomed out past about the 1 km scale, the map data leaves out most tracks
-  and paths. There are no contour lines, no marked-trail colors (red, blue, green, black) and no
-  4x4 grades, and offline the map has only what's cached. Offline maps by region may come later.
+- **The map's detail.** Online, zoomed out past about the 1 km scale, the map data leaves out most
+  tracks and paths, and there are no contour lines or marked-trail colors; the offline map of
+  Israel has them. There are no 4x4 grades either way.
+- **Offline maps: Israel only, for now.** Where two marked trails share a path, only one color
+  shows. Crossing the edge of the offline map's area (or zooming out past about zoom 7) switches
+  between it and the online map, which redraws the map once. An update downloads the whole map
+  again.
 - **The compass is only as good as the phone's.** Near a car, metal or a magnet it can be off by
   tens of degrees until it's calibrated.
 
@@ -625,9 +665,12 @@ app/src/main/java/com/example/stepsplit/
                     sea-level heights
     local/          Room database, entities and DAOs
     settings/       DataStore settings (goal, thresholds, last sync, keep deleted trips)
+    mappack/        Offline map packs: the server's list (maps.json), the files on the phone,
+                    downloads through Android's download manager
   trip/service/     The trip recording foreground service and its command handling
   sync/             Cancels a background job left by older app versions (nothing is scheduled)
   debug/            Debug-only sample data and device diagnostics
+scripts/offline-maps/  Builds the offline map packs and maps.json (see its README)
 ```
 
 The privacy policy's source is `docs/privacy-policy.html`. It's published on GitHub Pages from the
