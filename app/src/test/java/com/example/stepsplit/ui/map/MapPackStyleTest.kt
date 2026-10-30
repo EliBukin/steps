@@ -117,6 +117,41 @@ class MapPackStyleTest {
     }
 
     @Test
+    fun `trails read the pack's z14 tiles, contours and camp sites stretch its z13 tiles`() {
+        val sources = style.getValue("sources").jsonObject
+        val z13 = sources.getValue("pack-z13").jsonObject
+        assertEquals(sources.getValue("openmaptiles").jsonObject.string("url"), z13.string("url"))
+        assertEquals(13.0, z13.getValue("maxzoom").jsonPrimitive.double, 0.0)
+        for (id in listOf("pack-contour", "pack-contour-label", "pack-poi-campsite")) assertEquals(id, "pack-z13", layer(id).string("source"))
+        for (id in listOf("pack-trail-casing", "pack-trail", "pack-track")) assertEquals(id, "openmaptiles", layer(id).string("source"))
+    }
+
+    @Test
+    fun `the pack is built to the zooms the style reads it at`() {
+        // A layer read from the pack's own source has to reach the base map's z14: from z14 MapLibre
+        // reads the z14 tiles, and a layer missing there disappears (the trails once turned brown so).
+        fun maxzoom(schema: String) = Regex("""(?m)^\s+maxzoom: (\d+)""").find(File("../scripts/offline-maps/$schema").readText())!!.groupValues[1].toInt()
+        assertEquals(14, maxzoom("trails.yml"))
+        assertEquals(13, maxzoom("contours.yml"))
+        assertEquals(13, maxzoom("outdoor.yml"))
+        assertTrue(File("../scripts/offline-maps/build-pack.sh").readText().contains("work/trails.pmtiles work/contours.pmtiles"))
+    }
+
+    @Test
+    fun `camp sites show from z11, then hand over to the base map's camp icon at z14`() {
+        val camps = layer("pack-poi-campsite")
+        assertEquals("outdoor_poi", camps.string("source-layer"))
+        assertEquals(11.0, camps.getValue("minzoom").jsonPrimitive.double, 0.0)
+        assertEquals(14.0, camps.getValue("maxzoom").jsonPrimitive.double, 0.0)
+        assertEquals(14.0, layer("poi-outdoor").getValue("minzoom").jsonPrimitive.double, 0.0)
+        // The same icon, label and filter as the base map's (it matches class "campsite", as built by outdoor.yml).
+        assertEquals(layer("poi-outdoor").getValue("layout"), camps.getValue("layout"))
+        assertEquals(layer("poi-outdoor").getValue("filter"), camps.getValue("filter"))
+        assertTrue(camps.getValue("filter").strings().contains("campsite"))
+        assertTrue(File("../scripts/offline-maps/outdoor.yml").readText().contains("- id: outdoor_poi"))
+    }
+
+    @Test
     fun `labels still follow the app's language`() {
         val hebrew = MapStyles.outdoorStyleJson(MapPackStyle.styleJson(assetJson, pack), "he")
         assertTrue(hebrew.contains("name:he"))

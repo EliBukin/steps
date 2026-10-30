@@ -10,7 +10,7 @@ version is the OpenStreetMap extract's date):
 
 | File | What's in it | Israel, 2026-10 |
 |---|---|---|
-| `<region>-<version>-vector.pmtiles` | OpenMapTiles layers z0-14 (Planetiler), plus `outdoor_transportation` and `outdoor_waterway` (tracks z10, paths z11, tertiary roads z9, unclassified z10, streams and wadis z10, rivers z9, up to z13), `trail` (marked hiking routes with `color` from `osmc:symbol`, z11-13) and `contour` (`ele`, `index` = every 100 m; 50 m from z12, 10 m at z13) | 119.5 MB |
+| `<region>-<version>-vector.pmtiles` | OpenMapTiles layers z0-14 (Planetiler), plus `outdoor_transportation` and `outdoor_waterway` (tracks z10, paths z11, tertiary roads z9, unclassified z10, streams and wadis z10, rivers z9, up to z13), `outdoor_poi` (camp sites with OpenMapTiles' poi attributes, z11-13), `trail` (marked hiking routes with `color` from `osmc:symbol`, z11-14) and `contour` (`ele`, `index` = every 100 m; 50 m from z12, 10 m at z13) | 119.6 MB |
 | `<region>-<version>-dem.pmtiles` | Mapterhorn terrain (Terrarium WebP, 512 px), z0-11 | 31.4 MB |
 
 `maps.json` lists them for the app:
@@ -28,6 +28,12 @@ version is the OpenStreetMap extract's date):
 - `schema` is the pack layout the app's style reads (`MapPackManifest.SCHEMA`). Change the layer
   names or attributes, and you have to raise it and ship an app that reads the new schema.
 - `minAppVersionCode` holds a pack back from older apps.
+
+**Zooms:** from z14 MapLibre reads the file's z14 tiles, and a layer that isn't in them disappears.
+So a layer the app reads from the pack's own source goes to z14 (`trail`, in `trails.yml`). The app
+reads `contour` and `outdoor_poi` from a second source on the same file that stops at z13
+(`MapPackStyle`), so MapLibre stretches their z13 tiles instead: contours to z14 would be about 20 MB
+more.
 
 ## Building
 

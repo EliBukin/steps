@@ -1,0 +1,41 @@
+schema_name: StepSplit trails
+schema_description: Marked hiking trails (OSM hiking routes) with their trail-mark color, z11-z14
+attribution: <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>
+args:
+  trails_path: work/trails.gpkg
+  # z14 like the base map: from z14 MapLibre reads the pack's z14 tiles, so a layer that stops at
+  # z13 disappears there.
+  maxzoom: 14
+sources:
+  trails:
+    type: geopackage
+    local_path: '${ args.trails_path }'
+layers:
+  - id: trail
+    features:
+      - source: trails
+        geometry: line
+        min_zoom: 11
+        attributes:
+          - key: color
+            tag_value: color
+          - key: network
+            tag_value: network
+          - key: ref
+            tag_value: ref
+            min_zoom: 13
+          - key: name
+            tag_value: name
+            min_zoom: 13
+          - key: name:en
+            tag_value: name_en
+            min_zoom: 13
+          - key: name:he
+            tag_value: name_he
+            min_zoom: 13
+    tile_post_process:
+      merge_line_strings:
+        min_length: 1
+        tolerance: 0.25
+        min_length_at_max_zoom: 0
+        tolerance_at_max_zoom: 0.125

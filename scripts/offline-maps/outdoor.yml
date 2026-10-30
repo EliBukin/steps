@@ -1,17 +1,13 @@
 schema_name: StepSplit outdoor extras
-schema_description: Tracks, paths, minor roads and wadis from z9-z11 (OpenMapTiles has them only from z11-z14), plus marked hiking trails
+schema_description: Tracks, paths, minor roads and wadis from z9-z11, and camp sites from z11 (OpenMapTiles has them only from z11-z14)
 attribution: <a href="https://www.openstreetmap.org/copyright" target="_blank">&copy; OpenStreetMap contributors</a>
 args:
   osm_path: work/region.osm.pbf
-  trails_path: work/trails.gpkg
   maxzoom: 13
 sources:
   osm:
     type: osm
     local_path: '${ args.osm_path }'
-  trails:
-    type: geopackage
-    local_path: '${ args.trails_path }'
 definitions:
   merge: &merge
     merge_line_strings:
@@ -107,26 +103,31 @@ layers:
         tolerance: 0.5
         min_length_at_max_zoom: 0
         tolerance_at_max_zoom: 0.125
-  - id: trail
+  # Camp sites (night camps, "חניון לילה"), with OpenMapTiles' poi attributes so the style's own
+  # camp icon draws them; OpenMapTiles has them (like most POIs) only from z14.
+  - id: outdoor_poi
     features:
-      - source: trails
-        geometry: line
+      - source: osm
+        geometry: point
+        include_when: &camp_site
+          tourism: camp_site
         min_zoom: 11
-        attributes:
-          - key: color
-            tag_value: color
-          - key: network
-            tag_value: network
-          - key: ref
-            tag_value: ref
-            min_zoom: 13
+        attributes: &poi_attributes
+          - key: class
+            value: campsite
+          - key: subclass
+            value: camp_site
           - key: name
             tag_value: name
-            min_zoom: 13
+            min_zoom: 12
           - key: name:en
-            tag_value: name_en
-            min_zoom: 13
+            tag_value: name:en
+            min_zoom: 12
           - key: name:he
-            tag_value: name_he
-            min_zoom: 13
-    tile_post_process: *merge
+            tag_value: name:he
+            min_zoom: 12
+      - source: osm
+        geometry: polygon_point_on_surface
+        include_when: *camp_site
+        min_zoom: 11
+        attributes: *poi_attributes

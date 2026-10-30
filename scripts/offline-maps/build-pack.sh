@@ -60,9 +60,13 @@ OSM_CONFIG_FILE=work/osmconf.ini "$GEO_BIN/ogr2ogr" -f GPKG -overwrite work/rout
     network, ref, name, name_en, name_he
   FROM trails"
 
-step "Outdoor layers: low-zoom tracks, paths, minor roads, wadis, and the trails (Planetiler YAML)"
+step "Trail layer, z11-14 (Planetiler YAML)"
+"$JAVA" -Xmx8g -jar "$PLANETILER_JAR" generate-custom --schema="$HERE/trails.yml" \
+  --trails_path=work/trails.gpkg --output=work/trails.pmtiles --force
+
+step "Outdoor layers: low-zoom tracks, paths, minor roads, wadis, and camp sites (Planetiler YAML)"
 "$JAVA" -Xmx8g -jar "$PLANETILER_JAR" generate-custom --schema="$HERE/outdoor.yml" \
-  --osm_path=work/region.osm.pbf --trails_path=work/trails.gpkg --output=work/outdoor.pmtiles --force
+  --osm_path=work/region.osm.pbf --output=work/outdoor.pmtiles --force
 
 step "Heights: Mapterhorn terrain tiles z0-12 for the area"
 "$PMTILES" extract https://download.mapterhorn.com/planet.pmtiles work/dem-z12.pmtiles --bbox="$BBOX" --maxzoom=12
@@ -94,9 +98,9 @@ EOF
 "$JAVA" -Xmx8g -jar "$PLANETILER_JAR" generate-custom --schema="$HERE/contours.yml" \
   --contours_path=work/contours.gpkg --output=work/contours.pmtiles --force
 
-step "One vector file: base map + outdoor layers + contours"
+step "One vector file: base map + outdoor layers + trails + contours"
 "$GEO_BIN/tile-join" -q -f --no-tile-size-limit -o "release/$NAME-vector.pmtiles" \
-  work/omt.pmtiles work/outdoor.pmtiles work/contours.pmtiles
+  work/omt.pmtiles work/outdoor.pmtiles work/trails.pmtiles work/contours.pmtiles
 
 step "maps.json"
 "$GEO_BIN/python" -I "$HERE/make_manifest.py" "$REGION" "$VERSION" work/region.poly \

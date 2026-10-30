@@ -24,6 +24,7 @@ import kotlinx.serialization.json.jsonPrimitive
  *   takes over, so both look the same.
  * - Two layers the online map doesn't have: marked hiking trails in their trail-mark colors
  *   (`trail`) and contour lines (`contour`, with a height label every 100 m).
+ * - Camp sites from z11 (`outdoor_poi`), drawn by a copy of the style's own outdoor POI layer.
  *
  * Every other layer, color and label rule is the outdoor style's own, so a change there shows on
  * both maps.
@@ -36,17 +37,33 @@ internal object MapPackStyle {
     private const val VECTOR_SOURCE = "openmaptiles"
     private const val DEM_SOURCE = "mapterhorn"
 
+    /**
+     * The same vector file, read only up to z13: contours and camp sites are built to z13 (to z14
+     * they'd be a much bigger download), and from z14 MapLibre stretches this source's z13 tiles
+     * instead of reading the file's z14 tiles, which don't have them.
+     */
+    private const val Z13_SOURCE = "pack-z13"
+
     fun styleJson(outdoorStyleJson: String, pack: InstalledMapPack): String {
         val style = Json.parseToJsonElement(outdoorStyleJson).jsonObject
         val layers = style.getValue("layers").jsonArray.map { it.jsonObject }.toMutableList()
         val byId = layers.associateBy { it.id }
 
-        fun clone(id: String, newId: String, sourceLayer: String, minzoom: Int, maxzoom: Int, onlyClasses: List<String>? = null): JsonObject {
+        fun clone(
+            id: String,
+            newId: String,
+            sourceLayer: String,
+            minzoom: Int,
+            maxzoom: Int,
+            onlyClasses: List<String>? = null,
+            source: String = VECTOR_SOURCE,
+        ): JsonObject {
             val original = byId.getValue(id)
             val filter = if (onlyClasses == null) original.getValue("filter") else allOf(original.getValue("filter"), classIn(onlyClasses))
             return JsonObject(
                 original - "minzoom" + mapOf(
                     "id" to JsonPrimitive(newId),
+                    "source" to JsonPrimitive(source),
                     "source-layer" to JsonPrimitive(sourceLayer),
                     "minzoom" to JsonPrimitive(minzoom),
                     "maxzoom" to JsonPrimitive(maxzoom),
@@ -85,11 +102,16 @@ internal object MapPackStyle {
             clone("road", "pack-road-tertiary", "outdoor_transportation", 9, 11, listOf("tertiary")).withWidth(9, 0.9, 1.7),
             clone("road", "pack-road-minor", "outdoor_transportation", 10, 12, listOf("minor")).withWidth(10, 0.7, 1.5),
         )
+        // Camp sites (night camps) from z11, with the style's camp icon; OpenMapTiles has them from z14.
+        layers.insertAfter("poi-outdoor", clone("poi-outdoor", "pack-poi-campsite", "outdoor_poi", 11, 14, source = Z13_SOURCE))
         layers.insertAfter("hillshade", CONTOUR_LINES)
         layers.insertAfter("waterway-label", CONTOUR_LABELS)
 
         val sources = style.getValue("sources").jsonObject + mapOf(
             VECTOR_SOURCE to JsonObject(mapOf("type" to JsonPrimitive("vector"), "url" to JsonPrimitive(pmtilesUrl(pack.vectorFile)))),
+            Z13_SOURCE to JsonObject(
+                mapOf("type" to JsonPrimitive("vector"), "url" to JsonPrimitive(pmtilesUrl(pack.vectorFile)), "maxzoom" to JsonPrimitive(13)),
+            ),
             DEM_SOURCE to JsonObject(
                 mapOf(
                     "type" to JsonPrimitive("raster-dem"),
@@ -147,13 +169,13 @@ internal object MapPackStyle {
 
     /** Every 50 m from z12, every 10 m from z13 (the pack has them so); each 100 m a little darker. */
     private val CONTOUR_LINES = json(
-        """{"id": "pack-contour", "type": "line", "source": "$VECTOR_SOURCE", "source-layer": "contour", "minzoom": 12,
+        """{"id": "pack-contour", "type": "line", "source": "$Z13_SOURCE", "source-layer": "contour", "minzoom": 12,
         "paint": {"line-color": "#A0784A", "line-opacity": ["match", ["get", "index"], 1, 0.55, 0.35],
           "line-width": ["interpolate", ["linear"], ["zoom"], 12, ["match", ["get", "index"], 1, 0.7, 0.4], 15, ["match", ["get", "index"], 1, 1.2, 0.6]]}}""",
     ).jsonObject
 
     private val CONTOUR_LABELS = json(
-        """{"id": "pack-contour-label", "type": "symbol", "source": "$VECTOR_SOURCE", "source-layer": "contour", "minzoom": 13,
+        """{"id": "pack-contour-label", "type": "symbol", "source": "$Z13_SOURCE", "source-layer": "contour", "minzoom": 13,
         "filter": ["==", ["get", "index"], 1],
         "layout": {"symbol-placement": "line", "text-field": ["to-string", ["get", "ele"]], "text-font": ["Noto Sans Regular"],
           "text-size": 10, "symbol-spacing": 400},
