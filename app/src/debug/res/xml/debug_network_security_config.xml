@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug builds only: plain http to the emulator's host computer (10.0.2.2), for trying offline map
+    packs served from it (see scripts/offline-maps/README.md). Everything else stays HTTPS-only, as in
+    release builds, which have no network security config of their own.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

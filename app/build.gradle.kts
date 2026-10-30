@@ -22,6 +22,9 @@ android {
         // versionCode goes up by 1 for every upload to Play, on any track; see docs/RELEASING.md.
         versionCode = 1
         versionName = "1.0"
+        // Offline map packs: the list of maps (maps.json) next to their files, in the repo's "maps"
+        // GitHub release. See scripts/offline-maps/README.md.
+        buildConfigField("String", "MAPS_MANIFEST_URL", "\"https://github.com/EliBukin/steps/releases/download/maps/maps.json\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

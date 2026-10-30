@@ -37,7 +37,7 @@ import com.example.stepsplit.domain.model.TripSpot
 import com.example.stepsplit.domain.trip.RoutePoint
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import com.example.stepsplit.ui.map.OnMapColors
-import com.example.stepsplit.ui.map.rememberOutdoorStyle
+import com.example.stepsplit.ui.map.rememberMapBackground
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -96,7 +96,7 @@ private const val FINISH_LAYER_ID = "trip-route-finish"
  * reset (without user action) whenever [points] actually changes, so a stale failure from a
  * different trip never blocks an otherwise-healthy load.
  *
- * The map is the app's light outdoor style (see [rememberOutdoorStyle]) in dark mode too, and what's
+ * The map is the app's light outdoor style (see [rememberMapBackground]) in dark mode too, and what's
  * drawn on it keeps its light-map colors ([OnMapColors]); the card, the buttons and the legend
  * still follow the app's theme. Without internet the style still loads - it's inside the app - and
  * shows the map tiles viewed before, from MapLibre's cache, on its plain land color.
@@ -147,11 +147,12 @@ private fun LiveMap(
     bottomInset: Dp,
     onLoadFailed: () -> Unit,
 ) {
-    val baseStyle = rememberOutdoorStyle()
     val first = points.first()
     val cameraState = rememberCameraState(
         firstPosition = CameraPosition(target = Position(longitude = first.longitude, latitude = first.latitude), zoom = 14.0),
     )
+    // From an offline map pack where the route is inside one (see rememberMapBackground).
+    val baseStyle = rememberMapBackground(cameraState).style
     val fit = remember(points) { RouteCameraBounds.compute(points) }
     val mapDescription = stringResource(R.string.cd_trip_map_with_markers) +
         if (spots.isNotEmpty()) " " + stringResource(R.string.cd_trip_map_spots, spots.size) else ""

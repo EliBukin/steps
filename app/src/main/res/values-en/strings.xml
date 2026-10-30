@@ -290,4 +290,37 @@
     <string name="stats_trips_walks_title">Walks</string>
     <string name="stats_trips_drives_title">Drives</string>
     <string name="stats_value_unavailable">–</string>
+
+    <!-- Offline maps (Settings and the Map tab's offer) -->
+    <string name="offline_maps_title">Offline maps</string>
+    <string name="offline_maps_intro">Download a map that works with no signal: marked trails in their colors, jeep tracks, paths and wadis even when zoomed out, height lines and hill shading.</string>
+    <string name="offline_maps_region_israel">Israel</string>
+    <string name="offline_maps_region_with_size">%1$s · %2$s</string>
+    <string name="offline_maps_download_action">Download</string>
+    <string name="offline_maps_download_title">%1$s map</string>
+    <string name="offline_maps_progress">%1$s of %2$s</string>
+    <string name="offline_maps_waiting_wifi">Waiting for Wi-Fi</string>
+    <string name="offline_maps_waiting_network">Waiting for a connection</string>
+    <string name="offline_maps_checking">Checking the map…</string>
+    <string name="offline_maps_cancel_action">Cancel</string>
+    <string name="offline_maps_installed">On the phone · map of %1$s · %2$s</string>
+    <string name="offline_maps_update_available">A newer map is available · %1$s</string>
+    <string name="offline_maps_update_action">Update</string>
+    <string name="offline_maps_delete_action">Delete</string>
+    <string name="offline_maps_keep_action">Keep</string>
+    <string name="offline_maps_delete_confirm_title">Delete the %1$s map?</string>
+    <string name="offline_maps_delete_confirm_message">This frees %1$s. You can download it again any time.</string>
+    <string name="offline_maps_wifi_only">Download over Wi-Fi only</string>
+    <string name="offline_maps_looking">Looking for maps…</string>
+    <string name="offline_maps_server_failed">Can\'t reach the map server.</string>
+    <string name="offline_maps_retry_action">Try again</string>
+    <string name="offline_maps_needs_newer_app">This map needs a newer version of the app.</string>
+    <string name="offline_maps_problem_download_failed">The download stopped. Try again.</string>
+    <string name="offline_maps_problem_check_failed">The downloaded map was damaged, so it was deleted. Try again.</string>
+    <string name="offline_maps_problem_space">Not enough free space on the phone.</string>
+    <string name="offline_maps_problem_storage">The phone\'s storage isn\'t available right now.</string>
+    <string name="offline_maps_note">Inside the map\'s area the app draws it from the phone, with no internet; elsewhere it uses the online map. Maps download from GitHub (github.com) and are deleted with the app.</string>
+    <string name="open_map_offline_map_offer">Get the offline map of Israel: trails, tracks and wadis, even with no signal.</string>
+    <string name="open_map_offline_map_offer_action">Download</string>
+    <string name="open_map_offline_map_offer_dismiss">Not now</string>
 </resources>

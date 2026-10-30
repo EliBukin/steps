@@ -13,6 +13,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,12 +43,15 @@ import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.navigation.bottomNavScreens
 import com.example.stepsplit.ui.navigation.highlightedRoute
 import com.example.stepsplit.ui.navigation.isSelectedFor
+import com.example.stepsplit.ui.settings.OfflineMapsActions
+import com.example.stepsplit.ui.settings.OfflineMapsViewModel
 import com.example.stepsplit.ui.settings.SettingsScreen
 import com.example.stepsplit.ui.settings.SettingsViewModel
 import com.example.stepsplit.ui.stats.StatsScreen
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayScreen
 import com.example.stepsplit.ui.today.TodayViewModel
+import com.example.stepsplit.ui.map.LocalMapPacks
 import com.example.stepsplit.ui.map.OpenMapScreen
 import com.example.stepsplit.ui.map.OpenMapViewModel
 import com.example.stepsplit.ui.trips.TripDetailScreen
@@ -82,103 +86,125 @@ fun StepSplitApp(
         navController.navigateToTab(route)
     }
 
-    Scaffold(
-        bottomBar = { StepSplitBottomBar(navController) },
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.Today.route,
-            modifier = Modifier.padding(innerPadding),
-        ) {
-            composable(Screen.Today.route) {
-                val viewModel: TodayViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
+    // The offline map packs on the phone, for every map in the app (see rememberMapBackground).
+    val mapPacks by container.mapPackRepository.state.collectAsState()
 
-                TodayScreen(
-                    uiState = uiState,
-                    onRefresh = viewModel::refresh,
-                    // Immediately re-checks availability and attempts a sync the moment the
-                    // permission is actually granted. The system consent dialog launched by
-                    // MainActivity.requestHealthConnectPermission also pauses and resumes this
-                    // Activity, so TodayScreen's own resume effect fires an overlapping refresh()
-                    // around the same moment - viewModel.refresh() coalesces that redundancy away
-                    // rather than either caller needing to avoid the other (see its own doc
-                    // comment). A denial switches the banner to Health Connect's own screen.
-                    onGrantPermission = { onRequestPermission(viewModel::onPermissionRequestResult) },
-                    onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::recheckPermission) },
-                    onOpenSettings = openSettings,
-                )
-            }
-            composable(Screen.History.route) {
-                val viewModel: HistoryViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
-            }
-            composable(Screen.Stats.route) {
-                val viewModel: StatsViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
-            }
-            composable(Screen.Trips.route) {
-                val viewModel: TripsViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                TripsScreen(
-                    uiState = uiState,
-                    onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
-                    onFinishInterruptedTripAtLastPoint = viewModel::finishInterruptedTripAtLastPoint,
-                    onRequestTripPermissions = onRequestTripPermissions,
-                    onMarkSpot = viewModel::markSpot,
-                    spotMarkResults = viewModel.spotMarkResults,
-                    onOpenSettings = openSettings,
-                )
-            }
-            composable(Screen.OpenMap.route) {
-                val viewModel: OpenMapViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                // Collected only while this tab's back stack entry is at least started: switching to
-                // another tab or leaving the app stops the location request at once (see
-                // OpenMapViewModel.location).
-                val location by viewModel.location.collectAsStateWithLifecycle()
-                OpenMapScreen(
-                    uiState = uiState,
-                    location = location,
-                    onLocationAvailableChange = viewModel::setLocationAvailable,
-                    onOpenSettings = openSettings,
-                )
-            }
-            composable(
-                route = Screen.TripDetail.route,
-                arguments = listOf(navArgument(Screen.TripDetail.ARG_TRIP_ID) { type = NavType.LongType }),
-            ) { backStackEntry ->
-                val tripId = backStackEntry.arguments?.getLong(Screen.TripDetail.ARG_TRIP_ID) ?: return@composable
-                val detailFactory = remember(container, tripId) { factory.forTrip(tripId) }
-                val viewModel: TripDetailViewModel = viewModel(factory = detailFactory, key = "trip_detail_$tripId")
-                val uiState by viewModel.uiState.collectAsState()
-                TripDetailScreen(
-                    uiState = uiState,
-                    onSaveTripDetails = viewModel::saveTripDetails,
-                    onDeleteTrip = viewModel::deleteTrip,
-                    onRenameSpot = viewModel::renameSpot,
-                    onDeleteSpot = viewModel::deleteSpot,
-                    onBack = { navController.popBackStack() },
-                )
-            }
-            composable(Screen.Settings.route) {
-                val viewModel: SettingsViewModel = viewModel(factory = factory)
-                val uiState by viewModel.uiState.collectAsState()
-                SettingsScreen(
-                    uiState = uiState,
-                    onSetDailyGoal = viewModel::setDailyGoal,
-                    onSetThresholds = viewModel::setThresholds,
-                    onResetThresholds = viewModel::resetThresholds,
-                    onSetKeepDeletedTripsInStats = viewModel::setKeepDeletedTripsInStats,
-                    onGenerateSampleData = {
-                        coroutineScope.launch { DebugDataSeeder.seed(container) }
-                    },
-                    onRunStepSourceCheck = viewModel::runStepSourceCheck,
-                    onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::refreshAvailability) },
-                    onBack = { navController.popBackStack() },
-                )
+    CompositionLocalProvider(LocalMapPacks provides mapPacks.installed) {
+        Scaffold(
+            bottomBar = { StepSplitBottomBar(navController) },
+        ) { innerPadding ->
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Today.route,
+                modifier = Modifier.padding(innerPadding),
+            ) {
+                composable(Screen.Today.route) {
+                    val viewModel: TodayViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+
+                    TodayScreen(
+                        uiState = uiState,
+                        onRefresh = viewModel::refresh,
+                        // Immediately re-checks availability and attempts a sync the moment the
+                        // permission is actually granted. The system consent dialog launched by
+                        // MainActivity.requestHealthConnectPermission also pauses and resumes this
+                        // Activity, so TodayScreen's own resume effect fires an overlapping refresh()
+                        // around the same moment - viewModel.refresh() coalesces that redundancy away
+                        // rather than either caller needing to avoid the other (see its own doc
+                        // comment). A denial switches the banner to Health Connect's own screen.
+                        onGrantPermission = { onRequestPermission(viewModel::onPermissionRequestResult) },
+                        onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::recheckPermission) },
+                        onOpenSettings = openSettings,
+                    )
+                }
+                composable(Screen.History.route) {
+                    val viewModel: HistoryViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+                    HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
+                }
+                composable(Screen.Stats.route) {
+                    val viewModel: StatsViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+                    StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
+                }
+                composable(Screen.Trips.route) {
+                    val viewModel: TripsViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+                    TripsScreen(
+                        uiState = uiState,
+                        onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
+                        onFinishInterruptedTripAtLastPoint = viewModel::finishInterruptedTripAtLastPoint,
+                        onRequestTripPermissions = onRequestTripPermissions,
+                        onMarkSpot = viewModel::markSpot,
+                        spotMarkResults = viewModel.spotMarkResults,
+                        onOpenSettings = openSettings,
+                    )
+                }
+                composable(Screen.OpenMap.route) {
+                    val viewModel: OpenMapViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+                    // Collected only while this tab's back stack entry is at least started: switching to
+                    // another tab or leaving the app stops the location request at once (see
+                    // OpenMapViewModel.location).
+                    val location by viewModel.location.collectAsStateWithLifecycle()
+                    OpenMapScreen(
+                        uiState = uiState,
+                        location = location,
+                        onLocationAvailableChange = viewModel::setLocationAvailable,
+                        onOpenSettings = openSettings,
+                        offerOfflineMap = mapPacks.installed.isEmpty() && !mapPacks.offerAnswered,
+                        onAnswerOfflineMapOffer = { download ->
+                            container.mapPackRepository.answerOffer()
+                            if (download) openSettings()
+                        },
+                    )
+                }
+                composable(
+                    route = Screen.TripDetail.route,
+                    arguments = listOf(navArgument(Screen.TripDetail.ARG_TRIP_ID) { type = NavType.LongType }),
+                ) { backStackEntry ->
+                    val tripId = backStackEntry.arguments?.getLong(Screen.TripDetail.ARG_TRIP_ID) ?: return@composable
+                    val detailFactory = remember(container, tripId) { factory.forTrip(tripId) }
+                    val viewModel: TripDetailViewModel = viewModel(factory = detailFactory, key = "trip_detail_$tripId")
+                    val uiState by viewModel.uiState.collectAsState()
+                    TripDetailScreen(
+                        uiState = uiState,
+                        onSaveTripDetails = viewModel::saveTripDetails,
+                        onDeleteTrip = viewModel::deleteTrip,
+                        onRenameSpot = viewModel::renameSpot,
+                        onDeleteSpot = viewModel::deleteSpot,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Screen.Settings.route) {
+                    val viewModel: SettingsViewModel = viewModel(factory = factory)
+                    val uiState by viewModel.uiState.collectAsState()
+                    val offlineMaps: OfflineMapsViewModel = viewModel(factory = factory)
+                    val offlineMapsState by offlineMaps.state.collectAsState()
+                    SettingsScreen(
+                        uiState = uiState,
+                        onSetDailyGoal = viewModel::setDailyGoal,
+                        onSetThresholds = viewModel::setThresholds,
+                        onResetThresholds = viewModel::resetThresholds,
+                        onSetKeepDeletedTripsInStats = viewModel::setKeepDeletedTripsInStats,
+                        onGenerateSampleData = {
+                            coroutineScope.launch { DebugDataSeeder.seed(container) }
+                        },
+                        onRunStepSourceCheck = viewModel::runStepSourceCheck,
+                        onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::refreshAvailability) },
+                        onBack = { navController.popBackStack() },
+                        offlineMaps = offlineMapsState,
+                        offlineMapsActions = remember(offlineMaps) {
+                            OfflineMapsActions(
+                                onRetry = offlineMaps::retry,
+                                onDownload = offlineMaps::download,
+                                onCancelDownload = offlineMaps::cancelDownload,
+                                onDelete = offlineMaps::delete,
+                                onSetWifiOnly = offlineMaps::setWifiOnly,
+                            )
+                        },
+                    )
+                }
             }
         }
     }

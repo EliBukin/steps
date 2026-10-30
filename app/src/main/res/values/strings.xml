@@ -291,4 +291,37 @@
     <string name="stats_trips_walks_title">הליכות</string>
     <string name="stats_trips_drives_title">נסיעות</string>
     <string name="stats_value_unavailable">–</string>
+
+    <!-- Offline maps (Settings and the Map tab's offer) -->
+    <string name="offline_maps_title">מפות אופליין</string>
+    <string name="offline_maps_intro">הורדת מפה שעובדת גם בלי קליטה: שבילים מסומנים בצבעים שלהם, דרכי עפר, שבילים וואדיות גם בזום רחוק, קווי גובה והצללת תבליט.</string>
+    <string name="offline_maps_region_israel">ישראל</string>
+    <string name="offline_maps_region_with_size">%1$s · %2$s</string>
+    <string name="offline_maps_download_action">הורדה</string>
+    <string name="offline_maps_download_title">מפת %1$s</string>
+    <string name="offline_maps_progress">%1$s מתוך %2$s</string>
+    <string name="offline_maps_waiting_wifi">ממתין ל-Wi-Fi</string>
+    <string name="offline_maps_waiting_network">ממתין לחיבור</string>
+    <string name="offline_maps_checking">בודק את המפה…</string>
+    <string name="offline_maps_cancel_action">ביטול</string>
+    <string name="offline_maps_installed">בטלפון · מפה מ%1$s · %2$s</string>
+    <string name="offline_maps_update_available">יש מפה חדשה יותר · %1$s</string>
+    <string name="offline_maps_update_action">עדכון</string>
+    <string name="offline_maps_delete_action">מחיקה</string>
+    <string name="offline_maps_keep_action">השארה</string>
+    <string name="offline_maps_delete_confirm_title">למחוק את מפת %1$s?</string>
+    <string name="offline_maps_delete_confirm_message">זה יפנה %1$s. אפשר להוריד אותה שוב בכל זמן.</string>
+    <string name="offline_maps_wifi_only">הורדה רק ב-Wi-Fi</string>
+    <string name="offline_maps_looking">מחפש מפות…</string>
+    <string name="offline_maps_server_failed">אין חיבור לשרת המפות.</string>
+    <string name="offline_maps_retry_action">לנסות שוב</string>
+    <string name="offline_maps_needs_newer_app">המפה הזו דורשת גרסה חדשה יותר של האפליקציה.</string>
+    <string name="offline_maps_problem_download_failed">ההורדה נעצרה. אפשר לנסות שוב.</string>
+    <string name="offline_maps_problem_check_failed">המפה שהורדה הייתה פגומה ולכן נמחקה. אפשר לנסות שוב.</string>
+    <string name="offline_maps_problem_space">אין מספיק מקום פנוי בטלפון.</string>
+    <string name="offline_maps_problem_storage">האחסון של הטלפון לא זמין כרגע.</string>
+    <string name="offline_maps_note">בתוך שטח המפה האפליקציה מציגה אותה מהטלפון, בלי אינטרנט; מחוץ לו היא משתמשת במפה המקוונת. המפות יורדות מ-GitHub (github.com) ונמחקות יחד עם האפליקציה.</string>
+    <string name="open_map_offline_map_offer">מפת ישראל לשימוש אופליין: שבילים, דרכי עפר וואדיות, גם בלי קליטה.</string>
+    <string name="open_map_offline_map_offer_action">להורדה</string>
+    <string name="open_map_offline_map_offer_dismiss">לא עכשיו</string>
 </resources>

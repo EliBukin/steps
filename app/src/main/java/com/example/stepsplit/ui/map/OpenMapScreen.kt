@@ -93,7 +93,6 @@ import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.rememberGeoJsonSource
-import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.LineString
@@ -161,10 +160,13 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  *   ([MapStyles.offlineStyleJson]) with the dot and the route still on it, and Retry map tries the
  *   real map again. No internet alone doesn't do that: the outdoor style is inside the app, so it
  *   loads, with the map tiles viewed before (from MapLibre's cache) on its plain land color.
+ * - **Offline maps.** Inside a downloaded pack's area the map is drawn from the pack, with no
+ *   internet at all (see [rememberMapBackground]); the "no internet" banner then doesn't show. With
+ *   no pack, a phone in Israel gets a one-time offer of the Israel map ([offerOfflineMap]).
  *
  * Location is asked for only while this tab is on screen, with the app in the foreground - switching
  * to another tab or app stops it at once (see [OpenMapViewModel]); so does the compass. The map is
- * the light outdoor style in dark mode too (see [rememberOutdoorStyle]), and what's drawn on it keeps
+ * the light outdoor style in dark mode too (see [rememberMapBackground]), and what's drawn on it keeps
  * its light-map colors; the buttons and banners follow the app's theme. The camera is kept for when the
  * tab comes back (`rememberCameraState` is saved with the tab's state). Approximate location is enough here (the circle is just bigger); recording a
  * trip still needs precise location, as before.
@@ -180,6 +182,10 @@ fun OpenMapScreen(
     /** The gear icon in the header: opens Settings. */
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    /** No offline map is on the phone and the offer wasn't answered yet: offer the Israel map when the phone is there. */
+    offerOfflineMap: Boolean = false,
+    /** The offer was answered: [download] opens Settings, where the Offline maps are. */
+    onAnswerOfflineMapOffer: (download: Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = LocalActivity.current
@@ -234,6 +240,7 @@ fun OpenMapScreen(
     var following by rememberSaveable { mutableStateOf(true) }
     var rotateWithMe by rememberSaveable { mutableStateOf(false) }
     var mapLoadFailed by rememberSaveable { mutableStateOf(false) }
+    var drawingFromPack by remember { mutableStateOf(false) }
     val hasCompass = rememberHasCompass()
 
     // The screen stays on while the map follows the dot, as a navigation app's does.
@@ -276,7 +283,16 @@ fun OpenMapScreen(
             !fixIsFresh -> StatusBanner(text = stringResource(R.string.open_map_finding_location), showProgress = true)
         }
         if (rotateWithMe && !hasCompass) StatusBanner(text = stringResource(R.string.open_map_no_compass_message))
-        if (mapLoadFailed) {
+        if (offerOfflineMap && location != null && OfflineMapOffer.isNear(location.longitude, location.latitude)) {
+            StatusBanner(
+                text = stringResource(R.string.open_map_offline_map_offer),
+                actionLabel = stringResource(R.string.open_map_offline_map_offer_action),
+                onAction = { onAnswerOfflineMapOffer(true) },
+                dismissLabel = stringResource(R.string.open_map_offline_map_offer_dismiss),
+                onDismiss = { onAnswerOfflineMapOffer(false) },
+            )
+        }
+        if (mapLoadFailed && !drawingFromPack) {
             StatusBanner(
                 text = stringResource(R.string.open_map_offline_message),
                 actionLabel = stringResource(R.string.trip_detail_map_retry_action),
@@ -298,6 +314,7 @@ fun OpenMapScreen(
                 onRotateWithMeChange = { rotateWithMe = it },
                 offline = mapLoadFailed,
                 onLoadFailed = { mapLoadFailed = true },
+                onDrawingFromPackChange = { drawingFromPack = it },
             )
         }
     }
@@ -310,6 +327,8 @@ private fun StatusBanner(
     actionLabel: String? = null,
     onAction: () -> Unit = {},
     showProgress: Boolean = false,
+    dismissLabel: String? = null,
+    onDismiss: () -> Unit = {},
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
@@ -330,6 +349,9 @@ private fun StatusBanner(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f).padding(vertical = if (actionLabel == null) 8.dp else 0.dp),
             )
+            if (dismissLabel != null) {
+                TextButton(onClick = onDismiss) { Text(dismissLabel) }
+            }
             if (actionLabel != null) {
                 TextButton(onClick = onAction) { Text(actionLabel) }
             }
@@ -348,14 +370,13 @@ private fun OpenMapView(
     onRotateWithMeChange: (Boolean) -> Unit,
     offline: Boolean,
     onLoadFailed: () -> Unit,
+    onDrawingFromPackChange: (Boolean) -> Unit,
 ) {
-    val baseStyle = if (offline) {
-        remember { BaseStyle.Json(MapStyles.offlineStyleJson()) }
-    } else {
-        rememberOutdoorStyle()
-    }
     val route = recording?.route.orEmpty()
     val cameraState = rememberCameraState(firstPosition = OpenMapCamera.initialPosition(location, route))
+    val background = rememberMapBackground(cameraState, onlineFailed = offline)
+    val currentOnDrawingFromPackChange by rememberUpdatedState(onDrawingFromPackChange)
+    LaunchedEffect(background.fromPack) { currentOnDrawingFromPackChange(background.fromPack) }
     val coroutineScope = rememberCoroutineScope()
     val mapDescription = stringResource(if (recording != null) R.string.cd_open_map_with_recording else R.string.cd_open_map)
 
@@ -408,7 +429,7 @@ private fun OpenMapView(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         MaplibreMap(
             modifier = Modifier.fillMaxSize().semantics { contentDescription = mapDescription },
-            baseStyle = baseStyle,
+            baseStyle = background.style,
             cameraState = cameraState,
             options = MapOptions(
                 // As on the trip screen: pan, zoom and rotate, no tilt; the app's own metric scale bar.
@@ -456,7 +477,8 @@ private fun OpenMapView(
                 CircleLayer(id = START_LAYER_ID, source = startSource, color = const(OnMapColors.Start), radius = const(7.dp))
             }
             val spots = recording?.spots.orEmpty()
-            if (spots.isNotEmpty()) SpotMarkerLayers(spots, showNumbers = !offline)
+            // The numbers need the map's fonts: the offline background has none, a pack has them.
+            if (spots.isNotEmpty()) SpotMarkerLayers(spots, showNumbers = !offline || background.fromPack)
 
             // The dot last, on top of everything, with the compass cone just under it.
             HeadingCone(
@@ -604,3 +626,8 @@ private fun MapFix.toPuckLocation(): Location = Location(
 private fun hasLocationPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+/** Where the Map tab offers the Israel offline map: around Israel (a rough box; the pack's own area comes with the download). */
+internal object OfflineMapOffer {
+    fun isNear(longitude: Double, latitude: Double) = longitude in 34.2..35.95 && latitude in 29.45..33.4
+}

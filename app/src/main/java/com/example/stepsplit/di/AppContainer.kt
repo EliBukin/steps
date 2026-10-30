@@ -3,7 +3,16 @@ package com.example.stepsplit.di
 import android.content.Context
 import android.util.Log
 import com.example.stepsplit.BuildConfig
+import com.example.stepsplit.R
 import com.example.stepsplit.data.local.StepSplitDatabase
+import com.example.stepsplit.data.mappack.HttpMapPackManifestSource
+import com.example.stepsplit.data.mappack.MapPackRepository
+import com.example.stepsplit.data.mappack.MapPackStore
+import com.example.stepsplit.data.mappack.SharedPreferencesMapPackPreferences
+import com.example.stepsplit.data.mappack.SystemMapPackDownloader
+import com.example.stepsplit.data.mappack.allocatableBytes
+import com.example.stepsplit.ui.settings.regionName
+import java.io.File
 import com.example.stepsplit.data.repository.StepRepository
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.AsyncStepSourceHealthRecorder
@@ -55,6 +64,25 @@ class AppContainer(
     val database: StepSplitDatabase = StepSplitDatabase.build(context)
 
     val settingsRepository: SettingsRepository = SettingsRepository(context)
+
+    // ---- Offline map packs (see data.mappack.MapPackRepository) - only the map's background;
+    // nothing here touches steps or trips. Its own process-lifetime scope, like the ones below. ----
+
+    private val mapPackScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val mapPackRepository: MapPackRepository = MapPackRepository(
+        // The app's own folder on the phone's storage; null when that storage isn't there.
+        store = context.getExternalFilesDir(null)?.let { MapPackStore(File(it, "maps")) },
+        downloader = SystemMapPackDownloader(context),
+        manifestSource = HttpMapPackManifestSource,
+        manifestUrl = { debugManifestUrl(context) ?: BuildConfig.MAPS_MANIFEST_URL },
+        preferences = SharedPreferencesMapPackPreferences(context),
+        appVersionCode = BuildConfig.VERSION_CODE,
+        downloadTitle = { regionId -> context.getString(R.string.offline_maps_download_title, regionName(context, regionId)) },
+        scope = mapPackScope,
+        io = Dispatchers.IO,
+        freeBytes = { dir -> allocatableBytes(context, dir) },
+    )
 
     // ---- Automatic step counting (see data.repository.StepRepository) - Health Connect is the
     // sole production step source; see HealthConnectStepSource's own doc comment for why this app
@@ -161,3 +189,14 @@ class AppContainer(
         scope = tripRecordingScope,
     )
 }
+
+/**
+ * Debug builds only: an address in files/debug-maps-manifest-url.txt (put there with adb) replaces
+ * the real list of offline maps, to try packs from a computer on the same network.
+ */
+private fun debugManifestUrl(context: Context): String? =
+    if (!BuildConfig.DEBUG) {
+        null
+    } else {
+        File(context.filesDir, "debug-maps-manifest-url.txt").takeIf { it.isFile }?.readText()?.trim()?.ifEmpty { null }
+    }

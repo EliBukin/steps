@@ -38,6 +38,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
+import com.example.stepsplit.data.mappack.MapPacksState
 import com.example.stepsplit.ui.PermissionsRationaleActivity
 import com.example.stepsplit.data.stepsource.StepSourceAvailability
 import com.example.stepsplit.data.stepsource.StepSourceHealthSnapshot
@@ -62,8 +63,13 @@ fun SettingsScreen(
     /** Settings opens from a tab's gear icon, over that tab; the back arrow returns to it. */
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The Offline maps card; null leaves it out (previews and tests of the other sections). */
+    offlineMaps: MapPacksState? = null,
+    offlineMapsActions: OfflineMapsActions? = null,
 ) {
-    val sections = remember { listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.Status, SettingsSection.Privacy, SettingsSection.Debug) }
+    val sections = remember {
+        listOf(SettingsSection.Goals, SettingsSection.Advanced, SettingsSection.Trips, SettingsSection.OfflineMaps, SettingsSection.Status, SettingsSection.Privacy, SettingsSection.Debug)
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -76,6 +82,7 @@ fun SettingsScreen(
                 SettingsSection.Goals -> GoalsSection(uiState, onSetDailyGoal)
                 SettingsSection.Advanced -> AdvancedThresholdsSection(uiState.thresholds, onSetThresholds, onResetThresholds)
                 SettingsSection.Trips -> TripsSection(uiState.keepDeletedTripsInStats, onSetKeepDeletedTripsInStats)
+                SettingsSection.OfflineMaps -> if (offlineMaps != null && offlineMapsActions != null) OfflineMapsSection(offlineMaps, offlineMapsActions)
                 SettingsSection.Status -> StatusSection(uiState, onOpenHealthConnect)
                 SettingsSection.Privacy -> PrivacySection()
                 SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
@@ -84,7 +91,7 @@ fun SettingsScreen(
     }
 }
 
-private enum class SettingsSection { Goals, Advanced, Trips, Status, Privacy, Debug }
+private enum class SettingsSection { Goals, Advanced, Trips, OfflineMaps, Status, Privacy, Debug }
 
 @Composable
 private fun GoalsSection(uiState: SettingsUiState, onSetDailyGoal: (Long) -> Unit) {
