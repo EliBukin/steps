@@ -24,7 +24,8 @@ import kotlinx.serialization.json.jsonPrimitive
  *   takes over, so both look the same.
  * - Two layers the online map doesn't have: marked hiking trails in their trail-mark colors
  *   (`trail`) and contour lines (`contour`, with a height label every 100 m).
- * - Camp sites from z11 (`outdoor_poi`), drawn by a copy of the style's own outdoor POI layer.
+ * - Outdoor points from z11 (`outdoor_poi`: camp sites, springs, water, viewpoints, caves, picnic
+ *   spots, ruins), drawn by copies of the style's own outdoor POI layer.
  *
  * Every other layer, color and label rule is the outdoor style's own, so a change there shows on
  * both maps.
@@ -38,7 +39,7 @@ internal object MapPackStyle {
     private const val DEM_SOURCE = "mapterhorn"
 
     /**
-     * The same vector file, read only up to z13: contours and camp sites are built to z13 (to z14
+     * The same vector file, read only up to z13: contours and outdoor points are built to z13 (to z14
      * they'd be a much bigger download), and from z14 MapLibre stretches this source's z13 tiles
      * instead of reading the file's z14 tiles, which don't have them.
      */
@@ -102,8 +103,13 @@ internal object MapPackStyle {
             clone("road", "pack-road-tertiary", "outdoor_transportation", 9, 11, listOf("tertiary")).withWidth(9, 0.9, 1.7),
             clone("road", "pack-road-minor", "outdoor_transportation", 10, 12, listOf("minor")).withWidth(10, 0.7, 1.5),
         )
-        // Camp sites (night camps) from z11, with the style's camp icon; OpenMapTiles has them from z14.
-        layers.insertAfter("poi-outdoor", clone("poi-outdoor", "pack-poi-campsite", "outdoor_poi", 11, 14, source = Z13_SOURCE))
+        // Outdoor points from z11 with the style's icons. The ones OpenMapTiles also has (from z14) hand
+        // over to it there; springs, caves and the rest it never has stay at every zoom.
+        layers.insertAfter(
+            "poi-outdoor",
+            clone("poi-outdoor", "pack-poi-outdoor", "outdoor_poi", 11, 14, source = Z13_SOURCE),
+            morePoints(byId.getValue("poi-outdoor")),
+        )
         layers.insertAfter("hillshade", CONTOUR_LINES)
         layers.insertAfter("waterway-label", CONTOUR_LABELS)
 
@@ -150,6 +156,32 @@ internal object MapPackStyle {
     }
 
     private fun json(text: String) = Json.parseToJsonElement(text)
+
+    /** Outdoor points OpenMapTiles has at no zoom (their class in `outdoor_poi`), and the icon each draws with. */
+    val MORE_POINT_ICONS = mapOf(
+        "spring" to "water",
+        "cave_entrance" to "cave",
+        "archaeological_site" to "castle",
+        "water_tap" to "drinking_water",
+        "picnic_table" to "picnic_site",
+    )
+
+    /** [MORE_POINT_ICONS] from z11 on, drawn like [poiOutdoor] (the style's outdoor POI layer) but with their own icons. */
+    private fun morePoints(poiOutdoor: JsonObject): JsonObject {
+        val classes = MORE_POINT_ICONS.keys.joinToString { "\"$it\"" }
+        val icons = MORE_POINT_ICONS.entries.joinToString { (cls, icon) -> "\"$cls\", \"$icon\"" }
+        val layout = poiOutdoor.getValue("layout").jsonObject + ("icon-image" to json("""["match", ["get", "class"], $icons, ""]"""))
+        return JsonObject(
+            poiOutdoor - "minzoom" + mapOf(
+                "id" to JsonPrimitive("pack-poi-outdoor-more"),
+                "source" to JsonPrimitive(Z13_SOURCE),
+                "source-layer" to JsonPrimitive("outdoor_poi"),
+                "minzoom" to JsonPrimitive(11),
+                "filter" to json("""["all", ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false], ["match", ["get", "class"], [$classes], true, false]]"""),
+                "layout" to JsonObject(layout),
+            ),
+        )
+    }
 
     /** Marked hiking trails (OSM hiking routes) in their trail-mark color, over a thin white line. */
     private fun trailLayers(): Array<JsonObject> = arrayOf(

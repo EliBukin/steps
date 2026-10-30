@@ -10,7 +10,7 @@ version is the OpenStreetMap extract's date):
 
 | File | What's in it | Israel, 2026-10 |
 |---|---|---|
-| `<region>-<version>-vector.pmtiles` | OpenMapTiles layers z0-14 (Planetiler), plus `outdoor_transportation` and `outdoor_waterway` (tracks z10, paths z11, tertiary roads z9, unclassified z10, streams and wadis z10, rivers z9, up to z13), `outdoor_poi` (camp sites with OpenMapTiles' poi attributes, z11-13), `trail` (marked hiking routes with `color` from `osmc:symbol`, z11-14) and `contour` (`ele`, `index` = every 100 m; 50 m from z12, 10 m at z13) | 119.6 MB |
+| `<region>-<version>-vector.pmtiles` | OpenMapTiles layers z0-14 (Planetiler), plus `outdoor_transportation` and `outdoor_waterway` (tracks z10, paths z11, tertiary roads z9, unclassified z10, streams and wadis z10, rivers z9, up to z13), `outdoor_poi` (camp sites, springs, drinking water and taps, viewpoints, caves, picnic sites and tables, ruins and archaeological sites, with OpenMapTiles' poi attributes; camps and named springs from z11, other named points from z12, all from z13), `trail` (marked hiking routes with `color` from `osmc:symbol`, z11-14) and `contour` (`ele`, `index` = every 100 m; 50 m from z12, 10 m at z13) | 120.2 MB |
 | `<region>-<version>-dem.pmtiles` | Mapterhorn terrain (Terrarium WebP, 512 px), z0-11 | 31.4 MB |
 
 `maps.json` lists them for the app:

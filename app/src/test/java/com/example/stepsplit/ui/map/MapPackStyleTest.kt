@@ -117,12 +117,12 @@ class MapPackStyleTest {
     }
 
     @Test
-    fun `trails read the pack's z14 tiles, contours and camp sites stretch its z13 tiles`() {
+    fun `trails read the pack's z14 tiles, contours and outdoor points stretch its z13 tiles`() {
         val sources = style.getValue("sources").jsonObject
         val z13 = sources.getValue("pack-z13").jsonObject
         assertEquals(sources.getValue("openmaptiles").jsonObject.string("url"), z13.string("url"))
         assertEquals(13.0, z13.getValue("maxzoom").jsonPrimitive.double, 0.0)
-        for (id in listOf("pack-contour", "pack-contour-label", "pack-poi-campsite")) assertEquals(id, "pack-z13", layer(id).string("source"))
+        for (id in listOf("pack-contour", "pack-contour-label", "pack-poi-outdoor", "pack-poi-outdoor-more")) assertEquals(id, "pack-z13", layer(id).string("source"))
         for (id in listOf("pack-trail-casing", "pack-trail", "pack-track")) assertEquals(id, "openmaptiles", layer(id).string("source"))
     }
 
@@ -138,17 +138,56 @@ class MapPackStyleTest {
     }
 
     @Test
-    fun `camp sites show from z11, then hand over to the base map's camp icon at z14`() {
-        val camps = layer("pack-poi-campsite")
-        assertEquals("outdoor_poi", camps.string("source-layer"))
-        assertEquals(11.0, camps.getValue("minzoom").jsonPrimitive.double, 0.0)
-        assertEquals(14.0, camps.getValue("maxzoom").jsonPrimitive.double, 0.0)
+    fun `outdoor points the base map has show from z11, then hand over to its own icons at z14`() {
+        val points = layer("pack-poi-outdoor")
+        assertEquals("outdoor_poi", points.string("source-layer"))
+        assertEquals(11.0, points.getValue("minzoom").jsonPrimitive.double, 0.0)
+        assertEquals(14.0, points.getValue("maxzoom").jsonPrimitive.double, 0.0)
         assertEquals(14.0, layer("poi-outdoor").getValue("minzoom").jsonPrimitive.double, 0.0)
-        // The same icon, label and filter as the base map's (it matches class "campsite", as built by outdoor.yml).
-        assertEquals(layer("poi-outdoor").getValue("layout"), camps.getValue("layout"))
-        assertEquals(layer("poi-outdoor").getValue("filter"), camps.getValue("filter"))
-        assertTrue(camps.getValue("filter").strings().contains("campsite"))
-        assertTrue(File("../scripts/offline-maps/outdoor.yml").readText().contains("- id: outdoor_poi"))
+        // The same icon, label and filter as the base map's: it matches the OpenMapTiles classes outdoor.yml gives.
+        assertEquals(layer("poi-outdoor").getValue("layout"), points.getValue("layout"))
+        assertEquals(layer("poi-outdoor").getValue("filter"), points.getValue("filter"))
+        assertEquals(indexOf("poi-outdoor") + 1, indexOf("pack-poi-outdoor"))
+    }
+
+    @Test
+    fun `springs, caves and the other points the base map never has show from z11 at every zoom`() {
+        val more = layer("pack-poi-outdoor-more")
+        assertEquals("outdoor_poi", more.string("source-layer"))
+        assertEquals(11.0, more.getValue("minzoom").jsonPrimitive.double, 0.0)
+        assertNull(more["maxzoom"])
+        assertEquals(indexOf("pack-poi-outdoor") + 1, indexOf("pack-poi-outdoor-more"))
+        val icon = more.getValue("layout").jsonObject.getValue("icon-image").jsonArray
+        assertEquals("water", icon[icon.indexOfFirst { it is JsonPrimitive && it.content == "spring" } + 1].jsonPrimitive.content)
+        assertEquals("cave", icon[icon.indexOfFirst { it is JsonPrimitive && it.content == "cave_entrance" } + 1].jsonPrimitive.content)
+        // Labels as on the base map's outdoor points.
+        val layout = layer("poi-outdoor").getValue("layout").jsonObject
+        assertEquals(layout - "icon-image", more.getValue("layout").jsonObject - "icon-image")
+    }
+
+    @Test
+    fun `every outdoor point class the pack has is drawn by exactly one layer`() {
+        // The class values outdoor.yml gives outdoor_poi (the lines "  <class>: { <tag>: <value> }" under "- key: class").
+        val yml = File("../scripts/offline-maps/outdoor.yml").readText()
+        val block = yml.substringAfter("- id: outdoor_poi").substringAfter("- key: class").substringBefore("- key: subclass")
+        val classes = Regex("""(?m)^\s+([a-z_]+): \{""").findAll(block).map { it.groupValues[1] }.toList()
+        assertTrue(classes.containsAll(listOf("campsite", "spring", "drinking_water", "attraction", "cave_entrance", "picnic_site", "castle")))
+        val baseMapClasses = layer("poi-outdoor").getValue("filter").strings().toSet()
+        for (cls in classes) {
+            val drawnByBoth = cls in baseMapClasses && cls in MapPackStyle.MORE_POINT_ICONS
+            val drawnByNone = cls !in baseMapClasses && cls !in MapPackStyle.MORE_POINT_ICONS
+            assertFalse("$cls drawn twice", drawnByBoth)
+            assertFalse("$cls not drawn", drawnByNone)
+        }
+    }
+
+    @Test
+    fun `every icon the pack style names is in the sprite`() {
+        val names = MapPackStyle.MORE_POINT_ICONS.values + layer("poi-outdoor").getValue("filter").strings().filter { it in setOf("campsite", "drinking_water", "picnic_site", "attraction", "castle") }
+        for (sprite in listOf("ofm.json", "ofm@2x.json")) {
+            val icons = Json.parseToJsonElement(File("src/main/assets/map/sprite/$sprite").readText()).jsonObject
+            for (name in names) assertNotNull("$name in $sprite", icons[name])
+        }
     }
 
     @Test

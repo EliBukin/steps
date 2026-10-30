@@ -342,6 +342,13 @@
     "x": 968,
     "y": 460
   },
+  "cave": {
+    "height": 42,
+    "pixelRatio": 2,
+    "width": 42,
+    "x": 0,
+    "y": 526
+  },
   "cemetery": {
     "height": 42,
     "pixelRatio": 2,
