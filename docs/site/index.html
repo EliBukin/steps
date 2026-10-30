@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steps GPS Route</title>
+<meta name="description" content="A free, simple Android tool: your everyday steps, and GPS recording and a map to find your way on hikes and off-road 4x4 drives. No account, no ads, no tracking.">
+<link rel="icon" type="image/png" href="icon-192.png">
+<!-- Source: docs/site/index.html on the main branch. Published to the gh-pages branch with
+     scripts/build-site.sh (see docs/RELEASING.md). Everything on this page is served from the
+     same site: no scripts, fonts, analytics or anything else from elsewhere. -->
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1b1c1a; --muted: #4c524e; --bg: #f7f8f5; --card: #e6ebe6; --line: #cfd8d1;
+    --accent: #1b6e5a; --accent-fg: #ffffff; --quote: #dcebe3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e4e6e2; --muted: #b4bbb5; --bg: #141615; --card: #222624; --line: #353b37;
+      --accent: #8fd8bd; --accent-fg: #0d2a21; --quote: #1d2b25;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  a { color: var(--accent); }
+  header { display: flex; align-items: center; gap: 16px; margin: 8px 0 20px; }
+  header img { width: 64px; height: 64px; border-radius: 14px; flex: none; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0; }
+  .tagline { margin: 4px 0 0; color: var(--muted); }
+  h2 { font-size: 1.3rem; margin: 2.4rem 0 .8rem; }
+  blockquote { margin: 0 0 1.2rem; padding: 16px 20px; background: var(--quote);
+               border-left: 4px solid var(--accent); border-radius: 0 12px 12px 0; font-size: 1.05rem; }
+  blockquote p { margin: 0; }
+  .shots { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(190px, 1fr); gap: 12px;
+           overflow-x: auto; scroll-snap-type: x mandatory; padding: 4px 2px 12px; margin: 0 -2px; }
+  .shots figure { margin: 0; scroll-snap-align: start; }
+  .shots img { display: block; width: 100%; height: auto; border-radius: 14px;
+               border: 1px solid var(--line); background: var(--card); }
+  .shots figcaption { font-size: .85rem; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;
+              padding: 0; margin: 0; list-style: none; }
+  .features li { background: var(--card); border-radius: 14px; padding: 14px 16px; }
+  .features b { display: block; margin-bottom: 2px; }
+  ul.plain { padding-left: 1.2rem; }
+  ul.plain li { margin: .3rem 0; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; margin: 1rem 0 0; padding: 0; list-style: none; }
+  .links a { display: inline-block; padding: 10px 16px; border-radius: 999px; text-decoration: none;
+             background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  .links a.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+           font-size: .85rem; color: var(--muted); }
+  footer p { margin: .5rem 0; }
+  @media (min-width: 900px) { .shots { grid-auto-flow: row; grid-template-columns: repeat(4, 1fr); overflow: visible; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img src="icon-192.png" width="64" height="64" alt="">
+  <div>
+    <h1>Steps GPS Route</h1>
+    <p class="tagline">A free, simple Android tool: your everyday steps, and GPS recording and a map to find your way on hikes and off-road 4x4 drives.</p>
+  </div>
+</header>
+
+<blockquote>
+  <p>I built this app because I needed a robust, simple and free tool: one that keeps track of my everyday movement by counting steps, and that records my route and helps me stay oriented and find my way when I'm hiking or driving off-road in a 4x4. It's not a sport app, just a useful tool.</p>
+</blockquote>
+
+<div class="shots" role="list">
+  <figure role="listitem"><img src="screenshots/map-recording.webp" width="540" height="1200" alt="The map in Makhtesh Ramon with no signal: a trip being recorded in orange, marked spots, the blue dot with its compass cone, colored trail marks and contour lines"><figcaption>The map in Makhtesh Ramon, offline, while a trip records.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/trip-drive.webp" width="540" height="1200" alt="A 4x4 drive in Makhtesh Ramon on the map, colored by speed from 11 to 71 km/h, with three spots"><figcaption>A 4x4 drive, colored by speed, with spots.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/trip-hike.webp" width="540" height="1200" alt="A hike at Ein Gedi on the map, colored by speed, along marked paths, with four spots"><figcaption>A hike at Ein Gedi, along the marked paths.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/today.webp" width="540" height="1200" alt="Today: 8,571 of 10,000 steps in a ring, with workout and incidental steps and this week's total"><figcaption>Today's steps against your goal.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/trip-details.webp" width="540" height="1200" alt="Trip details: distance, duration, time, moving time, climb and descent, top speed and a height chart"><figcaption>Trip details and the height chart.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/trips-recording.webp" width="540" height="1200" alt="The Trips screen while recording: elapsed time, distance, GPS signal, Mark spot and Finish trip"><figcaption>Recording: mark spots as you go.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/settings-offline-maps.webp" width="540" height="1200" alt="Settings with the offline map of Israel downloaded to the phone"><figcaption>The offline map of Israel, downloaded once.</figcaption></figure>
+  <figure role="listitem"><img src="screenshots/he-dark-trip-detail.webp" width="540" height="1200" alt="The Makhtesh Ramon drive in Hebrew and dark mode, with the details panel open"><figcaption>In Hebrew and dark mode too.</figcaption></figure>
+</div>
+
+<h2>What it does</h2>
+<ul class="features">
+  <li><b>Daily steps</b>Today's steps in a ring against your goal, the last 7 days, and lifetime numbers. The steps come from Android's Health Connect; the app only reads them.</li>
+  <li><b>GPS trips</b>Tap <i>Start trip</i> before a hike or a drive. The app records your route, on foot or at driving speed, with the screen off, until you tap <i>Finish</i>.</li>
+  <li><b>Spots</b>Mark a spring, a junction or a viewpoint as you go: from the app, from the notification, or from the lock screen without unlocking.</li>
+  <li><b>An outdoor map</b>Trails, wadis and jeep tracks, peaks and hill shading. Your position with a compass cone, and a map that can turn with you.</li>
+  <li><b>An offline map of Israel</b>Download it once (150 MB) and the map works with no signal, with marked trails in their colors, jeep tracks, wadis and contour lines.</li>
+  <li><b>Every trip on a map</b>Colored by speed, with your spots, its distance, moving time, climb, top speed and a height chart. Walks and drives are counted separately.</li>
+  <li><b>GPX</b>Share or save any trip as a GPX file, to open it in other map and navigation apps.</li>
+</ul>
+
+<h2>Just a tool</h2>
+<ul class="plain">
+  <li><b>Not a sport or fitness app.</b> No training plans, badges, streaks, leaderboards or feed. There's one daily step goal, which you set yourself.</li>
+  <li><b>Not a health app either.</b> It gives no health advice. Calories, "burgers burned" and the other fun numbers are rough estimates.</li>
+  <li><b>Your data stays on your phone.</b> No account, no ads, no analytics, no tracking. Nothing is sent to me or to anyone else. Location is used only while a trip records or the map is open.</li>
+  <li><b>Free.</b> No price, no in-app purchases.</li>
+</ul>
+<p>The only internet use is loading the map (from OpenFreeMap, with hill shading from Mapterhorn) and downloading the offline map when you ask for it (from GitHub). Inside the offline map's area, the map needs no internet at all.</p>
+
+<h2>Good to know</h2>
+<ul class="plain">
+  <li><b>Android:</b> 8.0 or newer for trips and the map; 14 or newer, with Health Connect, for steps.</li>
+  <li><b>Languages:</b> English on a phone set to English, and Hebrew (right to left) otherwise.</li>
+  <li><b>Long recordings:</b> set the app's battery use to <i>Unrestricted</i>, so Android doesn't stop it. If it does, you can resume the trip.</li>
+</ul>
+
+<ul class="links">
+  <li><a href="privacy-policy.html">Privacy policy</a></li>
+  <li><a class="secondary" href="https://github.com/EliBukin/steps">Source code and user guide on GitHub</a></li>
+</ul>
+
+<footer>
+  <p>The screenshots show made-up trips along real trails and tracks. Map data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors; hill shading © <a href="https://mapterhorn.com/attribution">Mapterhorn</a>.</p>
+  <p>This page has no cookies, scripts or analytics. It is hosted on GitHub Pages, which logs visitor IP addresses for security purposes; see the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a>.</p>
+</footer>
+</main>
+</body>
+</html>

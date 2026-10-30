@@ -309,6 +309,53 @@ manager to `smb://192.168.20.5/f/TMP/`). `dist/` is ignored by Git.
 | Upload certificate SHA-256 fingerprint | Confirm the right key was used |
 | R8 `mapping.txt` (and its SHA-256) | Decode obfuscated stack traces |
 
+## Publishing the web page and the privacy policy
+
+The `gh-pages` branch is the GitHub Pages site,
+<https://elibukin.github.io/steps/>. Its source lives on `main`:
+
+| File on `gh-pages` | What it is | Source on `main` |
+|---|---|---|
+| `index.html` | The app's web page (the home page; Play's optional *Website* field) | `docs/site/index.html` |
+| `privacy-policy.html` | The privacy policy. The app, the README and Play Console link this URL, so it never moves | `docs/privacy-policy.html` |
+| `icon-192.png`, `screenshots/*.webp` | The page's images: only the screenshots it shows | `docs/site/icon-192.png`, `docs/screenshots/` |
+| `.nojekyll` | Serve the files as they are | |
+
+Publishing needs the owner's OK.
+
+- **Publish the policy whenever a release ships a changed copy.** The app
+  bundles `docs/privacy-policy.html`, and Health Connect requires the policy in
+  the app to be the one on Play.
+- **Publish the page** when `docs/site/` or the screenshots it shows change.
+- Both pages must stay self-contained: no scripts, fonts, stylesheets,
+  analytics or images from other sites. A unit test checks the policy;
+  `scripts/build-site.sh` checks the page.
+
+`scripts/build-site.sh` copies the page, the policy, the icon and the
+screenshots the page uses into a folder, and removes screenshots it no longer
+uses:
+
+```bash
+git worktree add ../steps-pages gh-pages     # once
+git -C ../steps-pages pull --ff-only
+scripts/build-site.sh ../steps-pages
+git -C ../steps-pages status                  # check what changed
+git -C ../steps-pages add -A
+git -C ../steps-pages commit -m "Publish the web page and privacy policy (<date>)"
+git -C ../steps-pages push origin gh-pages
+```
+
+A minute or two after the push, open both URLs and check that
+`privacy-policy.html` is byte for byte main's `docs/privacy-policy.html`
+(for example `curl -s <url> | md5sum`).
+
+To preview the site before publishing:
+
+```bash
+scripts/build-site.sh /tmp/steps-site
+python3 -m http.server --bind 127.0.0.1 --directory /tmp/steps-site 8000   # http://127.0.0.1:8000/
+```
+
 ## Native code and 16 KB pages
 
 Google Play requires apps that target Android 15+ and ship native code to
