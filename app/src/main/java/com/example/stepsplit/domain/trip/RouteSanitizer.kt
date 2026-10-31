@@ -37,7 +37,9 @@ data class SanitizedRoute(
  * Live acceptance sees one incoming fix at a time and can never look ahead to a point that has not
  * arrived yet, so it cannot perform this reconsideration regardless of how its thresholds are
  * tuned - it is a structural difference in what evidence is available at write-time vs. read-time,
- * not merely an implementation gap.
+ * not merely an implementation gap. The one look-ahead both layers share is the new stretch after
+ * a gap ([RoutePointAcceptancePolicy]'s "After a gap" section): live acceptance waits for the next
+ * fix, this class looks at the next stored point - the same pair.
  *
  * ## Algorithm
  *
@@ -62,7 +64,8 @@ data class SanitizedRoute(
  *    the previous point in raw arrival order):
  *    - [MovementPlausibility.STATIONARY_WOBBLE] / [MovementPlausibility.IMPLAUSIBLE_JUMP] /
  *      [MovementPlausibility.SPEED_CONTRADICTION] -> dropped immediately; the last-kept anchor does
- *      not move, so the *next* point is compared against the same still-good anchor.
+ *      not move, so the *next* point is compared against the same still-good anchor. Except a jump
+ *      after a gap that the next point confirms ([startsNewStretch]): kept at once, as a new stretch.
  *    - Plausible -> **held as `pending`, not yet kept.** A point that individually clears every
  *      pairwise check can still be the middle of a moderate out-and-back excursion that neither leg
  *      alone is extreme enough to fail (e.g. a ~55m jump then a ~41m jump, ten seconds apart, each
@@ -196,9 +199,17 @@ object RouteSanitizer {
                     MovementPlausibility.STATIONARY_WOBBLE ->
                         rejections += Rejection(candidate, RouteSampleRejectionReason.STATIONARY_WOBBLE)
                     MovementPlausibility.IMPLAUSIBLE_JUMP ->
-                        rejections += Rejection(candidate, RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
+                        if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)) {
+                            keep(candidate)
+                        } else {
+                            rejections += Rejection(candidate, RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
+                        }
                     MovementPlausibility.SPEED_CONTRADICTION ->
-                        rejections += Rejection(candidate, RouteSampleRejectionReason.SPEED_CONTRADICTION)
+                        if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.SPEED_CONTRADICTION)) {
+                            keep(candidate)
+                        } else {
+                            rejections += Rejection(candidate, RouteSampleRejectionReason.SPEED_CONTRADICTION)
+                        }
                 }
                 i++
             } else if (shouldDropPending(lastKept, held, candidate)) {
@@ -327,6 +338,21 @@ object RouteSanitizer {
             reported >= 0f && implied <= reported * CONTEXTUAL_SOFT_SPEED_MULTIPLIER + CONTEXTUAL_SOFT_SPEED_MARGIN_MPS
         }
         return supportedLegCount == 0
+    }
+
+    /**
+     * Whether [candidate], rejected for [reason] against [lastKept], starts a new stretch after a
+     * gap, [next] (the point stored after it) confirming it - the live policy's own rule, on the
+     * same pair it waited for: see [RoutePointAcceptancePolicy]'s "After a gap" section.
+     */
+    private fun startsNewStretch(lastKept: TripPoint, candidate: TripPoint, next: TripPoint?, reason: RouteSampleRejectionReason): Boolean {
+        if (next == null) return false
+        val gapSeconds = candidate.capturedAtEpochSecond - lastKept.capturedAtEpochSecond
+        if (!RoutePointAcceptancePolicy.mayStartNewStretch(reason, gapSeconds, candidate.accuracyMeters)) return false
+        return RoutePointAcceptancePolicy.confirmsNewStretch(
+            ordinaryMove = evaluatePair(candidate, next) == MovementPlausibility.PLAUSIBLE,
+            elapsedSeconds = next.capturedAtEpochSecond - candidate.capturedAtEpochSecond,
+        )
     }
 
     private fun evaluatePair(from: TripPoint, to: TripPoint): MovementPlausibility {

@@ -65,6 +65,27 @@ sealed interface RouteSampleDecision {
  * rejected until the vehicle slowed down, and the route would then jump in a straight line. A
  * reported speed above the on-foot cap on either fix switches that pair to
  * [RouteMovementPlausibility]'s vehicle regime instead - see its own doc comment.
+ *
+ * ## After a gap: a new stretch
+ *
+ * The same comparison stalls after a gap: a Resume once the phone has travelled (driven to the
+ * next trailhead), or a bus, train or cable car ride with no usable fix. The first fix where the
+ * owner walks on is far from the last kept one, the gap's distance over its time is faster than
+ * anyone walks, and every later fix is rejected the same way - for about an hour after a 20 km
+ * drive - so that part of the walk is lost.
+ *
+ * So a fix rejected only for being too fast on foot ([RouteSampleRejectionReason.IMPLAUSIBLE_JUMP]
+ * or [RouteSampleRejectionReason.SPEED_CONTRADICTION]) starts a new stretch instead when
+ * [mayStartNewStretch] - more than [NEW_STRETCH_MIN_GAP_SECONDS] after the last kept fix, and at
+ * most [NEW_STRETCH_MAX_ACCURACY_METERS] accurate - and the fix after it agrees ([confirmsNewStretch]):
+ * an ordinary move on from it, within [NEW_STRETCH_MIN_GAP_SECONDS]. A spike seconds after a kept
+ * fix (the A55 defect) is never a new stretch, and neither is one wild fix after a quiet minute
+ * that the next fix doesn't follow. The jump itself is drawn as a gap (gray and dashed, see
+ * [RouteSpeedColoring.isGap]), and its straight line counts in the distance, as every gap's does.
+ *
+ * Live, the first fix waits in memory for the next one (see
+ * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]); read back, [RouteSanitizer]
+ * looks ahead to the next stored point - the same pair, so both keep the same fixes.
  */
 object RoutePointAcceptancePolicy {
     /**
@@ -82,6 +103,16 @@ object RoutePointAcceptancePolicy {
 
     /** A fix time-stamped further in the past than this relative to when it was actually processed is stale - most plausibly a delayed/batched delivery of an old cached fix, not a live position update. */
     const val MAX_SAMPLE_AGE_SECONDS = 120L
+
+    /**
+     * Longer than this since the last kept fix is a gap after which a fix may start a new stretch -
+     * see the class doc comment's "After a gap" section. The same minute [RouteSmoother] splits a
+     * route at, and [RouteSpeedColoring.isGap] draws as a gap.
+     */
+    const val NEW_STRETCH_MIN_GAP_SECONDS = 60L
+
+    /** The fix that starts a new stretch must be at least this accurate: a good fix, not just an acceptable one ([MAX_ACCURACY_METERS]). */
+    const val NEW_STRETCH_MAX_ACCURACY_METERS = 20f
 
     fun evaluate(
         candidate: RawLocationSample,
@@ -129,6 +160,23 @@ object RoutePointAcceptancePolicy {
         }
         return RouteSampleDecision.Accepted(candidate)
     }
+
+    /**
+     * Whether a fix rejected for [reason] against the last kept fix, [elapsedSeconds] after it and
+     * [accuracyMeters] accurate, may start a new stretch: it does once [confirmsNewStretch]. See the
+     * class doc comment's "After a gap" section.
+     */
+    fun mayStartNewStretch(reason: RouteSampleRejectionReason, elapsedSeconds: Long, accuracyMeters: Float): Boolean =
+        (reason == RouteSampleRejectionReason.IMPLAUSIBLE_JUMP || reason == RouteSampleRejectionReason.SPEED_CONTRADICTION) &&
+            elapsedSeconds > NEW_STRETCH_MIN_GAP_SECONDS &&
+            accuracyMeters <= NEW_STRETCH_MAX_ACCURACY_METERS
+
+    /**
+     * Whether the fix after one that [mayStartNewStretch], [elapsedSeconds] later, confirms it: an
+     * [ordinaryMove] on from it ([MovementPlausibility.PLAUSIBLE] against it), not across another gap.
+     */
+    fun confirmsNewStretch(ordinaryMove: Boolean, elapsedSeconds: Long): Boolean =
+        ordinaryMove && elapsedSeconds in 1..NEW_STRETCH_MIN_GAP_SECONDS
 
     /** Also what [SpotFixRule] asks of a spot's fix. */
     internal fun isValidCoordinate(latitude: Double, longitude: Double): Boolean =

@@ -219,6 +219,129 @@ class TripRepositoryTest {
         assertEquals(expectedGoodDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
     }
 
+    // ---- After a gap: a new stretch (see RoutePointAcceptancePolicy's "After a gap" section) ----
+
+    private fun degreesLatFor(meters: Double) = Math.toDegrees(meters / EARTH_RADIUS_METERS)
+
+    /** [count] fixes walking north at 1.3 m/s from [fromMeters] north of 32.0, 34.0, one every 10 s from [startAt]. */
+    private fun walk(fromMeters: Double, startAt: Long, count: Int, accuracy: Float = 8f) =
+        (0 until count).map { sample(32.0 + degreesLatFor(fromMeters + 13.0 * it), 34.0, startAt + 10L * it, accuracy = accuracy, speed = 1.3f) }
+
+    /** One fix per batch, each a second after it was captured, as the location requests deliver them. */
+    private suspend fun deliver(tripId: Long, fixes: List<RawLocationSample>) {
+        for (fix in fixes) {
+            clock.instant = Instant.ofEpochSecond(fix.capturedAtEpochSecond + 1)
+            repository.recordAcceptedBatch(tripId, listOf(fix))
+        }
+    }
+
+    private fun pathMeters(points: List<com.example.stepsplit.domain.model.TripPoint>) =
+        points.zipWithNext { a, b -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
+
+    @Test
+    fun `a trip resumed after a 20 km drive keeps the walk after it, with the drive as a gap`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val before = walk(0.0, t0 + 5, 6)
+        deliver(tripId, before)
+        // The app is closed by Android; the next start marks the trip interrupted.
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        val resumeAt = before.last().capturedAtEpochSecond + 20 * 60
+        clock.instant = Instant.ofEpochSecond(resumeAt)
+        assertTrue(repository.resumeInterruptedTrip(tripId))
+
+        val after = walk(20_000.0, resumeAt, 90)
+        deliver(tripId, after)
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(before.size + after.size, points.size)
+        assertEquals("every screen shows them all", points, RouteSanitizer.sanitize(points).points)
+        assertEquals(pathMeters(points), repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+        assertEquals("the drive's straight line counts, as every gap's does", 20_000.0 + 13.0 * 89, pathMeters(points), 1.0)
+    }
+
+    @Test
+    fun `a trip interrupted after its first fix and resumed 20 km on keeps the walk after it`() = runTest {
+        // The code review's reproduction: before the fix, 0 of these 90 fixes were kept.
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        deliver(tripId, walk(0.0, t0 + 5, 1))
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        val resumeAt = t0 + 20 * 60
+        clock.instant = Instant.ofEpochSecond(resumeAt)
+        repository.resumeInterruptedTrip(tripId)
+
+        deliver(tripId, walk(20_000.0, resumeAt, 90))
+
+        assertEquals(91, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `a bus ride with no fix, then walking on, keeps the walk on without a resume`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val before = walk(0.0, t0 + 5, 6)
+        val after = walk(10_000.0, before.last().capturedAtEpochSecond + 15 * 60, 10)
+
+        deliver(tripId, before + after)
+
+        assertEquals(before.size + after.size, repository.getTripPoints(tripId).size)
+    }
+
+    @Test
+    fun `a spike within a minute of the last fix is still rejected, even two that agree`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val path = walk(0.0, t0 + 5, 12)
+        val spikeAt = path[5].capturedAtEpochSecond
+        val spikes = listOf(
+            sample(32.0 + degreesLatFor(500.0), 34.0, spikeAt + 3, accuracy = 5f, speed = 1.3f),
+            sample(32.0 + degreesLatFor(510.0), 34.0, spikeAt + 6, accuracy = 5f, speed = 1.3f),
+        )
+
+        deliver(tripId, (path + spikes).sortedBy { it.capturedAtEpochSecond })
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(path.size, points.size)
+        assertEquals(13.0 * 11, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+    }
+
+    @Test
+    fun `one wild fix after a quiet minute is not kept when the next fix is back where the owner was`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val before = walk(0.0, t0 + 5, 6)
+        val quietUntil = before.last().capturedAtEpochSecond + 120
+        val wild = listOf(
+            sample(32.0 + degreesLatFor(2_000.0), 34.0, quietUntil, accuracy = 6f, speed = 1.3f),
+            // Another one, nowhere near the first: it confirms nothing.
+            sample(32.0 - degreesLatFor(2_000.0), 34.0, quietUntil + 10, accuracy = 6f, speed = 1.3f),
+        )
+        val walkOn = walk(13.0 * 5 + 10.0, quietUntil + 20, 6)
+
+        deliver(tripId, before + wild + walkOn)
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(before.size + walkOn.size, points.size)
+        assertEquals(pathMeters(points), repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+        assertTrue(points.none { it.latitude > 32.0 + degreesLatFor(1_000.0) || it.latitude < 32.0 })
+    }
+
+    @Test
+    fun `after a gap, the new stretch starts at the first well-placed fix`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val before = walk(0.0, t0 + 5, 6)
+        val after = walk(20_000.0, before.last().capturedAtEpochSecond + 20 * 60, 10)
+        val rough = after.first().copy(accuracyMeters = 25f)
+
+        deliver(tripId, before + rough + after.drop(1))
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(before.size + after.size - 1, points.size)
+        assertEquals(points, RouteSanitizer.sanitize(points).points)
+    }
+
     /**
      * The 4x4 case: before the vehicle regime in [com.example.stepsplit.domain.trip.RouteMovementPlausibility],
      * every fix after the drive passed ~22 km/h was rejected until it slowed down again. One fix

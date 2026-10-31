@@ -15,6 +15,7 @@ import com.example.stepsplit.domain.trip.DeletedTripTotals
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSampleDecision
+import com.example.stepsplit.domain.trip.RouteSampleRejectionReason
 import com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
@@ -158,6 +159,12 @@ class TripRepository(
     private data class RecordingOwner(val tripId: Long, val token: Long)
 
     private var recordingOwner: RecordingOwner? = null
+
+    // In-memory only: a fix that may start a new stretch after a gap, waiting for the next fix to
+    // confirm it - see recordAcceptedBatch. Lost with the process, which costs at most that one fix.
+    private data class NewStretchStart(val tripId: Long, val sample: RawLocationSample)
+
+    private var newStretchStart: NewStretchStart? = null
 
     /**
      * A plain, ownership-agnostic primitive: idempotent (if a trip is already ACTIVE, its existing id
@@ -414,6 +421,9 @@ class TripRepository(
      */
     private fun claimOwnershipLocked(tripId: Long, token: Long) {
         recordingOwner = RecordingOwner(tripId, token)
+        // A new recording (a Resume, say) starts from the last kept point; a fix that was waiting to
+        // start a new stretch belonged to the one before.
+        newStretchStart = null
         val abandonedCutoff = finishCutoff
         if (abandonedCutoff != null && abandonedCutoff.tripId == tripId && abandonedCutoff.token < token) {
             finishCutoff = null
@@ -440,6 +450,12 @@ class TripRepository(
      * - A sample captured unreasonably far in the *future* relative to now ([MAX_FUTURE_SKEW_SECONDS])
      *   is rejected outright, so a single bogus/corrupt timestamp can never become [lastAccepted] and
      *   make every subsequent genuine fix look non-monotonic (and therefore rejected) forever after.
+     *
+     * After a gap (a Resume once the phone has travelled, a bus ride with no fix), a fix rejected
+     * only for being too fast on foot may start a new stretch instead: it waits in [newStretchStart]
+     * until the next fix confirms it, then both are kept - see [RoutePointAcceptancePolicy]'s "After
+     * a gap" section. A fix that is kept, or that shows the phone still standing where it was,
+     * drops a waiting one.
      */
     suspend fun recordAcceptedBatch(tripId: Long, samples: List<RawLocationSample>) {
         if (samples.isEmpty()) return
@@ -458,24 +474,59 @@ class TripRepository(
                 if (sample.capturedAtEpochSecond > nowEpochSecond + MAX_FUTURE_SKEW_SECONDS) continue
                 if (cutoffEpochSecond != null && sample.capturedAtEpochSecond > cutoffEpochSecond) continue
 
-                val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)
-                val accepted = (decision as? RouteSampleDecision.Accepted)?.sample ?: continue
-
-                val segmentMeters = lastAccepted?.let {
-                    RouteMath.haversineMeters(it.latitude, it.longitude, accepted.latitude, accepted.longitude)
-                } ?: 0.0
-                distance += segmentMeters
-                latestAcceptedEpochSecond = accepted.capturedAtEpochSecond
-
-                database.withTransaction {
-                    database.tripPointDao().insert(accepted.toEntity(tripId))
-                    database.tripDao().update(
-                        trip.copy(distanceMeters = distance, lastAcceptedPointEpochSecond = latestAcceptedEpochSecond),
-                    )
+                val keep = when (val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)) {
+                    is RouteSampleDecision.Accepted -> listOf(decision.sample)
+                    is RouteSampleDecision.Rejected -> keptAfterRejection(tripId, sample, decision.reason, lastAccepted, nowEpochSecond)
                 }
-                lastAccepted = accepted
+
+                for (accepted in keep) {
+                    newStretchStart = null
+                    val segmentMeters = lastAccepted?.let {
+                        RouteMath.haversineMeters(it.latitude, it.longitude, accepted.latitude, accepted.longitude)
+                    } ?: 0.0
+                    distance += segmentMeters
+                    latestAcceptedEpochSecond = accepted.capturedAtEpochSecond
+
+                    database.withTransaction {
+                        database.tripPointDao().insert(accepted.toEntity(tripId))
+                        database.tripDao().update(
+                            trip.copy(distanceMeters = distance, lastAcceptedPointEpochSecond = latestAcceptedEpochSecond),
+                        )
+                    }
+                    lastAccepted = accepted
+                }
             }
         }
+    }
+
+    /**
+     * What a fix rejected for [reason] against [lastAccepted] still keeps: nothing, or - after a
+     * gap - the fix waiting in [newStretchStart] and this one, which confirms it (see
+     * [recordAcceptedBatch]). Call only under [tripMutex].
+     */
+    private fun keptAfterRejection(
+        tripId: Long,
+        sample: RawLocationSample,
+        reason: RouteSampleRejectionReason,
+        lastAccepted: RawLocationSample?,
+        nowEpochSecond: Long,
+    ): List<RawLocationSample> {
+        if (lastAccepted == null) return emptyList()
+        if (reason == RouteSampleRejectionReason.STATIONARY_WOBBLE) {
+            // Still standing where it was: a fix waiting to start a new stretch elsewhere was a spike.
+            newStretchStart = null
+            return emptyList()
+        }
+        val gapSeconds = sample.capturedAtEpochSecond - lastAccepted.capturedAtEpochSecond
+        if (!RoutePointAcceptancePolicy.mayStartNewStretch(reason, gapSeconds, sample.accuracyMeters)) return emptyList()
+        val start = newStretchStart?.takeIf { it.tripId == tripId }?.sample
+        val confirms = start != null && RoutePointAcceptancePolicy.confirmsNewStretch(
+            ordinaryMove = RoutePointAcceptancePolicy.evaluate(sample, start, nowEpochSecond) is RouteSampleDecision.Accepted,
+            elapsedSeconds = sample.capturedAtEpochSecond - start.capturedAtEpochSecond,
+        )
+        if (confirms) return listOf(start!!, sample)
+        newStretchStart = NewStretchStart(tripId, sample)
+        return emptyList()
     }
 
     /**
