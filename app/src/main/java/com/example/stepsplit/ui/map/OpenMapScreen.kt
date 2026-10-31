@@ -80,9 +80,7 @@ import com.example.stepsplit.ui.trips.SpotMarkerLayers
 import com.example.stepsplit.ui.trips.appSettingsIntent
 import com.example.stepsplit.ui.trips.formatDistance
 import com.example.stepsplit.ui.trips.isSystemLocationEnabled
-import kotlin.math.abs
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.TimeSource
 import kotlinx.coroutines.delay
@@ -162,14 +160,12 @@ private val GPX_PICKER_TYPES = arrayOf(
 /** A plain "imported" message goes away by itself after this; one with something to read stays until OK. */
 private const val IMPORTED_MESSAGE_MILLIS = 6_000L
 
-/** Following the dot moves the map this smoothly to each new fix (they come about every 2 seconds). */
-private val FOLLOW_ANIMATION = 600.milliseconds
-
 /**
- * "Map turns with me" turns and moves the map this smoothly toward each new heading and fix: about
- * two thirds of the way in this time, frame by frame (see [OpenMapCamera.glideFraction]).
+ * Following the dot glides the map this smoothly to each new fix (they come about every 2 seconds),
+ * and "map turns with me" toward each new heading too: about two thirds of the way in this time, frame
+ * by frame (see [OpenMapCamera.glideFraction]).
  */
-private const val TURN_GLIDE_SECONDS = 0.18
+private const val GLIDE_SECONDS = 0.18
 
 /** Around the whole route; more at the bottom end, which the map's buttons cover. */
 private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.dp, bottom = 64.dp)
@@ -519,16 +515,19 @@ private fun OpenMapView(
     // after "Back to north up".
     var followBearing by rememberSaveable { mutableDoubleStateOf(cameraState.position.bearing) }
     // While following (and the map doesn't turn with the phone), each new fix moves the map to it: at
-    // once from far away (the first fix after the world view), smoothly otherwise.
+    // once from far away (the first fix after the world view), else gliding there at the same zoom.
+    // Not with MapLibre's animateTo: it flies, dipping the zoom a hair on the way (16 to 15.99999), and
+    // under a whole zoom MapLibre draws the next tiles down and places every label again - the street
+    // names flickered and jumped at each fix.
     LaunchedEffect(following, location, rotateWithMe, followBearing) {
         if (!following || location == null || rotateWithMe) return@LaunchedEffect
         val current = cameraState.position
-        val target = CameraPosition(
-            target = Position(longitude = location.longitude, latitude = location.latitude),
-            zoom = OpenMapCamera.followZoom(current.zoom, location),
-            bearing = followBearing,
-        )
-        if (OpenMapCamera.isFarOut(current.zoom, location)) cameraState.position = target else cameraState.animateTo(target, FOLLOW_ANIMATION)
+        val here = Position(longitude = location.longitude, latitude = location.latitude)
+        if (OpenMapCamera.isFarOut(current.zoom, location)) {
+            cameraState.position = CameraPosition(target = here, zoom = OpenMapCamera.followZoom(current.zoom, location), bearing = followBearing)
+        } else {
+            cameraState.glideTo(bearing = followBearing.toFloat(), target = here)
+        }
     }
     // Map turns with me: whenever the heading or the fix changes, the map glides toward the new turn
     // (and, while following, the new fix) frame by frame; a newer change takes over from where it is.
@@ -735,24 +734,18 @@ private fun OpenMapView(
 
 /**
  * Glides the map toward [bearing] (null: keeps its turn) and [target] (null: stays where it is), a
- * little each frame, until it's there - or this is cancelled by a newer heading or fix, which then
- * glides on from wherever the map got to.
+ * little each frame ([OpenMapCamera.glideFrame]: the zoom stays as it is), until it's there - or this
+ * is cancelled by a newer heading or fix, which then glides on from wherever the map got to.
  */
 private suspend fun CameraState.glideTo(bearing: Float?, target: Position?) {
     var lastFrame = withFrameNanos { it }
     while (true) {
         val frame = withFrameNanos { it }
-        val fraction = OpenMapCamera.glideFraction((frame - lastFrame) / 1e9, TURN_GLIDE_SECONDS)
+        val fraction = OpenMapCamera.glideFraction((frame - lastFrame) / 1e9, GLIDE_SECONDS)
         lastFrame = frame
-        val current = position
-        val turnLeft = bearing?.let { HeadingMath.shortestTurn(current.bearing.toFloat(), it) } ?: 0f
-        val turned = abs(turnLeft) < ARRIVED_DEGREES
-        val nextTarget = OpenMapCamera.glideStep(current.target, target, fraction)
-        position = current.copy(
-            bearing = if (turned) bearing?.toDouble() ?: current.bearing else HeadingMath.normalize(current.bearing.toFloat() + turnLeft * fraction.toFloat()).toDouble(),
-            target = nextTarget ?: current.target,
-        )
-        if (turned && nextTarget == target) return
+        val next = OpenMapCamera.glideFrame(position, bearing, target, fraction)
+        position = next
+        if (OpenMapCamera.hasArrived(next, bearing, target)) return
     }
 }
 
@@ -817,9 +810,6 @@ private fun RouteBounds.fit(): RouteCameraBounds.Fit? = RouteCameraBounds.comput
         TripPoint(0, maxLatitude, maxLongitude, 0f, null, null),
     ),
 )
-
-/** Closer than this, the glide just finishes the turn. */
-private const val ARRIVED_DEGREES = 0.2f
 
 private suspend fun CameraState.showWholeRoute(fit: RouteCameraBounds.Fit?) {
     when (fit) {

@@ -88,6 +88,33 @@ internal object OpenMapCamera {
     /** About a centimeter, in degrees of latitude. */
     private const val ARRIVED_DEGREES = 1e-7
 
+    /** Closer than this, the glide just finishes the turn. */
+    private const val ARRIVED_TURN_DEGREES = 0.2f
+
+    /**
+     * One frame of gliding the map from [current] toward [bearing] (null: keeps its turn) and [target]
+     * (null: stays where it is), [fraction] of the way ([glideStep]); the turn is finished once within
+     * [ARRIVED_TURN_DEGREES]. The zoom stays exactly as it is: MapLibre draws its tiles by the whole
+     * zoom, so even a hair under it (16 to 15.99999) means the next tiles down and every label placed
+     * again - street names flickering and jumping at each fix.
+     */
+    fun glideFrame(current: CameraPosition, bearing: Float?, target: Position?, fraction: Double): CameraPosition {
+        val turnLeft = bearing?.let { HeadingMath.shortestTurn(current.bearing.toFloat(), it) } ?: 0f
+        val turned = abs(turnLeft) < ARRIVED_TURN_DEGREES
+        return current.copy(
+            bearing = when {
+                bearing == null -> current.bearing
+                turned -> bearing.toDouble()
+                else -> HeadingMath.normalize(current.bearing.toFloat() + turnLeft * fraction.toFloat()).toDouble()
+            },
+            target = glideStep(current.target, target, fraction) ?: current.target,
+        )
+    }
+
+    /** Whether a glide ([glideFrame]) toward [bearing] and [target] has got there. */
+    fun hasArrived(position: CameraPosition, bearing: Float?, target: Position?): Boolean =
+        (bearing == null || position.bearing == bearing.toDouble()) && (target == null || position.target == target)
+
     /** "Show whole route": the route recorded so far, and where the phone is now. */
     fun wholeRouteFit(route: List<TripPoint>, fix: MapFix?): RouteCameraBounds.Fit? {
         val here = fix?.let { TripPoint(capturedAtEpochSecond = 0L, latitude = it.latitude, longitude = it.longitude, accuracyMeters = 0f, altitudeMeters = null, speedMetersPerSecond = null) }

@@ -8,6 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.spatialk.geojson.Position
 
 class OpenMapCameraTest {
@@ -107,6 +108,42 @@ class OpenMapCameraTest {
         assertEquals(31.01, halfway.latitude, 1e-9)
         assertEquals(to, OpenMapCamera.glideStep(Position(longitude = 35.01 - 5e-8, latitude = 31.02 + 5e-8), to, 0.1))
         assertNull(OpenMapCamera.glideStep(from, null, 0.5))
+    }
+
+    @Test
+    fun `following a still phone's wandering fixes never changes the zoom, frame after frame`() {
+        // MapLibre draws its tiles by the whole zoom: a hair under 16 draws the z15 tiles and places
+        // every label again, so street names flickered and jumped at each fix (MapLibre's own camera
+        // animation dipped the zoom to 15.99999 on the way).
+        var camera = CameraPosition(target = Position(longitude = 35.21, latitude = 31.77), zoom = OpenMapCamera.FOLLOW_ZOOM, bearing = 0.0)
+        val fixes = listOf(35.21004 to 31.77003, 35.20997 to 31.76998, 35.21002 to 31.77005, 35.20999 to 31.76996)
+
+        for ((longitude, latitude) in fixes) {
+            val here = Position(longitude = longitude, latitude = latitude)
+            var frames = 0
+            while (!OpenMapCamera.hasArrived(camera, 0f, here)) {
+                camera = OpenMapCamera.glideFrame(camera, bearing = 0f, target = here, fraction = OpenMapCamera.glideFraction(1.0 / 60, 0.18))
+                assertEquals(OpenMapCamera.FOLLOW_ZOOM, camera.zoom, 0.0)
+                assertTrue("still gliding after $frames frames", ++frames < 600)
+            }
+            assertEquals(here, camera.target)
+        }
+    }
+
+    @Test
+    fun `a glide frame turns part of the way, and finishes the turn once close`() {
+        val camera = CameraPosition(target = Position(longitude = 35.21, latitude = 31.77), zoom = 15.3, bearing = 350.0)
+
+        val turning = OpenMapCamera.glideFrame(camera, bearing = 10f, target = null, fraction = 0.5)
+        assertEquals(0.0, turning.bearing, 1e-4)
+        assertEquals(camera.target, turning.target)
+        assertEquals(15.3, turning.zoom, 0.0)
+        assertFalse(OpenMapCamera.hasArrived(turning, 10f, null))
+
+        val finished = OpenMapCamera.glideFrame(camera.copy(bearing = 9.9), bearing = 10f, target = null, fraction = 0.1)
+        assertEquals(10.0, finished.bearing, 0.0)
+        assertTrue(OpenMapCamera.hasArrived(finished, 10f, null))
+        assertTrue(OpenMapCamera.hasArrived(camera, null, null))
     }
 
     private fun metersPerDp(latitude: Double, zoom: Double) = 40_075_016.686 * Math.cos(Math.toRadians(latitude)) / (512.0 * Math.pow(2.0, zoom))
