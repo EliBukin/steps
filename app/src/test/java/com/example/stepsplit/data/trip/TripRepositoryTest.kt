@@ -829,6 +829,59 @@ class TripRepositoryTest {
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
     }
 
+    // ---- The app reopened before Android's restart of a killed recording arrived ----
+
+    @Test
+    fun `a restart after this process's launch check interrupted the trip takes it back, recording and owned`() = runTest {
+        val tripId = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
+
+        assertEquals(tripId, repository.claimActiveTripForRestart(token = 5L) { true })
+
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertEquals("owned: an older claim can't take it", null, repository.claimActiveTripForRestart(token = 4L) { true })
+        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10)))
+        assertEquals(1, repository.getTripPoints(tripId).size)
+        assertEquals(1, database.tripDao().observeAll().first().size)
+    }
+
+    @Test
+    fun `a trip finished at its last point before the restart arrives stays finished`() = runTest {
+        val tripId = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        repository.finishInterruptedTripAtLastPoint(tripId)
+
+        assertNull(repository.claimActiveTripForRestart(token = 5L) { true })
+        assertEquals(TripState.FINISHED.name, repository.getTrip(tripId)!!.state)
+    }
+
+    @Test
+    fun `a trip deleted before the restart arrives isn't brought back`() = runTest {
+        val tripId = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        repository.deleteTrip(tripId)
+
+        assertNull(repository.claimActiveTripForRestart(token = 5L) { true })
+        assertTrue(database.tripDao().observeAll().first().isEmpty())
+    }
+
+    @Test
+    fun `once a newer trip is started, the restart never brings the interrupted one back`() = runTest {
+        val interrupted = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        val newer = repository.claimTripForStart(token = 5L) { true }!!
+        assertNotEquals(interrupted, newer)
+
+        // While the newer one records, a restart takes that one.
+        assertEquals(newer, repository.claimActiveTripForRestart(token = 6L) { true })
+        // Once it is finished, a restart finds nothing - not the older, interrupted trip.
+        repository.finishTrip(newer, fixedNow.epochSecond + 60)
+        assertNull(repository.claimActiveTripForRestart(token = 7L) { true })
+        assertEquals(TripState.INTERRUPTED.name, repository.getTrip(interrupted)!!.state)
+        assertEquals(TripState.FINISHED.name, repository.getTrip(newer)!!.state)
+    }
+
     /** Documents the bug the fix above prevents: calling the *old* null-intent handler's `startTrip()` at this same point really would create a second, unrelated trip. */
     @Test
     fun `calling startTrip instead - the old buggy restart path - would have created a duplicate`() = runTest {
@@ -1243,8 +1296,10 @@ class TripRepositoryTest {
 
     @Test
     fun `claimActiveTripForRestart returns null when no trip is ACTIVE, never creating or resuming one`() = runTest {
-        val tripId = repository.startTrip()
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false) // -> INTERRUPTED
+        // Interrupted by an earlier process (this one's own launch check is the one exception - see below).
+        val earlierProcess = TripRepository(database, clock)
+        val tripId = earlierProcess.startTrip()
+        earlierProcess.reconcileActiveTripOnLaunch(isServiceRunning = false) // -> INTERRUPTED
 
         val claimed = repository.claimActiveTripForRestart(token = 1L) { true }
 

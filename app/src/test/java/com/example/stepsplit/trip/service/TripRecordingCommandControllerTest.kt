@@ -255,11 +255,12 @@ class TripRecordingCommandControllerTest {
         assertEquals(1, database.tripDao().observeAll().first().size)
     }
 
-    // 4. Null-intent restart after reconciliation to INTERRUPTED creates nothing and changes nothing.
+    // 4. Null-intent restart after an earlier process's reconciliation to INTERRUPTED creates nothing and changes nothing.
     @Test
-    fun `null-intent restart after reconciliation to INTERRUPTED creates nothing and changes nothing`() = runBlocking {
-        val tripId = repository.startTrip()
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+    fun `null-intent restart after an earlier process's reconciliation to INTERRUPTED creates nothing and changes nothing`() = runBlocking {
+        val earlierProcess = TripRepository(database, Clock.fixed(fixedNow, ZoneOffset.UTC))
+        val tripId = earlierProcess.startTrip()
+        earlierProcess.reconcileActiveTripOnLaunch(isServiceRunning = false)
 
         val gen = controller.beginCommand()
         controller.handleRestart(gen, startId = 1)
@@ -268,6 +269,22 @@ class TripRecordingCommandControllerTest {
         assertEquals(1, database.tripDao().observeAll().first().size)
         awaitSubscriptionCount(0)
         assertEquals(listOf(1), stoppedStartIds)
+    }
+
+    // 4b. The app reopened before Android's restart of the service arrived: this process's own launch
+    // check interrupted the trip, and the restart takes it back and records on.
+    @Test
+    fun `null-intent restart after this process's own launch check takes the trip back and records on`() = runBlocking {
+        val tripId = repository.startTrip()
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+
+        val gen = controller.beginCommand()
+        controller.handleRestart(gen, startId = 1)
+
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        assertEquals(1, database.tripDao().observeAll().first().size)
+        awaitSubscriptionCount(1)
+        assertTrue(stoppedStartIds.isEmpty())
     }
 
     // 5. Resume uses the requested interrupted trip and preserves its route and distance.

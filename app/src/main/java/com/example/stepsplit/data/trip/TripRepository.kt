@@ -166,6 +166,14 @@ class TripRepository(
 
     private var newStretchStart: NewStretchStart? = null
 
+    // In-memory only: the trip this process's launch check ([reconcileActiveTripOnLaunch]) marked
+    // INTERRUPTED. When the app is reopened in the second or so (up to about 20 s under memory
+    // pressure) before Android restarts the recording service it killed, the check runs first and
+    // finds no service; the restart then takes this trip back ([claimActiveTripForRestart]) instead of
+    // finding nothing to recover. Forgotten once that trip is resumed, finished or deleted, or another
+    // recording is claimed.
+    private var interruptedOnLaunch: Long? = null
+
     /**
      * A plain, ownership-agnostic primitive: idempotent (if a trip is already ACTIVE, its existing id
      * is returned and no new row is created), but registers no recording owner - see the class doc
@@ -391,12 +399,23 @@ class TripRepository(
      * not linearization" section. Returns `null` if no trip is `ACTIVE`, if [isCurrent] is false (an
      * optimization only - see the class doc comment's "Why `isCurrent` cannot be the safety mechanism"
      * section), or if [token] is not strictly newer than whatever currently owns [recordingOwner].
+     *
+     * One exception to "never transitions an `INTERRUPTED` trip": with no trip `ACTIVE`, the trip this
+     * process's own launch check interrupted ([interruptedOnLaunch]) is taken back to `ACTIVE`, while it
+     * is still `INTERRUPTED`. That check runs when the app is reopened before Android's restart of the
+     * service arrives, and found the service not running only because the restart hadn't come yet.
      */
     override suspend fun claimActiveTripForRestart(token: Long, isCurrent: () -> Boolean): Long? = tripMutex.withLock {
         if (!isCurrent()) return@withLock null
         afterCurrencyCheck(token)
         if ((recordingOwner?.token ?: NO_OWNER_TOKEN) >= token) return@withLock null
-        val trip = database.tripDao().getByState(TripState.ACTIVE.name) ?: return@withLock null
+        val trip = database.tripDao().getByState(TripState.ACTIVE.name)
+            ?: interruptedOnLaunch?.let { id ->
+                database.tripDao().getById(id)?.takeIf { it.state == TripState.INTERRUPTED.name }?.also {
+                    database.tripDao().update(it.copy(state = TripState.ACTIVE.name))
+                }
+            }
+            ?: return@withLock null
         claimOwnershipLocked(trip.id, token)
         trip.id
     }
@@ -424,6 +443,7 @@ class TripRepository(
         // A new recording (a Resume, say) starts from the last kept point; a fix that was waiting to
         // start a new stretch belonged to the one before.
         newStretchStart = null
+        interruptedOnLaunch = null
         val abandonedCutoff = finishCutoff
         if (abandonedCutoff != null && abandonedCutoff.tripId == tripId && abandonedCutoff.token < token) {
             finishCutoff = null
@@ -549,6 +569,8 @@ class TripRepository(
         if (isServiceRunning) return@withLock
         val trip = database.tripDao().getByState(TripState.ACTIVE.name) ?: return@withLock
         database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
+        // Android may still be about to restart the service it killed: see claimActiveTripForRestart.
+        interruptedOnLaunch = trip.id
     }
 
     /**
@@ -645,11 +667,13 @@ class TripRepository(
         val trip = database.tripDao().getById(tripId) ?: return@withLock false
         if (trip.state != TripState.INTERRUPTED.name) return@withLock false
         database.tripDao().update(trip.copy(state = TripState.ACTIVE.name))
+        forgetInterruptedOnLaunch(tripId)
         true
     }
 
     /** The user's choice to end an [TripState.INTERRUPTED] trip honestly at the last point actually recorded, rather than resuming it. */
     suspend fun finishInterruptedTripAtLastPoint(tripId: Long) = tripMutex.withLock {
+        forgetInterruptedOnLaunch(tripId)
         val trip = database.tripDao().getById(tripId) ?: return@withLock
         if (trip.state != TripState.INTERRUPTED.name) return@withLock
         val endEpochSecond = trip.lastAcceptedPointEpochSecond ?: trip.startEpochSecond
@@ -782,6 +806,12 @@ class TripRepository(
             kept?.let { database.deletedTripTotalsDao().insert(it) }
             database.tripDao().deleteById(tripId)
         }
+        tripMutex.withLock { forgetInterruptedOnLaunch(tripId) }
+    }
+
+    /** Call only under [tripMutex]: [tripId] was resumed, finished or deleted by the owner - see [interruptedOnLaunch]. */
+    private fun forgetInterruptedOnLaunch(tripId: Long) {
+        if (interruptedOnLaunch == tripId) interruptedOnLaunch = null
     }
 
     private companion object {
