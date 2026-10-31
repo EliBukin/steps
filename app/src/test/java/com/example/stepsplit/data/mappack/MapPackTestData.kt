@@ -74,6 +74,12 @@ internal class FakeMapPackDownloader(
         cancelled += ids
         ids.forEach { downloads.remove(it)?.destination?.delete() }
     }
+
+    override fun unfinishedInto(dir: File): List<Long> = downloads.filterValues { download ->
+        val state = if (download.step < 0) MapPackDownloadStatus.State.QUEUED else script[download.step]
+        state != MapPackDownloadStatus.State.DONE && state != MapPackDownloadStatus.State.FAILED &&
+            download.destination.canonicalPath.startsWith(dir.canonicalPath + File.separator)
+    }.keys.toList()
 }
 
 internal class InMemoryMapPackPreferences(override var wifiOnly: Boolean = true, override var offerAnswered: Boolean = false) : MapPackPreferences

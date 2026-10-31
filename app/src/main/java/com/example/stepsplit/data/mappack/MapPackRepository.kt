@@ -73,7 +73,8 @@ class SharedPreferencesMapPackPreferences(context: Context) : MapPackPreferences
  * Nothing here runs on its own schedule: the manifest is read only when the Offline maps settings
  * open ([refreshManifest]), and files download only when the user taps Download. A download keeps
  * going in Android's download manager if the app closes; the next time the app starts, the
- * finished files are checked and installed (or the progress picked up again). While a download
+ * finished files are checked and installed (or the progress picked up again), and whatever a
+ * download or an install the app ended in the middle of left behind is deleted. While a download
  * runs, the download manager is asked how it goes every [pollMillis] while a screen shows [state],
  * and only every [backgroundPollMillis] while none does (the app in the background).
  *
@@ -110,6 +111,8 @@ class MapPackRepository(
     init {
         scope.launch {
             try {
+                // Under the lock: a download starting at the same moment can't lose its new folder.
+                mutex.withLock { withContext(io) { removeLeftovers() } }
                 withContext(io) {
                     val cached = store?.readCachedManifest()?.parse()
                     val installed = store?.installed().orEmpty()
@@ -160,6 +163,8 @@ class MapPackRepository(
             mutex.withLock {
                 if (_state.value.download != null) return@withLock
                 val store = store ?: return@withLock _state.update { it.copy(problem = MapPacksState.Problem.NO_STORAGE) }
+                // A download the app was closed during goes on, even before the first look at it shows it.
+                if (withContext(io) { store.readPendingDownload() } != null) return@withLock
                 val manifestText = withContext(io) { currentManifestText() } ?: return@withLock
                 val region = manifestText.parse()?.regions?.firstOrNull { it.id == regionId }
                 if (region == null || !region.isComplete || region.minAppVersionCode > appVersionCode) return@withLock
@@ -281,7 +286,10 @@ class MapPackRepository(
             _state.update { it.copy(download = null) }
             return true
         }
-        val statuses = withContext(io) { downloader.status(pending.downloadIds) }
+        // The app ended in the middle of the install, after the checked files were moved into place:
+        // finish it. What the download manager says about those files doesn't matter any more.
+        val movedIntoPlace = region != null && withContext(io) { store.isMovedIntoPlace(region) }
+        val statuses = if (movedIntoPlace) emptyList() else withContext(io) { downloader.status(pending.downloadIds) }
         if (
             region == null ||
             // Fewer ids than files: the app ended while the files were being handed to the download manager.
@@ -292,7 +300,7 @@ class MapPackRepository(
             _state.update { it.copy(download = null, problem = MapPacksState.Problem.DOWNLOAD_FAILED) }
             return true
         }
-        if (statuses.all { it.state == MapPackDownloadStatus.State.DONE }) {
+        if (movedIntoPlace || statuses.all { it.state == MapPackDownloadStatus.State.DONE }) {
             onChecking()
             _state.update { it.copy(download = DownloadProgress(region.id, region.totalBytes, region.totalBytes, checking = true)) }
             val installed = withContext(io) {
@@ -325,6 +333,20 @@ class MapPackRepository(
     }
 
     private fun currentManifestText(): CachedManifest? = store?.readCachedManifest()
+
+    /**
+     * At startup: what a download or an install the app ended in the middle of left behind. First the
+     * download manager's downloads into the packs' folder that the pending record doesn't know (the
+     * app ended between handing a file over and recording its id), so nothing writes there any more;
+     * then the folders no version or download needs (see [MapPackStore.removeLeftovers]). Each step on
+     * its own, so one that fails doesn't stop the other.
+     */
+    private fun removeLeftovers() {
+        val store = store ?: return
+        val pending = store.readPendingDownload()
+        runCatching { downloader.cancel(downloader.unfinishedInto(store.root) - pending?.downloadIds.orEmpty().toSet()) }
+        runCatching { store.removeLeftovers(pending) }
+    }
 
     /**
      * Undoes a download that can't go on: its downloads in the download manager, its files, and

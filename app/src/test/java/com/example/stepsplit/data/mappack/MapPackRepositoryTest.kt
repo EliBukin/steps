@@ -229,6 +229,144 @@ class MapPackRepositoryTest {
         assertFalse(File(root, "israel").exists())
     }
 
+    @Test
+    fun `publishing the older pack again replaces a broken newer one`() = runTest {
+        manifestText = MapPackTestData.manifestJson(version = "2026-10-30")
+        val repository = repository()
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+
+        manifestText = MapPackTestData.manifestJson(version = "2026-10-29")
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+        assertEquals("2026-10-29", repository.state.value.installed.single().version)
+        assertFalse(File(root, "israel/2026-10-30").exists())
+    }
+
+    // ---- Review 2, D4: each moment the app can end in during a download or an install, then the next start. ----
+
+    private val old = "2026-10-29"
+    private val new = "2027-01-15"
+
+    /** [old] installed the normal way; the manifest now offers [new]. */
+    private fun TestScope.installOldThenOfferNew() {
+        val repository = repository()
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+        assertEquals(old, repository.state.value.installed.single().version)
+        manifestText = MapPackTestData.manifestJson(version = new)
+        repository.refreshManifest()
+        advanceUntilIdle()
+    }
+
+    /** Starts downloading [new] in a process that then ends, its files still on their way. */
+    private fun TestScope.startNewDownloadAndEnd(downloader: MapPackDownloader) {
+        val firstProcess = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        repository(downloader, scope = firstProcess).download("israel")
+        advanceTimeBy(1)
+        firstProcess.cancel()
+        assertEquals(new, MapPackStore(root).readPendingDownload()!!.version)
+    }
+
+    private fun regionFolders() = File(root, "israel").listFiles { file -> file.isDirectory }.orEmpty().map { it.name }.toSet()
+
+    @Test
+    fun `kill point 1 - files moved into place but not recorded - the install is finished on the next start`() = runTest {
+        installOldThenOfferNew()
+        startNewDownloadAndEnd(FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING)))
+        // The files came down, were checked and moved into place; the app ended before writing installed.json.
+        val download = File(root, "israel/download-$new")
+        File(download, "israel-$new-vector.pmtiles").writeBytes(MapPackTestData.vectorBytes)
+        File(download, "israel-$new-dem.pmtiles").writeBytes(MapPackTestData.demBytes)
+        assertTrue(download.renameTo(File(root, "israel/$new")))
+
+        // The download manager may have forgotten those downloads by now: a fresh fake knows none of them.
+        val restarted = repository(FakeMapPackDownloader())
+        advanceUntilIdle()
+        assertNull("no false problem", restarted.state.value.problem)
+        assertNull(restarted.state.value.download)
+        assertEquals(new, restarted.state.value.installed.single().version)
+        assertEquals(setOf(new), regionFolders())
+        assertNull(MapPackStore(root).readPendingDownload())
+    }
+
+    @Test
+    fun `kill point 2 - recorded but the old version not deleted - the old version goes on the next start`() = runTest {
+        installOldThenOfferNew()
+        val oldFiles = File(folder.root, "old-copy").also { File(root, "israel/$old").copyRecursively(it) }
+        val repository = repository()
+        repository.download("israel")
+        advanceUntilIdle()
+        // The app ended after writing installed.json for the new version, before deleting the old one.
+        oldFiles.copyRecursively(File(root, "israel/$old"))
+        MapPackStore(root).writePendingDownload(PendingDownload("israel", new, listOf(102L, 103L), MapPackStore(root).readCachedManifest()!!))
+
+        val restarted = repository()
+        advanceUntilIdle()
+        assertNull(restarted.state.value.problem)
+        assertEquals(new, restarted.state.value.installed.single().version)
+        assertEquals(setOf(new), regionFolders())
+        assertNull(MapPackStore(root).readPendingDownload())
+    }
+
+    // Kill point 3, between handing a file to the download manager and recording its id, is
+    // `a download the app ended in the middle of handing over is cancelled on the next start`.
+
+    @Test
+    fun `kill point 4 - Download tapped before the first look at a download that goes on - nothing new starts`() = runTest {
+        installOldThenOfferNew()
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING, MapPackDownloadStatus.State.DONE))
+        startNewDownloadAndEnd(fake)
+
+        // A Settings screen restored at launch: a tap lands before the first look fills in the progress.
+        val restarted = repository(fake)
+        restarted.download("israel")
+        advanceUntilIdle()
+        assertEquals("no second download replaces the record", 2, fake.enqueued.size)
+        assertTrue("the first one isn't orphaned", fake.cancelled.isEmpty())
+        assertNull(restarted.state.value.problem)
+        assertEquals(new, restarted.state.value.installed.single().version)
+        assertEquals(setOf(new), regionFolders())
+    }
+
+    @Test
+    fun `at startup only the installed version and the download on its way keep their folders`() = runTest {
+        installOldThenOfferNew()
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING))
+        startNewDownloadAndEnd(fake)
+        // Left behind by earlier versions of the app, or by downloads and installs it ended in the middle of.
+        File(root, "israel/download-2026-05-01").mkdirs()
+        File(root, "israel/2026-05-01").mkdirs()
+        File(root, "israel/2026-05-01/israel-2026-05-01-vector.pmtiles").writeBytes(MapPackTestData.vectorBytes)
+        File(root, "elsewhere/download-2026-05-01").mkdirs()
+
+        val restarted = repository(fake)
+        advanceTimeBy(1)
+        assertEquals(setOf(old, "download-$new"), regionFolders())
+        assertFalse(File(root, "elsewhere/download-2026-05-01").exists())
+        assertEquals(old, restarted.state.value.installed.single().version)
+        assertNotNull(restarted.state.value.download)
+        restarted.cancelDownload()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `a region whose installed record can't be read is left alone at startup`() = runTest {
+        installOldThenOfferNew()
+        File(root, "israel/installed.json").writeText("{ not json")
+        File(root, "israel/download-2026-05-01").mkdirs()
+
+        repository()
+        advanceUntilIdle()
+        assertEquals(setOf(old, "download-2026-05-01"), regionFolders())
+    }
+
     /** The app's map-pack scope with a handler that records, instead of a crash, anything that gets out. */
     private fun TestScope.processScope(escaped: MutableList<Throwable>) =
         CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob() + CoroutineExceptionHandler { _, e -> escaped += e })
@@ -355,7 +493,9 @@ class MapPackRepositoryTest {
         assertEquals(MapPacksState.Problem.DOWNLOAD_FAILED, restarted.state.value.problem)
         assertNull(restarted.state.value.download)
         assertNull(store.readPendingDownload())
-        assertEquals(listOf(100L), fake.cancelled)
+        // Kill point 3 (review 2, D4): the second file's download, which the record doesn't know, is removed as well.
+        assertEquals(setOf(100L, 101L), fake.cancelled.toSet())
+        assertTrue(fake.unfinishedInto(root).isEmpty())
         assertFalse(File(root, "israel/download-2026-10-29").exists())
     }
 

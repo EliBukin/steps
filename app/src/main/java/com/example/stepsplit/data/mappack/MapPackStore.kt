@@ -58,12 +58,20 @@ class MapPackStore(val root: File) {
     fun downloadDir(regionId: String, version: String) = File(File(root, regionId), "download-$version")
 
     /**
+     * True when the app ended in the middle of [install]ing [region]: its files were checked and
+     * moved into place, but not yet recorded as the installed version.
+     */
+    fun isMovedIntoPlace(region: MapPackRegion): Boolean =
+        !downloadDir(region.id, region.version).exists() && File(File(root, region.id), region.version).isDirectory
+
+    /**
      * Checks the downloaded files of [region] against the manifest, then makes them the installed
      * version and deletes every other version. Null (and the downloaded files deleted) when a file is
-     * missing, the wrong size, or its SHA-256 doesn't match.
+     * missing, the wrong size, or its SHA-256 doesn't match. Also finishes an install the app ended
+     * in the middle of ([isMovedIntoPlace]): the files are checked again where they are.
      */
     fun install(region: MapPackRegion): InstalledMapPack? {
-        val download = downloadDir(region.id, region.version)
+        val download = if (isMovedIntoPlace(region)) File(File(root, region.id), region.version) else downloadDir(region.id, region.version)
         val ok = region.isComplete && region.files.all { file ->
             val f = File(download, file.name)
             f.isFile && f.length() == file.bytes && sha256(f) == file.sha256
@@ -74,8 +82,10 @@ class MapPackStore(val root: File) {
         }
         val regionDir = File(root, region.id)
         val target = File(regionDir, region.version)
-        target.deleteRecursively()
-        check(download.renameTo(target)) { "can't move ${download.name} into place" }
+        if (download != target) {
+            target.deleteRecursively()
+            check(download.renameTo(target)) { "can't move ${download.name} into place" }
+        }
         val installed = buildJsonObject {
             put("version", region.version)
             put("vector", region.files.first { it.role == MapPackFile.ROLE_VECTOR }.name)
@@ -86,6 +96,29 @@ class MapPackStore(val root: File) {
         writeAtomically(File(regionDir, INSTALLED_JSON), installed.toString())
         regionDir.listFiles().orEmpty().filter { it.isDirectory && it.name != region.version }.forEach { it.deleteRecursively() }
         return readInstalled(regionDir)
+    }
+
+    /**
+     * Deletes the folders an install or a download the app ended in the middle of left behind: in
+     * each region, every folder but the installed version's and [pending]'s (its `download-<version>`,
+     * and its `<version>`, there when the app ended after moving it into place - [isMovedIntoPlace]).
+     * A region whose record of the installed version can't be read is left alone, so the installed
+     * pack is never touched. Call it under the same lock as a download that starts, or it could
+     * delete that download's new folder before its record is written.
+     */
+    fun removeLeftovers(pending: PendingDownload?) {
+        root.listFiles { file -> file.isDirectory }.orEmpty().forEach { regionDir ->
+            val record = File(regionDir, INSTALLED_JSON)
+            val installedVersion = if (record.exists()) {
+                runCatching { Json.parseToJsonElement(record.readText()).jsonObject.getValue("version").jsonPrimitive.content }.getOrNull()
+                    ?: return@forEach
+            } else {
+                null
+            }
+            val pendingHere = pending?.takeIf { it.regionId == regionDir.name }
+            val keep = setOfNotNull(installedVersion, pendingHere?.version, pendingHere?.let { downloadDir(it.regionId, it.version).name })
+            regionDir.listFiles { file -> file.isDirectory && file.name !in keep }.orEmpty().forEach { it.deleteRecursively() }
+        }
     }
 
     /** Deletes [regionId]'s pack: installed files, any half-downloaded ones, and its record. */

@@ -15,6 +15,9 @@ interface MapPackDownloader {
 
     /** Stops the downloads and deletes what they had written. */
     fun cancel(ids: List<Long>)
+
+    /** This app's downloads still on their way (not done or failed) whose file goes into [dir] or a folder in it. */
+    fun unfinishedInto(dir: File): List<Long>
 }
 
 data class MapPackDownloadStatus(val id: Long, val state: State, val downloadedBytes: Long, val totalBytes: Long) {
@@ -74,5 +77,21 @@ class SystemMapPackDownloader(context: Context) : MapPackDownloader {
 
     override fun cancel(ids: List<Long>) {
         if (ids.isNotEmpty()) downloads.remove(*ids.toLongArray())
+    }
+
+    override fun unfinishedInto(dir: File): List<Long> {
+        val unfinished = DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or DownloadManager.STATUS_PAUSED
+        val prefix = dir.canonicalPath + File.separator
+        val found = mutableListOf<Long>()
+        downloads.query(DownloadManager.Query().setFilterByStatus(unfinished))?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID)
+            val localUriColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI)
+            while (cursor.moveToNext()) {
+                // The file this download writes to; a download that doesn't say isn't touched.
+                val path = cursor.getString(localUriColumn)?.toUri()?.path ?: continue
+                if (File(path).canonicalPath.startsWith(prefix)) found += cursor.getLong(idColumn)
+            }
+        }
+        return found
     }
 }

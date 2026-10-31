@@ -179,7 +179,7 @@ private fun RegionRow(
                     stringResource(R.string.offline_maps_installed, formatVersion(installed.version), formatSize(context, installed.bytes)),
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                val update = region?.takeIf { it.version > installed.version && !needsNewerApp }
+                val update = region?.takeIf { offersUpdate(it.version, installed.version) && !needsNewerApp }
                 if (update != null) {
                     Text(stringResource(R.string.offline_maps_update_available, formatSize(context, update.totalBytes)), style = MaterialTheme.typography.bodyMedium)
                 }
@@ -233,6 +233,13 @@ internal fun regionName(context: Context, regionId: String): String = when (regi
 }
 
 private fun formatSize(context: Context, bytes: Long): String = Formatter.formatShortFileSize(context, bytes)
+
+/**
+ * Whether the server's pack replaces the installed one: whenever its version differs. The server is
+ * the one source of truth, so version names need no order (`2026-10-30-2` after `2026-10-30c`), and
+ * a broken pack is withdrawn by publishing the older version again.
+ */
+internal fun offersUpdate(serverVersion: String, installedVersion: String): Boolean = serverVersion != installedVersion
 
 /** A pack's version is its build date: shown as its month, "October 2026". */
 internal fun formatVersion(version: String): String = runCatching {
