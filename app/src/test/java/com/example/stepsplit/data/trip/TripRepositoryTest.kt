@@ -519,6 +519,28 @@ class TripRepositoryTest {
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
     }
 
+    /**
+     * Review 2, D2: the launch check reads "is the service running" before it takes the trip lock.
+     * Android's restart of a killed recording can claim the trip in between; the check, running
+     * with its stale false, must not interrupt the trip that is now recording again.
+     */
+    @Test
+    fun `reconcileActiveTripOnLaunch leaves a trip this process's recording claimed after the check read the service as stopped`() = runTest {
+        // An earlier process recorded a trip and died; this is the new process.
+        val tripId = TripRepository(database, clock).startTrip()
+        TripRepository(database, clock).recordAcceptedBatch(tripId, listOf(sample(10.0, 20.0, fixedNow.epochSecond, speed = 1.3f)))
+        val staleIsRunning = false // read on the main thread, before the restart arrived
+
+        assertEquals(tripId, repository.claimActiveTripForRestart(token = 1L) { true })
+        repository.reconcileActiveTripOnLaunch(isServiceRunning = staleIsRunning)
+
+        assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
+        // The recording goes on: its next fix is stored.
+        clock.instant = fixedNow.plusSeconds(20)
+        repository.recordAcceptedBatch(tripId, listOf(sample(10.0001, 20.0, fixedNow.epochSecond + 10, speed = 1.3f)))
+        assertEquals(2, repository.getTripPoints(tripId).size)
+    }
+
     @Test
     fun `reconcileActiveTripOnLaunch does nothing when there is no active trip`() = runTest {
         val tripId = repository.startTrip()

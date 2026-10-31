@@ -183,6 +183,14 @@ class TripRecordingCommandControllerTest {
         awaitSubscriptionCount(locationClient, expected, timeoutMs)
 
     /**
+     * The launch check of the app's next process, after this one's recording is presumed dead: a
+     * fresh repository on the same database, which owns nothing. This process's own check leaves a
+     * trip its recording owns alone (review 2, D2).
+     */
+    private suspend fun reconcileOnRelaunch() =
+        TripRepository(database, clock).reconcileActiveTripOnLaunch(isServiceRunning = false)
+
+    /**
      * Waits until exactly one collection is active and it started after [afterId] - the one the
      * command under test just started, not the one it replaced. Use this, not
      * `awaitSubscriptionCount(1)`, after a command restarts collection while an older collection may
@@ -306,7 +314,7 @@ class TripRecordingCommandControllerTest {
         val distanceBeforeInterruption = repository.getTrip(tripId)!!.distanceMeters
         val pointsBeforeInterruption = repository.getTripPoints(tripId).size
 
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
 
         val resumeGen = controller.beginCommand()
@@ -325,7 +333,7 @@ class TripRecordingCommandControllerTest {
         controller.handleStart(startGen, startId = 1)
         awaitSubscriptionCount(1)
         val tripId = repository.getActiveTripId()!!
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
 
         val resumeGen = controller.beginCommand()
         controller.handleResume(tripId, resumeGen, startId = 2)
@@ -363,7 +371,7 @@ class TripRecordingCommandControllerTest {
         controller.handleStart(startGen, startId = 1)
         awaitSubscriptionCount(1)
         val tripId = repository.getActiveTripId()!!
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
 
         val failingClient = FakeTripLocationClient(registrationFailure = SecurityException("permission revoked"))
@@ -970,7 +978,7 @@ class TripRecordingCommandControllerTest {
         // The app relaunches while A's service is presumed dead - the trip is reconciled to
         // INTERRUPTED independently of A's own (not-yet-called) shutdown, exactly like a real process
         // death would.
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
 
         // A's own shutdown (e.g. the OS finally tearing down the old process's service instance) now
@@ -1011,7 +1019,7 @@ class TripRecordingCommandControllerTest {
         controller.handleStart(startGen, startId = 1)
         awaitSubscriptionCount(1)
         val tripId = repository.getActiveTripId()!!
-        repository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
         // The original service's own collector is gone, mirroring the real process death this
         // reconciliation models - without this, the still-running original collector would trivially
@@ -1067,7 +1075,7 @@ class TripRecordingCommandControllerTest {
         racyController.handleStart(startGen, startId = 1)
         awaitSubscriptionCount(1)
         val tripId = racyRepository.getActiveTripId()!!
-        racyRepository.reconcileActiveTripOnLaunch(isServiceRunning = false)
+        reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, racyRepository.getTrip(tripId)!!.state)
         // The original service's own collector is gone, mirroring the real process death this
         // reconciliation models - without this, the still-running original collector would trivially

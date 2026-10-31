@@ -586,10 +586,15 @@ class TripRepository(
      * rather than silently left ACTIVE (which would let the UI keep claiming to record with nothing
      * behind it) or silently finished (which would fabricate an end time nobody actually observed).
      * The user resolves it explicitly via [resumeInterruptedTrip] or [finishInterruptedTripAtLastPoint].
+     *
+     * [isServiceRunning] is read before this call takes [tripMutex], so Android's restart of the
+     * service can claim the trip in between. A trip this process's recording owns is left alone
+     * whatever [isServiceRunning] said: [recordingOwner], read under the lock, is the fresh truth.
      */
     suspend fun reconcileActiveTripOnLaunch(isServiceRunning: Boolean) = tripMutex.withLock {
         if (isServiceRunning) return@withLock
         val trip = database.tripDao().getByState(TripState.ACTIVE.name) ?: return@withLock
+        if (recordingOwner?.tripId == trip.id) return@withLock
         database.tripDao().update(trip.copy(state = TripState.INTERRUPTED.name))
         // Android may still be about to restart the service it killed: see claimActiveTripForRestart.
         interruptedOnLaunch = trip.id
