@@ -234,7 +234,10 @@ class OpenMapViewModel(
             // Off the main thread: a long route is tens of thousands of points to match against.
             withContext(Dispatchers.Default) {
                 shown.mapNotNull { (route, loaded) ->
-                    loaded.follower?.let { RouteStrip(route.id, route.name, it.progress(fix.latitude, fix.longitude, fix.accuracyMeters)) }
+                    loaded.follower?.let { follower ->
+                        val progress = follower.progress(fix.latitude, fix.longitude, fix.accuracyMeters, atMillis = fix.elapsedRealtimeNanos / 1_000_000L)
+                        RouteStrip(route.id, route.name, progress)
+                    }
                 }.minByOrNull { it.progress.offMeters }
             }
         }

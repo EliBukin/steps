@@ -90,6 +90,37 @@ class RouteFollowerTest {
     }
 
     @Test
+    fun `out and back seen again after a long time puts you on the way back, and keeps you there`() {
+        // A 10 km out-and-back: looked at on the way out at km 3, then the screen off until the way
+        // back at km 8 - the same place as km 2 on the way out.
+        val follower = follower(RouteTestShapes.outAndBack(5_000.0))
+        val minute = 60_000L
+        assertEquals(3_000.0, follower.locate(northOf(3_000.0), eastOf(0.0), atMillis = 0L).alongMeters, 10.0)
+
+        assertEquals(8_000.0, follower.locate(northOf(2_000.0), eastOf(0.0), atMillis = 60 * minute).alongMeters, 10.0)
+        assertEquals(8_010.0, follower.locate(northOf(1_990.0), eastOf(0.0), atMillis = 60 * minute + 7_000L).alongMeters, 10.0)
+        assertEquals("and after another long gap", 9_000.0, follower.locate(northOf(1_000.0), eastOf(0.0), atMillis = 75 * minute).alongMeters, 15.0)
+    }
+
+    @Test
+    fun `a rest of a few minutes on the way out keeps you on the way out`() {
+        val follower = follower(RouteTestShapes.outAndBack(5_000.0))
+        follower.locate(northOf(3_000.0), eastOf(0.0), atMillis = 0L)
+
+        // Sitting down for five minutes; the next fix a few meters back, as GPS wanders.
+        assertEquals(2_995.0, follower.locate(northOf(2_995.0), eastOf(2.0), atMillis = 5 * 60_000L).alongMeters, 10.0)
+    }
+
+    @Test
+    fun `within two minutes the last match still keeps you on your leg`() {
+        val follower = follower(RouteTestShapes.outAndBack(5_000.0))
+        follower.locate(northOf(3_000.0), eastOf(0.0), atMillis = 0L)
+
+        // Turned around and walked 1 km back the way you came, with a fix after 100 s (a bicycle, say).
+        assertEquals(2_000.0, follower.locate(northOf(2_000.0), eastOf(0.0), atMillis = 100_000L).alongMeters, 10.0)
+    }
+
+    @Test
     fun `a gap between segments is no route, and isn't counted along it`() {
         // 0-500 m north, then a second segment from 1,000 to 1,500 m north.
         val first = RouteTestShapes.north(500.0)

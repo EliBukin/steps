@@ -19,6 +19,12 @@ import kotlin.math.sqrt
  * near), it picks the earliest along the route: at the start of a loop you're at its start, not
  * its end.
  *
+ * After more than [STALE_MATCH_MILLIS] without a fix (the screen was off, another tab was open, or
+ * the first fix was the phone's last known one), the last match no longer means "the same leg":
+ * the owner may have walked any distance since. The follower then takes the place they'd have
+ * reached going on along the route, with going back counting [STALE_BACKWARD_WEIGHT] times as far:
+ * back on an out-and-back is on the way back, not still on the way out.
+ *
  * Distances along the route are within one line (one track of the file - one day of a three-day
  * file), with each segment end to end; a gap between segments counts nothing.
  */
@@ -45,13 +51,18 @@ class RouteFollower(lines: List<RouteLine>) {
     }
 
     private var last: Match? = null
+    private var lastAtMillis: Long? = null
 
     /** The route's first point: where it starts. */
     val startLatitude: Double = lines.first().segments.first().latitudes[0]
     val startLongitude: Double = lines.first().segments.first().longitudes[0]
 
-    /** Where ([latitude], [longitude]) is along the route; remembered for the next fix. */
-    fun locate(latitude: Double, longitude: Double): Match {
+    /**
+     * Where ([latitude], [longitude]) is along the route; remembered for the next fix. [atMillis] is
+     * when the fix was taken, on a clock that only runs forward (elapsed realtime); null when not
+     * known, and then the last match never counts as old.
+     */
+    fun locate(latitude: Double, longitude: Double, atMillis: Long? = null): Match {
         val xScale = METERS_PER_DEGREE * cos(Math.toRadians(latitude))
 
         // Every edge's distance from the fix, in route order, and the closest of them.
@@ -109,21 +120,24 @@ class RouteFollower(lines: List<RouteLine>) {
         }
 
         val previous = last
+        val previousAt = lastAtMillis
+        val stale = atMillis != null && previousAt != null && atMillis - previousAt > STALE_MATCH_MILLIS
         val near = previous?.let { prev ->
-            candidates.filter { it.lineIndex == prev.lineIndex && abs(it.alongMeters - prev.alongMeters) <= CONTINUITY_METERS }
+            candidates.filter { it.lineIndex == prev.lineIndex && (stale || abs(it.alongMeters - prev.alongMeters) <= CONTINUITY_METERS) }
                 .minByOrNull { candidate ->
                     val moved = candidate.alongMeters - prev.alongMeters
-                    if (moved >= 0) moved else -moved * BACKWARD_WEIGHT
+                    if (moved >= 0) moved else -moved * (if (stale) STALE_BACKWARD_WEIGHT else BACKWARD_WEIGHT)
                 }
         }
         val chosen = near ?: candidates.minWith(compareBy<Match>({ it.lineIndex }, { it.alongMeters }))
         last = chosen
+        lastAtMillis = atMillis
         return chosen
     }
 
-    /** What the route strip says for a fix at ([latitude], [longitude]) with [accuracyMeters] - see [Progress]. */
-    fun progress(latitude: Double, longitude: Double, accuracyMeters: Float?): Progress {
-        val match = locate(latitude, longitude)
+    /** What the route strip says for a fix at ([latitude], [longitude]) with [accuracyMeters], taken [atMillis] (see [locate]) - see [Progress]. */
+    fun progress(latitude: Double, longitude: Double, accuracyMeters: Float?, atMillis: Long? = null): Progress {
+        val match = locate(latitude, longitude, atMillis)
         val left = max(0.0, match.lineLengthMeters - match.alongMeters)
         val onRoute = max(ON_ROUTE_METERS, min(accuracyMeters?.toDouble() ?: 0.0, MAX_ON_ROUTE_METERS))
         return when {
@@ -168,6 +182,12 @@ class RouteFollower(lines: List<RouteLine>) {
 
         /** Going back along the route counts this many times as far as going ahead, when choosing between legs. */
         const val BACKWARD_WEIGHT = 2.0
+
+        /** Longer than this since the last fix, and the last match no longer keeps the owner on its leg - see the class doc comment. */
+        const val STALE_MATCH_MILLIS = 2 * 60_000L
+
+        /** [BACKWARD_WEIGHT] once the last match is old: ten minutes back counts as far as ten times that ahead. */
+        const val STALE_BACKWARD_WEIGHT = 10.0
 
         private const val METERS_PER_DEGREE = 111_320.0
     }
