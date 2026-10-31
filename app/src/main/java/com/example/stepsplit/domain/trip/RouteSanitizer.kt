@@ -7,8 +7,9 @@ import kotlin.math.hypot
 /**
  * The result of [RouteSanitizer.sanitize]: [points] is the cleaned, chronological sequence with
  * evidenced-bad points removed - never fabricated or interpolated, always a subset of the input in
- * its original relative order - and [distanceMeters] is the haversine sum of consecutive [points]
- * in that exact cleaned sequence, never the original stored/live-accumulated distance. [rejections]
+ * its original relative order (a point that starts a new stretch only marked [TripPoint.startsStretch])
+ * - and [distanceMeters] is the haversine sum of consecutive [points] in that exact cleaned
+ * sequence, but for the jump to a new stretch, never the original stored/live-accumulated distance. [rejections]
  * records what was removed and why, for tests/debug builds; product UI never needs it.
  */
 data class SanitizedRoute(
@@ -39,7 +40,8 @@ data class SanitizedRoute(
  * tuned - it is a structural difference in what evidence is available at write-time vs. read-time,
  * not merely an implementation gap. The one look-ahead both layers share is the new stretch after
  * a gap ([RoutePointAcceptancePolicy]'s "After a gap" section): live acceptance waits for the next
- * fix, this class looks at the next stored point - the same pair.
+ * fix, this class looks at the next stored point - the same pair. The point it keeps is marked
+ * [TripPoint.startsStretch], so the jump to it counts in no distance, here or downstream.
  *
  * ## Algorithm
  *
@@ -108,7 +110,8 @@ data class SanitizedRoute(
  *    stop is handled before this, and its neighbours never move fast enough. The reference speed is
  *    the highest any point involved reports, so a doubt keeps the run.
  * 6. [SanitizedRoute.distanceMeters] is the haversine sum of consecutive points in the *resulting*
- *    cleaned sequence only - a removed point never contributes a segment on either side of it.
+ *    cleaned sequence only - a removed point never contributes a segment on either side of it, and
+ *    neither does the jump to a [TripPoint.startsStretch] point.
  */
 object RouteSanitizer {
     data class Rejection(val point: TripPoint, val reason: RouteSampleRejectionReason)
@@ -185,7 +188,9 @@ object RouteSanitizer {
 
         fun keep(candidate: TripPoint) {
             kept += candidate
-            distance += RouteMath.haversineMeters(lastKept.latitude, lastKept.longitude, candidate.latitude, candidate.longitude)
+            if (!candidate.startsStretch) {
+                distance += RouteMath.haversineMeters(lastKept.latitude, lastKept.longitude, candidate.latitude, candidate.longitude)
+            }
             lastKept = candidate
         }
 
@@ -200,13 +205,13 @@ object RouteSanitizer {
                         rejections += Rejection(candidate, RouteSampleRejectionReason.STATIONARY_WOBBLE)
                     MovementPlausibility.IMPLAUSIBLE_JUMP ->
                         if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)) {
-                            keep(candidate)
+                            keep(candidate.copy(startsStretch = true))
                         } else {
                             rejections += Rejection(candidate, RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
                         }
                     MovementPlausibility.SPEED_CONTRADICTION ->
                         if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.SPEED_CONTRADICTION)) {
-                            keep(candidate)
+                            keep(candidate.copy(startsStretch = true))
                         } else {
                             rejections += Rejection(candidate, RouteSampleRejectionReason.SPEED_CONTRADICTION)
                         }
@@ -226,7 +231,9 @@ object RouteSanitizer {
 
         val cleaned = removeExcursions(kept, rejections)
         if (cleaned.size == kept.size) return SanitizedRoute(kept, distance, rejections)
-        val cleanedDistance = cleaned.zipWithNext { from, to -> RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) }.sum()
+        val cleanedDistance = cleaned.zipWithNext { from, to ->
+            if (to.startsStretch) 0.0 else RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude)
+        }.sum()
         return SanitizedRoute(cleaned, cleanedDistance, rejections)
     }
 

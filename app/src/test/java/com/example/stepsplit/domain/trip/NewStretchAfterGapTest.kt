@@ -1,6 +1,7 @@
 package com.example.stepsplit.domain.trip
 
 import com.example.stepsplit.domain.model.TripPoint
+import com.example.stepsplit.domain.model.TripType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -29,19 +30,27 @@ class NewStretchAfterGapTest {
     private fun pathMeters(points: List<TripPoint>) =
         points.zipWithNext { a, b -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
 
+    /** [points] without the read-time [TripPoint.startsStretch] mark, to compare with what went in. */
+    private fun unmarked(points: List<TripPoint>) = points.map { it.copy(startsStretch = false) }
+
     @Test
-    fun `a walk on 20 km away after 20 minutes is kept, with the gap's straight line in the distance`() {
+    fun `a walk on 20 km away after 20 minutes is kept, and the jump counts in no distance or moving time`() {
         val before = walk(0.0, 1_000L, 6)
         val after = walk(20_000.0, before.last().capturedAtEpochSecond + 20 * 60, 30)
 
         val result = RouteSanitizer.sanitize(before + after)
 
-        assertEquals(before + after, result.points)
-        assertEquals(pathMeters(before + after), result.distanceMeters, 1e-6)
+        assertEquals(before + after, unmarked(result.points))
+        assertEquals(listOf(before.size), result.points.indices.filter { result.points[it].startsStretch })
+        assertEquals(pathMeters(before) + pathMeters(after), result.distanceMeters, 1e-6)
         assertTrue("drawn as a gap", RouteSpeedColoring.isGap(before.last(), after.first()))
         val displayed = RouteSmoother.smooth(result.points)
         assertEquals(before.size + after.size, displayed.points.size)
-        assertEquals(pathMeters(before + after), displayed.distanceMeters, 5.0)
+        assertTrue("the mark survives smoothing", displayed.points[before.size].startsStretch)
+        // Smoothing pulls each stretch's end points in by a few meters.
+        assertEquals(pathMeters(before) + pathMeters(after), displayed.distanceMeters, 20.0)
+        // Moving: the 50 s before and the 290 s after, not the 20 minutes in between.
+        assertEquals(340L, TripMotion.measure(displayed.points, TripType.WALK).movingSeconds)
     }
 
     @Test
@@ -49,7 +58,34 @@ class NewStretchAfterGapTest {
         val before = walk(0.0, 1_000L, 6).map { it.copy(speedMetersPerSecond = null) }
         val after = walk(10_000.0, before.last().capturedAtEpochSecond + 15 * 60, 10).map { it.copy(speedMetersPerSecond = null) }
 
-        assertEquals(before + after, RouteSanitizer.sanitize(before + after).points)
+        assertEquals(before + after, unmarked(RouteSanitizer.sanitize(before + after).points))
+    }
+
+    @Test
+    fun `a walking dropout still counts its straight line, and as moving`() {
+        // Three minutes with no fix while walking on at 1.3 m/s: an ordinary gap, not a new stretch.
+        val before = walk(0.0, 1_000L, 6)
+        val after = walk(13.0 * 5 + 1.3 * 180, before.last().capturedAtEpochSecond + 180, 6)
+
+        val displayed = RouteSmoother.smooth(RouteSanitizer.sanitize(before + after).points)
+
+        assertTrue(displayed.points.none { it.startsStretch })
+        assertEquals(pathMeters(before + after), displayed.distanceMeters, 5.0)
+        assertEquals(50L + 180 + 50, TripMotion.measure(displayed.points, TripType.WALK).movingSeconds)
+    }
+
+    @Test
+    fun `a driving gap still counts its straight line`() {
+        // 20 m/s, a fix every 10 s, then two minutes in a tunnel: the driving rule accepts the far side.
+        fun drive(fromMeters: Double, startT: Long, count: Int) = (0 until count).map { point(fromMeters + 200.0 * it, startT + 10L * it, speed = 20f) }
+        val before = drive(0.0, 1_000L, 6)
+        val after = drive(200.0 * 5 + 2_400.0, before.last().capturedAtEpochSecond + 120, 6)
+
+        val sanitized = RouteSanitizer.sanitize(before + after)
+        val displayed = RouteSmoother.smooth(sanitized.points)
+
+        assertEquals("all kept, none a new stretch", before + after, sanitized.points)
+        assertEquals(pathMeters(before + after), displayed.distanceMeters, 5.0)
     }
 
     @Test
@@ -92,7 +128,7 @@ class NewStretchAfterGapTest {
 
         val result = RouteSanitizer.sanitize(before + rough + after)
 
-        assertEquals("the walk on starts at the first well-placed point", before + after, result.points)
+        assertEquals("the walk on starts at the first well-placed point", before + after, unmarked(result.points))
     }
 
     @Test

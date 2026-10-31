@@ -12,6 +12,7 @@ import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.domain.trip.RouteSanitizer
 import com.example.stepsplit.domain.trip.RouteSmoother
+import com.example.stepsplit.domain.trip.TripMotion
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -239,7 +240,7 @@ class TripRepositoryTest {
         points.zipWithNext { a, b -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
 
     @Test
-    fun `a trip resumed after a 20 km drive keeps the walk after it, with the drive as a gap`() = runTest {
+    fun `a 20 km drive before a Resume, then a 5 km walk, is about 5 km - live and on every screen`() = runTest {
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()
         val before = walk(0.0, t0 + 5, 6)
@@ -250,14 +251,55 @@ class TripRepositoryTest {
         clock.instant = Instant.ofEpochSecond(resumeAt)
         assertTrue(repository.resumeInterruptedTrip(tripId))
 
-        val after = walk(20_000.0, resumeAt, 90)
+        val after = walk(20_000.0, resumeAt, 386) // 5,005 m
         deliver(tripId, after)
 
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size, points.size)
-        assertEquals("every screen shows them all", points, RouteSanitizer.sanitize(points).points)
+        val walked = 13.0 * 5 + 13.0 * 385
+        assertEquals("the drive is no distance", walked, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+        val sanitized = RouteSanitizer.sanitize(points)
+        assertEquals("every screen shows them all", points.map { it.capturedAtEpochSecond }, sanitized.points.map { it.capturedAtEpochSecond })
+        assertTrue(sanitized.points[before.size].startsStretch)
+        val displayed = RouteSmoother.smooth(sanitized.points)
+        // Smoothing pulls each stretch's end points in by a few meters.
+        assertEquals(walked, displayed.distanceMeters, 20.0)
+        // Moving: the walking only, not the 20 minutes of driving.
+        assertEquals(10L * (5 + 385), TripMotion.measure(displayed.points, TripType.WALK).movingSeconds)
+    }
+
+    @Test
+    fun `a walking dropout of three minutes still counts its straight line, live and on screen`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val before = walk(0.0, t0 + 5, 6)
+        val after = walk(13.0 * 5 + 1.3 * 180, before.last().capturedAtEpochSecond + 180, 6)
+
+        deliver(tripId, before + after)
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(before.size + after.size, points.size)
         assertEquals(pathMeters(points), repository.getTrip(tripId)!!.distanceMeters, 1e-6)
-        assertEquals("the drive's straight line counts, as every gap's does", 20_000.0 + 13.0 * 89, pathMeters(points), 1.0)
+        assertEquals(points, RouteSanitizer.sanitize(points).points)
+        assertEquals(pathMeters(points), RouteSmoother.smooth(points).distanceMeters, 5.0)
+    }
+
+    @Test
+    fun `a two-minute tunnel while driving still counts its straight line, live and on screen`() = runTest {
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        fun drive(fromMeters: Double, startAt: Long, count: Int) =
+            (0 until count).map { sample(32.0 + degreesLatFor(fromMeters + 200.0 * it), 34.0, startAt + 10L * it, accuracy = 8f, speed = 20f) }
+        val before = drive(0.0, t0 + 5, 6)
+        val after = drive(200.0 * 5 + 2_400.0, before.last().capturedAtEpochSecond + 120, 6)
+
+        deliver(tripId, before + after)
+
+        val points = repository.getTripPoints(tripId)
+        assertEquals(before.size + after.size, points.size)
+        assertEquals(200.0 * 10 + 2_400.0, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+        assertEquals(points, RouteSanitizer.sanitize(points).points)
+        assertEquals(pathMeters(points), RouteSmoother.smooth(points).distanceMeters, 5.0)
     }
 
     @Test
@@ -274,6 +316,7 @@ class TripRepositoryTest {
         deliver(tripId, walk(20_000.0, resumeAt, 90))
 
         assertEquals(91, repository.getTripPoints(tripId).size)
+        assertEquals("the jump is no distance", 13.0 * 89, repository.getTrip(tripId)!!.distanceMeters, 1.0)
     }
 
     @Test
@@ -339,7 +382,8 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size - 1, points.size)
-        assertEquals(points, RouteSanitizer.sanitize(points).points)
+        assertEquals(points.map { it.capturedAtEpochSecond }, RouteSanitizer.sanitize(points).points.map { it.capturedAtEpochSecond })
+        assertEquals(13.0 * 5 + 13.0 * 8, repository.getTrip(tripId)!!.distanceMeters, 1.0)
     }
 
     /**

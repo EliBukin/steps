@@ -81,7 +81,9 @@ sealed interface RouteSampleDecision {
  * an ordinary move on from it, within [NEW_STRETCH_MIN_GAP_SECONDS]. A spike seconds after a kept
  * fix (the A55 defect) is never a new stretch, and neither is one wild fix after a quiet minute
  * that the next fix doesn't follow. The jump itself is drawn as a gap (gray and dashed, see
- * [RouteSpeedColoring.isGap]), and its straight line counts in the distance, as every gap's does.
+ * [RouteSpeedColoring.isGap]), and - unlike a gap walked or driven, whose straight line counts - it
+ * counts in no distance or moving time: nobody walked it, and a 20 km drive to the next trailhead
+ * isn't part of the walk ([com.example.stepsplit.domain.model.TripPoint.startsStretch]).
  *
  * Live, the first fix waits in memory for the next one (see
  * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]); read back, [RouteSanitizer]

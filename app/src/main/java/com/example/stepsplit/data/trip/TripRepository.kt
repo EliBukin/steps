@@ -454,8 +454,8 @@ class TripRepository(
      * After a gap (a Resume once the phone has travelled, a bus ride with no fix), a fix rejected
      * only for being too fast on foot may start a new stretch instead: it waits in [newStretchStart]
      * until the next fix confirms it, then both are kept - see [RoutePointAcceptancePolicy]'s "After
-     * a gap" section. A fix that is kept, or that shows the phone still standing where it was,
-     * drops a waiting one.
+     * a gap" section - and the jump to it adds no distance. A fix that is kept, or that shows the
+     * phone still standing where it was, drops a waiting one.
      */
     suspend fun recordAcceptedBatch(tripId: Long, samples: List<RawLocationSample>) {
         if (samples.isEmpty()) return
@@ -474,16 +474,20 @@ class TripRepository(
                 if (sample.capturedAtEpochSecond > nowEpochSecond + MAX_FUTURE_SKEW_SECONDS) continue
                 if (cutoffEpochSecond != null && sample.capturedAtEpochSecond > cutoffEpochSecond) continue
 
-                val keep = when (val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)) {
-                    is RouteSampleDecision.Accepted -> listOf(decision.sample)
-                    is RouteSampleDecision.Rejected -> keptAfterRejection(tripId, sample, decision.reason, lastAccepted, nowEpochSecond)
+                // After a rejection, anything kept is a new stretch: its start, then the fix confirming it.
+                val (keep, newStretch) = when (val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)) {
+                    is RouteSampleDecision.Accepted -> listOf(decision.sample) to false
+                    is RouteSampleDecision.Rejected -> keptAfterRejection(tripId, sample, decision.reason, lastAccepted, nowEpochSecond) to true
                 }
 
-                for (accepted in keep) {
+                for ((index, accepted) in keep.withIndex()) {
                     newStretchStart = null
-                    val segmentMeters = lastAccepted?.let {
-                        RouteMath.haversineMeters(it.latitude, it.longitude, accepted.latitude, accepted.longitude)
-                    } ?: 0.0
+                    // The jump to a new stretch is no distance: nobody walked it (see the policy's "After a gap").
+                    val segmentMeters = if (newStretch && index == 0) {
+                        0.0
+                    } else {
+                        lastAccepted?.let { RouteMath.haversineMeters(it.latitude, it.longitude, accepted.latitude, accepted.longitude) } ?: 0.0
+                    }
                     distance += segmentMeters
                     latestAcceptedEpochSecond = accepted.capturedAtEpochSecond
 

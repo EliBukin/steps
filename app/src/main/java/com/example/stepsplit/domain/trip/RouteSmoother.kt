@@ -10,9 +10,10 @@ import kotlin.math.hypot
  * The result of [RouteSmoother.smooth]: [points] is the same count, in the same chronological
  * order, as the input - every point's coordinates may have shifted by a small, accuracy-bounded
  * amount, but nothing is added, removed, or reordered, and every non-coordinate field (timestamp,
- * accuracy, reported speed, altitude) is carried over unchanged. [distanceMeters] is the haversine
- * sum of consecutive [points] in that exact sequence - the only distance figure this class ever
- * produces, never a separately-recomputed one.
+ * accuracy, reported speed, altitude, [TripPoint.startsStretch]) is carried over unchanged.
+ * [distanceMeters] is the haversine sum of consecutive [points] in that exact sequence, but for the
+ * jump to a new stretch - the only distance figure this class ever produces, never a
+ * separately-recomputed one.
  */
 data class SmoothedRoute(
     val points: List<TripPoint>,
@@ -224,9 +225,11 @@ object RouteSmoother {
         return EastNorth(east, north)
     }
 
+    /** Every stretch end to end, but not the jump to a [TripPoint.startsStretch] point: nobody walked it. */
     private fun sumDistanceMeters(points: List<TripPoint>): Double {
         var total = 0.0
         for (i in 1 until points.size) {
+            if (points[i].startsStretch) continue
             total += RouteMath.haversineMeters(points[i - 1].latitude, points[i - 1].longitude, points[i].latitude, points[i].longitude)
         }
         return total

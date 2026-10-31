@@ -28,7 +28,9 @@ import com.example.stepsplit.domain.model.TripType
  * straight-line speed is above the threshold: the straight line is the least ground you covered in
  * that time, so its speed is the least you averaged. A short dropout while walking or driving counts;
  * a long interruption spent mostly standing, whose straight line is short for its time, doesn't. A
- * gap that was partly a stop counts whole: there is nothing recorded to tell the parts apart.
+ * gap that was partly a stop counts whole: there is nothing recorded to tell the parts apart. The
+ * jump to a new stretch ([TripPoint.startsStretch]: a drive before a Resume, a bus ride with no fix)
+ * is never moving: nobody walked it, and it counts in no distance either.
  *
  * **Top speed.** The highest smoothed stretch speed, never a single GPS reading: each speed is
  * averaged over about [RouteSpeedColoring.SMOOTHING_WINDOW_SECONDS], so one bad fix can't make a silly
@@ -68,7 +70,7 @@ object TripMotion {
             val from = route[i]
             val to = route[i + 1]
             val seconds = to.capturedAtEpochSecond - from.capturedAtEpochSecond
-            if (seconds <= 0L) return@forEachIndexed
+            if (seconds <= 0L || to.startsStretch) return@forEachIndexed
             val speed = smoothed ?: (RouteMath.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) / seconds)
             if (speed > threshold) movingSeconds += seconds
             if (smoothed != null && trusted[i] && smoothed > threshold && smoothed > (top ?: 0.0)) top = smoothed
