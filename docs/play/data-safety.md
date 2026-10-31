@@ -13,6 +13,10 @@ or the map library. Re-checked 2026-10-26 for the outdoor map: the hill shading 
 offline map pack from GitHub. See the *Offline map download (GitHub)* row. The answers above stay
 the same: **No**.
 
+**Draft, 2026-10-31, GPX import (branch `gpx-import`, not merged):** the app can import a route
+from a GPX file the user opens with it, shares to it or picks. See the *GPX import* row. The
+answers above stay the same: **No**.
+
 ## The answers
 
 | # | Question | Answer | Reason |
@@ -46,6 +50,7 @@ Google's definitions:
 | **Hill shading (Mapterhorn)** | On the same maps, MapLibre loads terrain tiles (elevation as WebP images) over HTTPS from `tiles.mapterhorn.com`, only up to zoom 12: squares about 8 km across in Israel. The requests carry the tile numbers, the IP address and the usual request headers, never GPS points, times or trip data. Mapterhorn logs requests, with the IP address, for up to 30 days. | **Not treated as collection**, for the same reasons as OpenFreeMap (below). Its tiles are coarser than OpenFreeMap's, so they say less about where the user is. |
 | **Offline map download (GitHub)** | Only when the user opens Settings (to read `maps.json`, a few kilobytes: which maps exist and their sizes) and when they tap **Download** or **Update** (the pack files, through Android's download manager), the app requests public files from `github.com` and its download servers. The requests carry the IP address and the usual request headers. They never carry location, GPS points, steps, trip data or any identifier; the files are the same for everyone. Inside a downloaded pack's area, the map makes no network requests at all. | **Not collection**: nothing about the user is sent, only a request for a public file the user asked for, and the developer receives nothing. The same reasoning as for the map tiles (point 1) applies, with even less: the request doesn't say where the user is. **Not declared.** |
 | **GPX share and Save file** | Sent only when the user taps **Share** on a trip and picks an app, or **Save file** and picks a folder. | A specific user-initiated action where the user expects the data to go there: the sharing exception applies. The app itself transmits nothing, so it isn't collection either. **Not declared.** |
+| **GPX import** | Only a file the user opens with the app, shares to it, or picks with **Import GPX file** (the system file picker). Android gives the app read access to that one file; it's read and parsed on the phone, with no network request (nothing written in the file is fetched), and the route, its points and waypoints are stored in the app's private database. Following a route uses the Map tab's own fixes, on the phone, and stores nothing. | Data comes *into* the app at the user's request and is processed on the device only; nothing is sent off it: **not collected**, **not shared**. **Not declared.** |
 | **Phone-to-phone transfer** | Cloud backup is off (`allowBackup="false"`), but Android's device-to-device transfer may copy app data. | Done by Android at the user's request. **Not declared.** |
 | **Play install stats and crash reports** | Google collects these about every Play app, if the user agreed. | Not the app's own collection. **Not declared.** |
 | **Ads, analytics, crash reporting, advertising ID** | None. The merged manifest has no `AD_ID` permission and no such SDK. | Nothing to declare. |

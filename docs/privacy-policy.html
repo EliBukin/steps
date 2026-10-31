@@ -27,7 +27,7 @@
 <li><strong>App:</strong> Steps GPS Route</li>
 <li><strong>Developer:</strong> bukin</li>
 <li><strong>Contact:</strong> dev.mechanics998877@gmail.com</li>
-<li><strong>Effective date:</strong> 2026-10-30</li>
+<li><strong>Effective date:</strong> 2026-10-31</li>
 </ul>
 <p>This policy explains what the app does with your information. Steps GPS Route shows how much you walk each day, and records GPS routes of trips you start yourself, such as hikes, nature walks or off-road drives, so you can view them on a map and export them as GPX files.</p>
 <p>Steps GPS Route is not a health or medical app. It gives no health advice, and it is not meant to diagnose, treat or track any health condition.</p>
@@ -35,9 +35,9 @@
 <h2>Summary</h2>
 <ul>
 <li>The app reads only your step count from Health Connect, and uses your location only while a trip you started is recording or while you have its map open.</li>
-<li>Your steps, trips and settings are stored only on your device. The app has no account, no ads, no analytics and no crash reporting, and it does not send your information to the developer or to anyone else.</li>
+<li>Your steps, trips, the routes you import and your settings are stored only on your device. The app has no account, no ads, no analytics and no crash reporting, and it does not send your information to the developer or to anyone else.</li>
 <li>The app's only internet traffic is loading the map when you open a trip's screen or the app's map (the map from OpenFreeMap and its hill shading from Mapterhorn), and downloading an offline map from GitHub if you ask for one. Your GPS points are not sent.</li>
-<li>A trip leaves your device only when you save or share its GPX file yourself.</li>
+<li>A trip leaves your device only when you save or share its GPX file yourself. A GPX file you import is read on your device, with no internet.</li>
 </ul>
 
 <h2>Step data from Health Connect</h2>
@@ -90,6 +90,18 @@
 </ul>
 <p>To share a file, the app writes a temporary copy to its private cache and gives read access only to the app you pick. Copies more than a day old are removed the next time you share a trip, and Android may clear the cache earlier on its own.</p>
 
+<h2>Routes you import (GPX files)</h2>
+<p>You can import a route someone planned, such as a hike or an off-road drive, from a GPX file, to see it on the app's map and follow it. The app reads a GPX file only when you choose to: when you open it with the app, share it to the app from another app, or pick it with <strong>Import GPX file</strong> on the map. It then gets access to that one file only, and needs no storage permission.</p>
+<p>The file is read on your device, with no internet; nothing in it is sent anywhere, and the app doesn't follow any address written in it. From the file, the app stores on your device:</p>
+<ul>
+<li>the route's name, and the file's name;</li>
+<li>its tracks and routes: the location and, when the file has it, the height of each point;</li>
+<li>its waypoints: the location, height, name and description of each;</li>
+<li>when you imported it, whether it's shown on the map, and its distance and climb, worked out on your device.</li>
+</ul>
+<p>The file itself isn't kept, and times and other details in it are ignored. Imported routes aren't trips: they don't show in your trips and don't count in your stats.</p>
+<p>While the map is open, it uses the location it shows to say how far along a route you are and how far off it. This is worked out on your device as described under <strong>Location and GPS trips</strong>: it isn't stored or sent, and it stops when you leave the map.</p>
+
 <h2>Other information stored on your device</h2>
 <ul>
 <li>Your settings: step goal, the limits for telling workout steps from incidental steps, and whether deleted trips stay in Stats.</li>
@@ -102,8 +114,9 @@
 <h2>How long data is kept, and deleting it</h2>
 <ul>
 <li><strong>Trips and their spots</strong> are kept until you delete them in the app. Deleting a trip removes its name, route, GPS points and spots. You can also delete a single spot.</li>
-<li><strong>Step counts and settings</strong> are kept until you uninstall the app or clear its storage in Android's settings, which also deletes your trips.</li>
-<li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, or GPX files you saved or shared.</li>
+<li><strong>Imported routes</strong> are kept until you delete them in the app's list of routes. Deleting a route removes its points and waypoints; the GPX file it came from stays wherever it was.</li>
+<li><strong>Step counts and settings</strong> are kept until you uninstall the app or clear its storage in Android's settings, which also deletes your trips and imported routes.</li>
+<li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, or GPX files you saved, shared or imported from.</li>
 </ul>
 
 <h2>Backups and moving to a new phone</h2>

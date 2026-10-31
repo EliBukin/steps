@@ -30,6 +30,8 @@ on hikes and off-road 4x4 drives.**
 - **Every trip on a map.** Colored by speed, with your spots, its distance, moving time, climb,
   top speed and a height chart. Walks and drives are counted separately.
 - **GPX.** Share or save any trip as a GPX file, to open it in other map and navigation apps.
+- **Routes from GPX files.** Someone sends you a planned hike or 4x4 route? Open it with the app
+  and follow it on the map, online or offline, with how far you've come and how far is left.
 
 ## Just a tool
 
@@ -284,6 +286,26 @@ Both maps use the app's own outdoor map, made for hikes and 4x4 drives in the de
 The map stays light in dark mode: it reads better outdoors, and the route's colors are made for
 it. The app's own buttons and panels still follow dark mode.
 
+### Following a route from a GPX file
+
+1. **Get the file in.** Open a `.gpx` file with the app (**Open with → Steps GPS Route** from your
+   Files app, an email or a drive), share it to the app (from a messaging app: **Share → Steps GPS
+   Route**), or tap the **Routes** button on the Map tab (the top one, a winding line) and then
+   **Import GPX file**. The Map tab opens with the whole route on the map.
+2. **On the map** the route is a magenta band, with its start (a white dot with a magenta ring), its
+   end (a magenta dot) and its waypoints as small pins with their names; tap a pin for its note and
+   how far it is. A marked trail under the band still shows its color.
+3. **Follow it** with the blue dot, the compass and *Map turns with me*, as usual. A strip under the
+   map says, for the closest route on the map: *3.2 km done · 9.2 km to the end* while you're on it,
+   *180 m off the route · ...* when you're off it, or *Start is 4.1 km away* from further off. A file
+   with several tracks (one per day, say) counts along the track you're on.
+4. **The Routes list** shows every imported route with its distance, climb and size. The box shows
+   or hides it; tapping it shows the whole route; **⋮** has *Zoom to route*, *Rename* and *Delete*.
+
+Imported routes stay on the phone and aren't trips: they don't show in Trips or count in Stats. The
+strip works only while the Map tab is open; there are no off-route alerts. Tracks, routes and
+waypoints are read; KML/KMZ files can't be imported yet.
+
 ### Sharing or saving a GPX file
 
 1. On the trip's screen, tap **Share** (the icon at the top).
@@ -396,7 +418,8 @@ offline map packs and the compass. In short:
 | Internet | Loading the map (OpenFreeMap) and its hill shading (Mapterhorn) on a trip's screen and the **Map** tab; downloading an offline map you ask for (GitHub) | Granted automatically |
 
 The app never asks for background location. It uses location only while a trip is recording or
-the **Map** tab is open. The compass needs no permission.
+the **Map** tab is open. The compass needs no permission, and neither does importing a GPX file:
+the app reads only the file you open, share or pick.
 
 ## Privacy and data
 
@@ -418,6 +441,8 @@ app under **Settings → Privacy policy**. In short:
 - Locations come from Google Play services' location service on the phone, which may also use
   Wi-Fi and mobile networks, depending on the phone's location settings.
 - A GPX file leaves the app only when you save or share it yourself.
+- A GPX file you import is read on the phone, with no internet; its route is kept only on the
+  phone until you delete it. The file itself isn't kept.
 - Step data is never written back to Health Connect.
 
 ## Map data and licenses
@@ -478,6 +503,10 @@ The map's (i) button lists these credits too.
   shows. Crossing the edge of the offline map's area (or zooming out past about zoom 7) switches
   between it and the online map, which redraws the map once. An update downloads the whole map
   again.
+- **Imported routes.** *Open with* offers the app for a `.gpx` file only when the phone knows it's
+  GPX or its address ends in `.gpx`; from the Files app's Downloads list or a messaging app's
+  *Open*, use *Share* or *Import GPX file* instead. Following a route works only with the Map tab
+  open: no off-route alerts, no turn-by-turn, no height chart for the route. KML/KMZ isn't read.
 - **The compass is only as good as the phone's.** Near a car, metal or a magnet it can be off by
   tens of degrees until it's calibrated.
 
@@ -500,12 +529,15 @@ app/src/main/java/com/example/stepsplit/
   domain/           Pure Kotlin, no Android: walk classification, aggregation, time,
                     lifetime stats, and the trip route logic (point acceptance, cleanup, smoothing,
                     speed colors, walk/drive, moving time and top speed, elevation, which GPS
-                    point a marked spot uses)
+                    point a marked spot uses), and imported routes (simplifying, measuring,
+                    following)
   data/
     stepsource/     Health Connect step source (+ a fake for tests and debug data)
     repository/     StepRepository: imports, stores and classifies steps
     trip/           TripRepository, GPS location client, recording coordinator, spot marker,
                     sea-level heights
+    route/          Imported GPX routes: the GPX parser, ImportedRouteRepository, reading a file
+                    the owner opened or shared
     local/          Room database, entities and DAOs
     settings/       DataStore settings (goal, thresholds, last sync, keep deleted trips)
     mappack/        Offline map packs: the server's list (maps.json), the files on the phone,
@@ -587,14 +619,16 @@ docs/RELEASING.md also explains how to move their data.
 
 ### Database
 
-- **Version.** Room schema version **10**. The 9→10 migration added the empty `trip_spots` table
-  for marked spots, which are deleted with their trip. The 8→9 migration added trip names and
+- **Version.** Room schema version **11**. The 10→11 migration added three empty tables for routes
+  imported from GPX files (`imported_routes`, `imported_route_points`, `imported_route_waypoints`);
+  points and waypoints are deleted with their route. The 9→10 migration added the empty
+  `trip_spots` table for marked spots, which are deleted with their trip. The 8→9 migration added trip names and
   types: existing trips get no name and keep the suggested type, and deleted trips kept in Stats
   from before then get their type from their average speed (10 km/h or more is a drive; their
   route is gone). Each version's schema is exported to `app/schemas/` and
   committed. Migrations never delete steps or change step counts; the 5→6 migration did drop the
   old manual-relabelling table (`session_overrides`).
-- **Migration tests.** Each step from 1→10 has a test in `StepSplitDatabaseMigrationTest`. It
+- **Migration tests.** Each step from 1→11 has a test in `StepSplitDatabaseMigrationTest`. It
   builds the old schema from its exported JSON, migrates, and lets Room validate the result.
 - **Unused leftovers.** Some tables and columns from removed features are kept but unused:
   `manual_walks`, `activity_intervals`, `motion_evidence`, `temporal_continuity_state`,

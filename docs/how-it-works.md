@@ -191,6 +191,59 @@ For using the app, see the [README](../README.md).
   *Map turns with me* uses the GPS direction of travel instead from 15 km/h, from a fix under 5
   seconds old, and the compass again below 10 km/h; the gap keeps it from flipping at one speed.
 
+## Imported routes (GPX files)
+
+- **Getting a file in.** Three ways, all without a storage permission: **Open with** from another
+  app (a file manager, an email, a drive), **Share** to the app (from a messaging app, say), or
+  **Import GPX file** in the Map tab's Routes list, which opens Android's file picker. Each gives
+  the app read access to that one file only. Android has no type of its own for GPX, so most
+  phones and apps label a `.gpx` file "unknown" (`application/octet-stream`): *Open with* offers
+  the app for the GPX types, and for unknown, XML and text files only when the file's address ends
+  in `.gpx`, so it isn't offered for every file. An address without the name in it (the Files
+  app's Downloads list, most messaging apps) can't be matched that way: Share, or Import, gets
+  those in. *Share* offers the app for GPX, unknown and XML files. Whatever the label, the app
+  reads the content to decide.
+- **What's read.** Tracks (`trk`, every segment), routes (`rte`) and waypoints (`wpt`), with their
+  names, heights (`ele`), and a waypoint's description or comment as its note. GPX 1.1, GPX 1.0 and
+  files without a namespace all work, in any encoding the file declares. Times, extensions (heart
+  rate, an app's colors and icons) and everything else are skipped. The route is named after the
+  file's own name for itself (`<metadata><name>`), else its first named track or route, else the
+  file's name; you can rename it.
+- **One file, one route.** A file with several tracks (a three-day trip) is one route in the list,
+  with each track as its own line. A track's segments are drawn apart: nothing joins the gap where
+  the recording stopped, and the distance doesn't count it.
+- **Safety and limits.** Files come from anyone, so a file with a DOCTYPE is refused (GPX never
+  needs one; it's where XML entity tricks are declared) and nothing in a file is ever fetched.
+  Files over 25 MB aren't read. A route keeps at most 100,000 points; a bigger one is simplified
+  to fit (the fewest points that keep its shape), and the message says so. At most 2,000
+  waypoints, names of up to 200 characters, notes of up to 500. Points without a valid position
+  are skipped; a file that breaks off part way keeps what came before, and the message says the
+  file looks damaged. The same file imported again is found by its content (SHA-256) and shown
+  instead of added twice.
+- **Distance and climb.** Worked out once at import, along each line with its segments end to end.
+  The climb and descent use the trip screen's rules (heights smoothed along the distance, rises
+  and falls counted past a 10 m dead band), so a planned route and the trip you record along it
+  get comparable numbers. Without heights in the file there's no climb.
+- **On the map.** Imported routes are magenta, a color nothing else on the map uses, as a
+  see-through band with darker edges that's wider than a trail, so a marked trail's color still
+  shows in its middle. A line's start is a white dot with a magenta ring, its end a magenta dot.
+  Waypoints are small magenta pins with their names; tapping one shows its name, its note and how
+  far it is. They draw under the trip being recorded and the blue dot, on the online and the
+  offline map alike. A long line is simplified for drawing to at most 5,000 points (within 2 m
+  where it can be), which can't be seen at any zoom.
+- **The route strip.** While the Map tab is open with a fresh fix, a strip under the map says where
+  you are along the closest shown route: on it (within 50 m, or the fix's own accuracy up to
+  150 m), how far you've come and how far it is to the end of that line; off it (up to 1 km), how
+  far off you are; further, how far its start is in a straight line. Where a route passes the same
+  place twice (an out-and-back on one trail, a loop that ends where it starts), the app keeps you
+  on the leg you were on, preferring ahead to back; with no earlier fix it picks the first pass, so
+  at the start of a loop you're at its start. It uses the Map tab's own fixes, works nothing out in
+  the background, and stores nothing. There are no alerts.
+- **Storage.** Three tables of their own (`imported_routes`, `imported_route_points`,
+  `imported_route_waypoints`), added by the 10→11 migration; the file itself isn't kept. Imported
+  routes aren't trips: Trips, Stats and the step counts never read them. Deleting a route deletes
+  its points and waypoints; the file stays wherever it was.
+
 ## Steps and trips are separate
 
 Recording a trip doesn't change your step counts, and deleting a trip never removes steps. Trip
