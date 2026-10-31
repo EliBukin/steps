@@ -37,6 +37,7 @@ import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.ui.settings.regionName
 import java.io.File
 import java.time.Clock
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -71,7 +72,7 @@ class AppContainer(
     // ---- Offline map packs (see data.mappack.MapPackRepository) - only the map's background;
     // nothing here touches steps or trips. Its own process-lifetime scope, like the ones below. ----
 
-    private val mapPackScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val mapPackScope: CoroutineScope = processScope("mapPackScope")
 
     val mapPackRepository: MapPackRepository = MapPackRepository(
         // The app's own folder on the phone's storage; null when that storage isn't there.
@@ -108,7 +109,7 @@ class AppContainer(
 
     // Owns AsyncStepSourceHealthRecorder's single background consumer coroutine - process-lifetime,
     // the same pattern as repositoryScope/tripRecordingScope below.
-    private val healthEventScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val healthEventScope: CoroutineScope = processScope("healthEventScope")
 
     // HealthConnectStepSource must never await real diagnostic persistence directly on its own
     // acquisition coroutine (a wedged DataStore write would then block a real read) - see
@@ -146,9 +147,9 @@ class AppContainer(
     }
 
     // Owns StepRepository's one-shot trailing-bout finalization timer (see
-    // StepRepository.rescheduleFinalizationJob) - a plain SupervisorJob-backed scope, not a
+    // StepRepository.rescheduleFinalizationJob) - a SupervisorJob-backed processScope, not a
     // Service, that simply lives for the process lifetime like every other dependency here.
-    private val repositoryScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val repositoryScope: CoroutineScope = processScope("repositoryScope")
 
     val stepRepository: StepRepository = StepRepository(
         database = database,
@@ -173,15 +174,15 @@ class AppContainer(
     // detail screen and GPX, on Android 14 and newer - see SeaLevelHeights.
     val seaLevelHeights: SeaLevelHeights = PlatformSeaLevelHeights(context)
 
-    // Owns TripRecordingCoordinator's location-collecting coroutine - a plain SupervisorJob-backed
-    // scope living for the process lifetime, the same pattern as repositoryScope above. Recording
+    // Owns TripRecordingCoordinator's location-collecting coroutine - a SupervisorJob-backed
+    // processScope living for the process lifetime, the same pattern as repositoryScope above. Recording
     // itself only ever runs while TripRecordingService is alive (see that class), but the
     // coordinator instance itself is process-lifetime like every other dependency here so a
     // service restart after process death reuses it rather than needing its own construction path.
     // Not private: TripRecordingService also uses it as TripRecordingCommandController's
     // reconciliationScope (see that class's shutdown() doc comment) - the fire-and-forget trip
     // reconciliation onDestroy triggers must outlive serviceScope, which onDestroy cancels.
-    val tripRecordingScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val tripRecordingScope: CoroutineScope = processScope("tripRecordingScope")
 
     val tripRecordingCoordinator: TripRecordingCoordinator = TripRecordingCoordinator(
         repository = tripRepository,
@@ -200,6 +201,17 @@ class AppContainer(
         scope = tripRecordingScope,
     )
 }
+
+/**
+ * A process-lifetime scope: a SupervisorJob, so one failed job doesn't cancel the others, and a
+ * handler that logs an exception nothing else caught instead of crashing the app. Each job is
+ * still meant to catch its own failures and recover; this is only the last line.
+ */
+private fun processScope(name: String): CoroutineScope = CoroutineScope(
+    SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e ->
+        if (BuildConfig.DEBUG) Log.e("AppContainer", "uncaught in $name", e)
+    },
+)
 
 /**
  * Debug builds only: an address in files/debug-maps-manifest-url.txt (put there with adb) replaces

@@ -2,9 +2,11 @@ package com.example.stepsplit.data.mappack
 
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -224,6 +226,92 @@ class MapPackRepositoryTest {
         advanceUntilIdle()
         assertTrue(repository.state.value.installed.isEmpty())
         assertFalse(File(root, "israel").exists())
+    }
+
+    /** The app's map-pack scope with a handler that records, instead of a crash, anything that gets out. */
+    private fun TestScope.processScope(escaped: MutableList<Throwable>) =
+        CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob() + CoroutineExceptionHandler { _, e -> escaped += e })
+
+    @Test
+    fun `an install that throws ends in a problem, with no pending record to fail again on the next start`() = runTest {
+        val escaped = mutableListOf<Throwable>()
+        val regionDir = File(root, "israel")
+        val fake = FakeMapPackDownloader()
+        // Once every file is down, the region's folder can't be written: moving the files into place throws.
+        val downloader = object : MapPackDownloader by fake {
+            override fun status(ids: List<Long>) = fake.status(ids).also { statuses ->
+                if (statuses.all { it.state == MapPackDownloadStatus.State.DONE }) regionDir.setWritable(false)
+            }
+        }
+        try {
+            val repository = repository(downloader, scope = processScope(escaped))
+            repository.refreshManifest()
+            advanceUntilIdle()
+            repository.download("israel")
+            advanceUntilIdle()
+
+            assertEquals(emptyList<Throwable>(), escaped)
+            assertEquals(MapPacksState.Problem.CHECK_FAILED, repository.state.value.problem)
+            assertNull("not stuck on checking", repository.state.value.download)
+            assertTrue(repository.state.value.installed.isEmpty())
+            assertFalse(File(root, "download.json").exists())
+        } finally {
+            regionDir.setWritable(true)
+        }
+
+        val restarted = repository(fake, scope = processScope(escaped))
+        advanceUntilIdle()
+        assertEquals(emptyList<Throwable>(), escaped)
+        assertNull(restarted.state.value.download)
+    }
+
+    @Test
+    fun `a download manager that throws ends in a problem, and what it had started is cancelled`() = runTest {
+        val escaped = mutableListOf<Throwable>()
+        val fake = FakeMapPackDownloader()
+        // The download manager is switched off after the first file was handed to it.
+        val downloader = object : MapPackDownloader by fake {
+            override fun enqueue(url: String, destination: File, title: String, wifiOnly: Boolean): Long {
+                if (fake.enqueued.isNotEmpty()) throw IllegalArgumentException("Unknown URL content://downloads/my_downloads")
+                return fake.enqueue(url, destination, title, wifiOnly)
+            }
+        }
+        val repository = repository(downloader, scope = processScope(escaped))
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Throwable>(), escaped)
+        assertEquals(MapPacksState.Problem.DOWNLOAD_FAILED, repository.state.value.problem)
+        assertNull(repository.state.value.download)
+        assertEquals(listOf(100L), fake.cancelled)
+        assertNull(MapPackStore(root).readPendingDownload())
+        assertFalse(File(root, "israel/download-2026-10-29").exists())
+    }
+
+    @Test
+    fun `a download manager that can't be asked ends the download, even when cancelling throws too`() = runTest {
+        val escaped = mutableListOf<Throwable>()
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING))
+        var broken = false
+        val downloader = object : MapPackDownloader by fake {
+            override fun status(ids: List<Long>) = if (broken) throw SecurityException("no access") else fake.status(ids)
+            override fun cancel(ids: List<Long>) = if (broken) throw SecurityException("no access") else fake.cancel(ids)
+        }
+        val repository = repository(downloader, scope = processScope(escaped))
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceTimeBy(1_500)
+        assertNotNull(repository.state.value.download)
+
+        broken = true
+        advanceTimeBy(1_500)
+        assertEquals(emptyList<Throwable>(), escaped)
+        assertEquals(MapPacksState.Problem.DOWNLOAD_FAILED, repository.state.value.problem)
+        assertNull(repository.state.value.download)
+        assertNull(MapPackStore(root).readPendingDownload())
     }
 
     @Test

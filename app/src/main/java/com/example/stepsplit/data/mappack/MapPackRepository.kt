@@ -3,6 +3,7 @@ package com.example.stepsplit.data.mappack
 import android.content.Context
 import androidx.core.content.edit
 import java.io.File
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -78,6 +79,11 @@ class SharedPreferencesMapPackPreferences(context: Context) : MapPackPreferences
  *
  * [store] is null when the phone's storage isn't available; then nothing can be downloaded and no
  * pack is installed.
+ *
+ * Nothing that goes wrong here may end the app: [scope] lives as long as the process, so an
+ * exception that got out would crash it, and a pending download that keeps failing would crash it
+ * again after every start. Each launched block catches what it can't handle, tidies up (the
+ * pending record first) and says so in [MapPacksState.problem].
  */
 class MapPackRepository(
     private val store: MapPackStore?,
@@ -106,10 +112,16 @@ class MapPackRepository(
 
     init {
         scope.launch {
-            withContext(io) {
-                val cached = store?.readCachedManifest()?.parse()
-                val installed = store?.installed().orEmpty()
-                _state.update { it.copy(installed = installed, regions = cached?.usableRegions().orEmpty()) }
+            try {
+                withContext(io) {
+                    val cached = store?.readCachedManifest()?.parse()
+                    val installed = store?.installed().orEmpty()
+                    _state.update { it.copy(installed = installed, regions = cached?.usableRegions().orEmpty()) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Nothing installed is shown; the packs are read again on the next start.
             }
             if (store?.readPendingDownload() != null) startPolling()
         }
@@ -119,8 +131,12 @@ class MapPackRepository(
     fun refreshManifest() {
         scope.launch {
             _state.update { it.copy(manifest = MapPacksState.ManifestStatus.CHECKING) }
-            val url = manifestUrl()
-            val fetched = withContext(io) { runCatching { CachedManifest(manifestSource.fetch(url), url) }.getOrNull() }
+            val fetched = withContext(io) {
+                runCatching {
+                    val url = manifestUrl()
+                    CachedManifest(manifestSource.fetch(url), url)
+                }.getOrNull()
+            }
             val manifest = fetched?.parse()
             _state.update {
                 when {
@@ -130,7 +146,8 @@ class MapPackRepository(
                 }
             }
             if (fetched != null && manifest != null && manifest.schema <= MapPackManifest.SCHEMA) {
-                withContext(io) { store?.writeCachedManifest(fetched) }
+                // Only so the sizes show with no internet next time: not being able to keep it is no failure.
+                withContext(io) { runCatching { store?.writeCachedManifest(fetched) } }
             }
         }
     }
@@ -155,14 +172,23 @@ class MapPackRepository(
                 if (withContext(io) { freeBytes(store.root.apply { mkdirs() }) } < needed) {
                     return@withLock _state.update { it.copy(problem = MapPacksState.Problem.NOT_ENOUGH_SPACE) }
                 }
-                val ids = withContext(io) {
-                    downloadDir.deleteRecursively()
-                    downloadDir.mkdirs()
-                    region.files.map { file ->
-                        downloader.enqueue(file.url, File(downloadDir, file.name), downloadTitle(region.id), preferences.wifiOnly)
+                val ids = mutableListOf<Long>()
+                try {
+                    withContext(io) {
+                        downloadDir.deleteRecursively()
+                        downloadDir.mkdirs()
+                        region.files.forEach { file ->
+                            ids += downloader.enqueue(file.url, File(downloadDir, file.name), downloadTitle(region.id), preferences.wifiOnly)
+                        }
+                        store.writePendingDownload(PendingDownload(region.id, region.version, ids, manifestText))
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The download manager is switched off, or the folder can't be written.
+                    withContext(io) { abandon(store, ids, downloadDir) }
+                    return@withLock _state.update { it.copy(problem = MapPacksState.Problem.DOWNLOAD_FAILED) }
                 }
-                withContext(io) { store.writePendingDownload(PendingDownload(region.id, region.version, ids, manifestText)) }
                 _state.update { it.copy(problem = null, download = DownloadProgress(region.id, 0, region.totalBytes)) }
             }
             startPolling()
@@ -175,9 +201,7 @@ class MapPackRepository(
                 pollJob?.cancel()
                 withContext(io) {
                     val pending = store?.readPendingDownload() ?: return@withContext
-                    downloader.cancel(pending.downloadIds)
-                    store.downloadDir(pending.regionId, pending.version).deleteRecursively()
-                    store.writePendingDownload(null)
+                    abandon(store, pending.downloadIds, store.downloadDir(pending.regionId, pending.version))
                 }
                 _state.update { it.copy(download = null) }
             }
@@ -189,7 +213,7 @@ class MapPackRepository(
             mutex.withLock {
                 if (_state.value.download?.regionId == regionId) return@withLock
                 val installed = withContext(io) {
-                    store?.delete(regionId)
+                    runCatching { store?.delete(regionId) }
                     store?.installed().orEmpty()
                 }
                 _state.update { it.copy(installed = installed) }
@@ -216,22 +240,45 @@ class MapPackRepository(
         }
     }
 
-    /** One look at the download; true once it's over (installed, failed, or gone). */
+    /**
+     * One look at the download; true once it's over (installed, failed, or gone). Whatever goes
+     * wrong ends the download with a problem and no pending record, so the next start doesn't
+     * meet the same failure again.
+     */
     private suspend fun pollOnce(): Boolean {
         val store = store ?: return true
         val pending = withContext(io) { store.readPendingDownload() } ?: return true.also { _state.update { it.copy(download = null) } }
+        var checking = false
+        return try {
+            pollDownload(store, pending) { checking = true }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            val installed = withContext(io) {
+                abandon(store, pending.downloadIds, store.downloadDir(pending.regionId, pending.version))
+                runCatching { store.installed() }.getOrNull()
+            }
+            _state.update {
+                it.copy(
+                    download = null,
+                    installed = installed ?: it.installed,
+                    problem = if (checking) MapPacksState.Problem.CHECK_FAILED else MapPacksState.Problem.DOWNLOAD_FAILED,
+                )
+            }
+            true
+        }
+    }
+
+    private suspend fun pollDownload(store: MapPackStore, pending: PendingDownload, onChecking: () -> Unit): Boolean {
         val region = pending.manifest.parse()?.regions?.firstOrNull { it.id == pending.regionId && it.version == pending.version }
         val statuses = withContext(io) { downloader.status(pending.downloadIds) }
         if (region == null || statuses.any { it.state == MapPackDownloadStatus.State.FAILED || it.state == MapPackDownloadStatus.State.GONE }) {
-            withContext(io) {
-                downloader.cancel(pending.downloadIds)
-                store.downloadDir(pending.regionId, pending.version).deleteRecursively()
-                store.writePendingDownload(null)
-            }
+            withContext(io) { abandon(store, pending.downloadIds, store.downloadDir(pending.regionId, pending.version)) }
             _state.update { it.copy(download = null, problem = MapPacksState.Problem.DOWNLOAD_FAILED) }
             return true
         }
         if (statuses.all { it.state == MapPackDownloadStatus.State.DONE }) {
+            onChecking()
             _state.update { it.copy(download = DownloadProgress(region.id, region.totalBytes, region.totalBytes, checking = true)) }
             val installed = withContext(io) {
                 val pack = store.install(region)
@@ -263,6 +310,16 @@ class MapPackRepository(
     }
 
     private fun currentManifestText(): CachedManifest? = store?.readCachedManifest()
+
+    /**
+     * Undoes a download that can't go on: its downloads in the download manager, its files, and
+     * its pending record. Each step on its own, so one that fails doesn't stop the others.
+     */
+    private fun abandon(store: MapPackStore, downloadIds: List<Long>, downloadDir: File) {
+        runCatching { downloader.cancel(downloadIds) }
+        runCatching { downloadDir.deleteRecursively() }
+        runCatching { store.writePendingDownload(null) }
+    }
 
     /** The regions this app can draw: complete ones, in a manifest layout it knows. */
     private fun MapPackManifest.usableRegions() = if (schema > MapPackManifest.SCHEMA) emptyList() else regions.filter { it.isComplete }
