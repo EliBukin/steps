@@ -1310,6 +1310,20 @@ class TripRepositoryTest {
 
     /** Two marks that end on one fix - a double tap - are one spot, even when both reach the repository. */
     @Test
+    fun `a spot tapped before Finish is saved after it, but only on a fix from no later than the end`() = runTest {
+        val tripId = repository.startTrip()
+        val end = fixedNow.epochSecond + 60
+        repository.finishTrip(tripId, end)
+
+        assertEquals("tapped after the end", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(end - 5), markedAtEpochSecond = end + 1))
+        assertEquals("no tap time", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(end - 5)))
+        assertEquals("a fix after the end", SpotMarkResult.NotRecording, repository.addSpot(tripId, spotFix(end + 1), markedAtEpochSecond = end - 2))
+        assertEquals(SpotMarkResult.Marked(1), repository.addSpot(tripId, spotFix(end - 5), markedAtEpochSecond = end - 2))
+        assertEquals(SpotMarkResult.Marked(2), repository.addSpot(tripId, spotFix(end), markedAtEpochSecond = end))
+        assertEquals(2, repository.getTripSpots(tripId).size)
+    }
+
+    @Test
     fun `the same fix as the trip's newest spot is not saved again`() = runTest {
         val tripId = repository.startTrip()
         val fix = spotFix(fixedNow.epochSecond + 10)

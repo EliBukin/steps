@@ -213,7 +213,7 @@ class TripSpotMarkerTest {
     }
 
     @Test
-    fun `a trip that finishes while the marker waits for a fix gets no spot`() = runBlocking {
+    fun `a trip that finishes while the marker waits gets no spot from a fix after its end`() = runBlocking {
         val tripId = recordingTrip()
         val fresh = CompletableDeferred<RawLocationSample?>()
         locationClient.currentLocationAnswer = { fresh.await() }
@@ -221,10 +221,29 @@ class TripSpotMarkerTest {
         val result = scope.async { marker(waitMillis = 5_000).markSpot() }
         withTimeout(5_000) { while (locationClient.currentLocationRequests == 0) delay(5) }
         repository.finishTrip(tripId, now)
-        fresh.complete(fix(now))
+        fresh.complete(fix(now + 1))
 
         assertEquals(SpotMarkResult.NotRecording, result.await())
         assertTrue(repository.getTripSpots(tripId).isEmpty())
+    }
+
+    @Test
+    fun `Mark spot, then Finish while the marker still waits for a closer fix, keeps the spot`() = runBlocking {
+        val tripId = recordingTrip()
+        locationClient.currentLocationAnswer = { awaitCancellation() } // no fresh fix in time
+        // Driving at 11 m/s; the newest fix is 6 s old (66 m): usable, but not close enough to use at once.
+        val newest = fix(now - 6, speed = 11f)
+        deliver(newest)
+
+        val result = scope.async { marker(waitMillis = 1_000).markSpot() }
+        delay(200) // the tap now waits for a closer fix
+        // Finish lands meanwhile: the controller's flush and grace take 2-5 s, the wait up to 10 s.
+        repository.finishTrip(tripId, now)
+        coordinator.stop()
+
+        assertEquals(SpotMarkResult.Marked(1), result.await())
+        val spot = repository.getTripSpots(tripId).single()
+        assertEquals(newest.capturedAtEpochSecond, spot.capturedAtEpochSecond)
     }
 
     @Test

@@ -689,19 +689,24 @@ class TripRepository(
      * [com.example.stepsplit.domain.trip.SpotFixRule]); the spot keeps its time, position and height.
      *
      * Under [tripMutex], like every route write, and with the same backstops as
-     * [recordAcceptedBatch]: [SpotMarkResult.NotRecording], saving nothing, when the trip is no
-     * longer ACTIVE (it finished or was interrupted while the marker waited for a fix), when [fix] was
-     * captured before the trip started, or after a Finish already in progress cut the route off.
+     * [recordAcceptedBatch]: [SpotMarkResult.NotRecording], saving nothing, when the trip isn't
+     * recording ([takesSpotMarkedAt]: it was interrupted while the marker waited for a fix), when
+     * [fix] was captured before the trip started, or after the trip's end - a Finish in progress, or
+     * done.
+     *
+     * A trip that finished while the marker waited still takes the spot when the owner tapped
+     * ([markedAtEpochSecond]) before its end and [fix] is from no later than the end: "Mark spot, then
+     * Finish" - the car, at the end of a drive - keeps the spot.
      *
      * [SpotMarkResult.AlreadyMarked], saving nothing, when [fix] is the very fix the trip's newest
      * spot was placed at (SpotFixRule step 5): a double tap is one spot. Checked here, under
      * [tripMutex], so two taps that reach this at once still make one spot.
      */
-    suspend fun addSpot(tripId: Long, fix: RawLocationSample): SpotMarkResult = tripMutex.withLock {
+    suspend fun addSpot(tripId: Long, fix: RawLocationSample, markedAtEpochSecond: Long? = null): SpotMarkResult = tripMutex.withLock {
         val trip = database.tripDao().getById(tripId) ?: return@withLock SpotMarkResult.NotRecording
-        if (trip.state != TripState.ACTIVE.name) return@withLock SpotMarkResult.NotRecording
+        if (!trip.takesSpotMarkedAt(markedAtEpochSecond)) return@withLock SpotMarkResult.NotRecording
         if (fix.capturedAtEpochSecond < trip.startEpochSecond) return@withLock SpotMarkResult.NotRecording
-        val cutoffEpochSecond = finishCutoff?.takeIf { it.tripId == tripId }?.cutoffEpochSecond
+        val cutoffEpochSecond = trip.endEpochSecond ?: finishCutoff?.takeIf { it.tripId == tripId }?.cutoffEpochSecond
         if (cutoffEpochSecond != null && fix.capturedAtEpochSecond > cutoffEpochSecond) return@withLock SpotMarkResult.NotRecording
         val newest = database.tripSpotDao().newest(tripId)
         if (newest != null && SpotFixRule.isSameFix(fix, newest.capturedAtEpochSecond, newest.latitude, newest.longitude)) {
@@ -823,6 +828,16 @@ private fun TripSpotEntity.toDomain() = TripSpot(
     altitudeMeters = altitudeMeters,
     name = name,
 )
+
+/**
+ * Whether a spot the owner tapped at [markedAtEpochSecond] may still go on this trip: while it
+ * records, or once it has finished, for a tap that came before its end - see [TripRepository.addSpot].
+ */
+internal fun TripEntity.takesSpotMarkedAt(markedAtEpochSecond: Long?): Boolean = when (state) {
+    TripState.ACTIVE.name -> true
+    TripState.FINISHED.name -> markedAtEpochSecond != null && endEpochSecond?.let { markedAtEpochSecond <= it } == true
+    else -> false
+}
 
 private fun TripPointEntity.toSample() = RawLocationSample(
     latitude = latitude,

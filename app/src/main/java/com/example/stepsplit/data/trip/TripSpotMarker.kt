@@ -1,6 +1,5 @@
 package com.example.stepsplit.data.trip
 
-import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.SpotFixRule
 import java.time.Clock
@@ -26,7 +25,7 @@ sealed interface SpotMarkResult {
     /** No fix fits [SpotFixRule] - nothing saved. */
     data object NoFix : SpotMarkResult
 
-    /** No trip is recording (or it finished while waiting for a fix) - nothing saved. */
+    /** No trip is recording (or it was interrupted, or finished before the tap, while waiting for a fix) - nothing saved. */
     data object NotRecording : SpotMarkResult
 
     /** The spot couldn't be saved. */
@@ -48,6 +47,10 @@ sealed interface SpotMarkResult {
  * the recording never sees, so without it a bump a moment later would ask for another one, ten
  * metres on, and save a second spot; with it, that tap ends on the same fix, which
  * [TripRepository.addSpot] doesn't save again.
+ *
+ * A tap is on the trip that was recording when it was made: Finish landing while it waits for a
+ * fix doesn't lose the spot, as long as the fix is from no later than the trip's end (see
+ * [TripRepository.addSpot]).
  */
 class TripSpotMarker(
     private val repository: TripRepository,
@@ -76,10 +79,10 @@ class TripSpotMarker(
         val tripId = coordinator.recordingTripId?.takeIf { coordinator.isActive } ?: return SpotMarkResult.NotRecording
         return try {
             marking.withLock {
-                val trip = repository.getTrip(tripId)?.takeIf { it.state == TripState.ACTIVE.name } ?: return SpotMarkResult.NotRecording
+                val trip = repository.getTrip(tripId)?.takeIf { it.takesSpotMarkedAt(markedAtEpochSecond) } ?: return SpotMarkResult.NotRecording
                 val lastFix = lastMarked?.takeIf { it.first == tripId }?.second
                 val fix = chooseFix(markedAtEpochSecond, trip.startEpochSecond, lastFix) ?: return SpotMarkResult.NoFix
-                repository.addSpot(tripId, fix).also { result ->
+                repository.addSpot(tripId, fix, markedAtEpochSecond).also { result ->
                     if (result is SpotMarkResult.Marked || result is SpotMarkResult.AlreadyMarked) lastMarked = tripId to fix
                 }
             }
