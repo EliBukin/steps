@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** A GPX file's bytes and the name it had where it came from (null when that app didn't say). */
@@ -79,7 +81,8 @@ enum class RouteImportProblem {
  *
  * - **Import** ([import]): the file is read by [GpxParser], thinned to [MAX_POINTS] if it has
  *   more, measured ([RouteMeasure]) and saved in one transaction, shown on the map. A file already
- *   imported (the same bytes) isn't added again.
+ *   imported (the same bytes) isn't added again. One import at a time, so the same file twice at
+ *   once (shared twice, or Open with and then Import) is found by the second, not added twice.
  * - **The list**: rename, show or hide, delete (with its points and waypoints).
  * - **The map** reads a shown route's lines and waypoints with [geometry].
  */
@@ -92,22 +95,28 @@ class ImportedRouteRepository(
 ) {
     private val dao = database.importedRouteDao()
 
+    private val importing = Mutex()
+
     fun observeRoutes(): Flow<List<ImportedRoute>> = dao.observeAll().map { routes -> routes.map { it.toRoute() } }
 
     suspend fun import(file: RouteFile): RouteImportOutcome = withContext(io) {
         if (file.bytes.size > MAX_FILE_BYTES) return@withContext RouteImportOutcome.Failed(RouteImportProblem.TOO_BIG)
         val sha256 = sha256(file.bytes)
+        importing.withLock { importOnce(file, sha256) }
+    }
+
+    private suspend fun importOnce(file: RouteFile, sha256: String): RouteImportOutcome {
         dao.findByContent(sha256)?.let { existing ->
             dao.setShown(existing.id, true)
-            return@withContext RouteImportOutcome.AlreadyImported(existing.copy(shown = true).toRoute())
+            return RouteImportOutcome.AlreadyImported(existing.copy(shown = true).toRoute())
         }
         val parsed = when (val result = GpxParser.parse(file.bytes)) {
             is GpxParser.Result.Parsed -> result
-            GpxParser.Result.Kml -> return@withContext RouteImportOutcome.Failed(RouteImportProblem.KML)
-            GpxParser.Result.NotGpx, GpxParser.Result.Refused -> return@withContext RouteImportOutcome.Failed(RouteImportProblem.NOT_GPX)
+            GpxParser.Result.Kml -> return RouteImportOutcome.Failed(RouteImportProblem.KML)
+            GpxParser.Result.NotGpx, GpxParser.Result.Refused -> return RouteImportOutcome.Failed(RouteImportProblem.NOT_GPX)
         }
         if (parsed.lines.isEmpty() && parsed.waypoints.isEmpty()) {
-            return@withContext RouteImportOutcome.Failed(if (parsed.damaged) RouteImportProblem.DAMAGED else RouteImportProblem.NOTHING_TO_SHOW)
+            return RouteImportOutcome.Failed(if (parsed.damaged) RouteImportProblem.DAMAGED else RouteImportProblem.NOTHING_TO_SHOW)
         }
         val lines = RouteSimplifier.fitToLimit(parsed.lines, maxPoints)
         val thinned = lines.sumOf { it.pointCount } < parsed.lines.sumOf { it.pointCount }
@@ -140,7 +149,7 @@ class ImportedRouteRepository(
             )
             id
         }
-        RouteImportOutcome.Imported(entity.copy(id = id).toRoute(), thinned = thinned, damaged = parsed.damaged)
+        return RouteImportOutcome.Imported(entity.copy(id = id).toRoute(), thinned = thinned, damaged = parsed.damaged)
     }
 
     /** [name] as typed in the Routes list; blank clears it, so the file name shows again. */

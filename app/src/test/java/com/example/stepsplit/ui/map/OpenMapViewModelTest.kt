@@ -25,6 +25,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -231,11 +232,17 @@ class OpenMapViewModelTest {
     /** The files the fake reader "opens", by address; anything else can't be read. */
     private val routeFiles = mutableMapOf<Uri, RouteFileRead>()
 
+    /** A file at one of these addresses takes until its gate opens to read (a big file, a slow app). */
+    private val slowFiles = mutableMapOf<Uri, CompletableDeferred<Unit>>()
+
     private fun newViewModel(client: MapLocationClient) = OpenMapViewModel(
         TripRepository(database, clock),
         client,
         ImportedRouteRepository(database, clock),
-        RouteFileReader { uri -> routeFiles[uri] ?: RouteFileRead.CantRead },
+        RouteFileReader { uri ->
+            slowFiles[uri]?.await()
+            routeFiles[uri] ?: RouteFileRead.CantRead
+        },
     )
 
     /** A made-up straight walk north from 31.0, 35.0, about 1.1 km, with two waypoints. */
@@ -304,6 +311,44 @@ class OpenMapViewModelTest {
         assertEquals(RouteImportProblem.NOT_GPX, problemFor(offer("page.gpx", "<html><body>no</body></html>")))
         assertTrue(viewModel.uiState.first { !it.isLoading }.importedRoutes.isEmpty())
         assertNull(viewModel.zoomRequest.value)
+    }
+
+    @Test
+    fun `an import that throws is a failed import, not a crash`() = runTest {
+        val viewModel = OpenMapViewModel(
+            TripRepository(database, clock),
+            FakeMapLocationClient(),
+            ImportedRouteRepository(database, clock),
+            RouteFileReader { throw IllegalStateException("an odd app's file provider") },
+        )
+
+        viewModel.importRoute(Uri.parse("content://odd/walk.gpx"))
+        val finished = viewModel.importStatus.first { it is RouteImportStatus.Finished } as RouteImportStatus.Finished
+
+        assertEquals(RouteImportOutcome.Failed(RouteImportProblem.CANT_READ), finished.outcome)
+        assertNull(viewModel.zoomRequest.value)
+    }
+
+    @Test
+    fun `with two files at once, the message and the map follow the one asked for last`() = runTest {
+        val viewModel = newViewModel(FakeMapLocationClient())
+        val first = offer("first.gpx", straightRoute)
+        val firstGate = CompletableDeferred<Unit>().also { slowFiles[first] = it }
+        val second = offer("second.gpx", straightRoute.replace("Made-up straight walk", "Made-up second walk").replace("lon=\"35.0\"", "lon=\"35.01\""))
+
+        viewModel.importRoute(first)
+        viewModel.importRoute(second)
+        val finished = viewModel.importStatus.first { it is RouteImportStatus.Finished } as RouteImportStatus.Finished
+        val secondRoute = (finished.outcome as RouteImportOutcome.Imported).route
+        assertEquals("Made-up second walk", secondRoute.name)
+        assertEquals(secondRoute.bounds, viewModel.zoomRequest.value!!.bounds)
+
+        // The first file ends later: it goes into the list, but the message and the map stay on the second.
+        firstGate.complete(Unit)
+        viewModel.uiState.first { it.importedRoutes.size == 2 }
+        advanceUntilIdle()
+        assertEquals(finished, viewModel.importStatus.value)
+        assertEquals(secondRoute.bounds, viewModel.zoomRequest.value!!.bounds)
     }
 
     @Test

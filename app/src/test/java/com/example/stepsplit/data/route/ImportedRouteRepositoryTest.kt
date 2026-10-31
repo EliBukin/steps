@@ -7,7 +7,12 @@ import com.example.stepsplit.data.trip.TripRepository
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,6 +128,31 @@ class ImportedRouteRepositoryTest {
         assertEquals(RouteImportOutcome.AlreadyImported(first.copy(shown = true)), again)
         assertEquals(1, repository.observeRoutes().first().size)
         assertTrue(repository.observeRoutes().first().single().shown)
+    }
+
+    @Test
+    fun `the same file twice at once is imported once and found once, never a crash`() = runBlocking {
+        // One worker thread, as a busy Dispatchers.IO can be: each import's database calls let the other one run in between.
+        val single = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        try {
+            val repository = ImportedRouteRepository(database, clock, io = single)
+            val same = file(walk(points = 20_000))
+            val outcomes = listOf(async { repository.import(same) }, async { repository.import(same) }).awaitAll()
+
+            assertEquals(1, outcomes.count { it is RouteImportOutcome.Imported })
+            assertEquals(1, outcomes.count { it is RouteImportOutcome.AlreadyImported })
+            assertEquals(1, repository.observeRoutes().first().size)
+        } finally {
+            single.close()
+        }
+    }
+
+    @Test
+    fun `a file of deeply nested tags is a clean failure`() = runTest {
+        val nested = "<gpx>" + "<x>".repeat(200_000)
+
+        assertEquals(RouteImportOutcome.Failed(RouteImportProblem.DAMAGED), repository.import(file(nested)))
+        assertTrue(repository.observeRoutes().first().isEmpty())
     }
 
     @Test

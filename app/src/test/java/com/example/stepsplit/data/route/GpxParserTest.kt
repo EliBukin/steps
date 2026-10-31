@@ -246,6 +246,42 @@ class GpxParserTest {
     }
 
     @Test
+    fun `deeply nested unknown tags can't run the reading thread out of stack`() {
+        // About 600 KB, far under the file limit. 1 MB is an Android worker thread's stack.
+        val bytes = ("<gpx>" + "<x>".repeat(200_000)).toByteArray()
+        var result: Result<GpxParser.Result>? = null
+        val worker = Thread(null, { result = runCatching { GpxParser.parse(bytes) } }, "io-like", 1L shl 20)
+        worker.start()
+        worker.join()
+
+        val gpx = result!!.getOrThrow() as GpxParser.Result.Parsed
+        assertTrue(gpx.damaged)
+        assertTrue(gpx.lines.isEmpty())
+    }
+
+    @Test
+    fun `nesting past the limit breaks the file off there, and keeps what came before`() {
+        val deep = "<x>".repeat(GpxParser.MAX_DEPTH) + "</x>".repeat(GpxParser.MAX_DEPTH)
+        val gpx = parsed("""<gpx><trk><trkseg><trkpt lat="31" lon="35"/><trkpt lat="31.1" lon="35"/></trkseg></trk><extensions>$deep</extensions></gpx>""")
+
+        assertTrue(gpx.damaged)
+        assertEquals(2, gpx.lines.single().pointCount)
+    }
+
+    @Test
+    fun `an app's nested extensions inside a point are skipped, however they nest under the limit`() {
+        val nested = "<a:x>".repeat(40) + "<a:hr>140</a:hr>" + "</a:x>".repeat(40)
+        val gpx = parsed(
+            """<gpx xmlns:a="urn:made-up"><trk><trkseg><trkpt lat="31" lon="35"><ele>10</ele><extensions>$nested</extensions></trkpt>""" +
+                """<trkpt lat="31.1" lon="35"><name>after <a:b><a:c>skipped</a:c></a:b>it</name></trkpt></trkseg></trk></gpx>""",
+        )
+
+        assertFalse(gpx.damaged)
+        assertEquals(2, gpx.lines.single().pointCount)
+        assertEquals(10.0, gpx.lines.single().segments.single().elevations[0], 0.0)
+    }
+
+    @Test
     fun `a DOCTYPE is refused - billion laughs`() {
         val text = """<?xml version="1.0"?>
             <!DOCTYPE gpx [

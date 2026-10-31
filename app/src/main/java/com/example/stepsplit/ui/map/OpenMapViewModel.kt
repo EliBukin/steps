@@ -23,6 +23,7 @@ import com.example.stepsplit.domain.route.RouteWaypoint
 import com.example.stepsplit.domain.trip.RouteSpeedColoring
 import com.example.stepsplit.domain.trip.SmoothedRoute
 import com.example.stepsplit.ui.trips.smoothedRoute
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -201,6 +202,7 @@ class OpenMapViewModel(
     private val locationAvailable = MutableStateFlow(false)
 
     private val _importStatus = MutableStateFlow<RouteImportStatus?>(null)
+    private var importCount = 0L
 
     /** The latest import, until the screen dismisses its message ([dismissImportStatus]). */
     val importStatus: StateFlow<RouteImportStatus?> = _importStatus.asStateFlow()
@@ -246,15 +248,27 @@ class OpenMapViewModel(
     /**
      * Imports the GPX file at [uri] - opened with the app, shared to it, or picked with Import - and
      * shows it on the map: see [ImportedRouteRepository.import]. [importStatus] says how it went.
+     *
+     * With two files at once, [importStatus] and the map follow the one asked for last: an earlier
+     * one that ends later only goes into the Routes list (and on the map, if it imported).
      */
     fun importRoute(uri: Uri) {
+        val request = ++importCount
         viewModelScope.launch {
             _importStatus.value = RouteImportStatus.Importing
-            val outcome = when (val read = routeFileReader.read(uri)) {
-                is RouteFileRead.Read -> importedRouteRepository.import(read.file)
-                RouteFileRead.TooBig -> RouteImportOutcome.Failed(RouteImportProblem.TOO_BIG)
-                RouteFileRead.CantRead -> RouteImportOutcome.Failed(RouteImportProblem.CANT_READ)
+            val outcome = try {
+                when (val read = routeFileReader.read(uri)) {
+                    is RouteFileRead.Read -> importedRouteRepository.import(read.file)
+                    RouteFileRead.TooBig -> RouteImportOutcome.Failed(RouteImportProblem.TOO_BIG)
+                    RouteFileRead.CantRead -> RouteImportOutcome.Failed(RouteImportProblem.CANT_READ)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Whatever else goes wrong (a full database, an odd app's file) is a failed import, never a crash.
+                RouteImportOutcome.Failed(RouteImportProblem.CANT_READ)
             }
+            if (request != importCount) return@launch
             _importStatus.value = RouteImportStatus.Finished(outcome)
             when (outcome) {
                 is RouteImportOutcome.Imported -> requestZoom(outcome.route.bounds)

@@ -23,6 +23,9 @@ import org.xmlpull.v1.XmlPullParserException
  *   never fetches anything, and with the DOCTYPE refused, no declared entity is ever expanded.
  * - The caller limits the file's size (see [ImportedRouteRepository]); here, at most
  *   [MAX_READ_POINTS] points and [MAX_WAYPOINTS] waypoints are kept, however many the file has.
+ * - Elements nested deeper than [MAX_DEPTH] break the file off there (it's [Parsed.damaged]), and
+ *   unknown elements are skipped in a loop, not a call per level: a small file of deeply nested
+ *   tags can't run the reading thread out of stack.
  * - Numbers must be plain decimals ("31.25", "-4.5e2"): "NaN", "Infinity", hex and comma decimals
  *   are refused, and so is a latitude past ±90 or a longitude past ±180. A point without a valid
  *   position is skipped and counted; a bad height only loses the height.
@@ -35,6 +38,9 @@ internal object GpxParser {
     const val MAX_READ_POINTS = 1_000_000
 
     const val MAX_WAYPOINTS = 2_000
+
+    /** The deepest element read: a GPX file needs about 7 (`gpx`, `trk`, `trkseg`, `trkpt`, `extensions` and an app's own two). */
+    const val MAX_DEPTH = 64
 
     sealed interface Result {
         data class Parsed(
@@ -102,6 +108,8 @@ internal object GpxParser {
                 return Result.NotGpx
             } catch (_: IOException) {
                 return Result.NotGpx
+            } catch (_: RuntimeException) {
+                return Result.NotGpx
             } ?: return Result.NotGpx
             when (root) {
                 "gpx" -> {}
@@ -141,7 +149,8 @@ internal object GpxParser {
             while (true) {
                 when (val token = parser.nextToken()) {
                     XmlPullParser.DOCDECL -> throw RefusedException()
-                    XmlPullParser.START_TAG, XmlPullParser.END_TAG, XmlPullParser.END_DOCUMENT -> return token
+                    XmlPullParser.START_TAG -> if (parser.depth > MAX_DEPTH) throw XmlPullParserException("Nested too deep") else return token
+                    XmlPullParser.END_TAG, XmlPullParser.END_DOCUMENT -> return token
                     XmlPullParser.TEXT, XmlPullParser.CDSECT, XmlPullParser.ENTITY_REF -> return XmlPullParser.TEXT
                     // Comments, processing instructions, whitespace between tags.
                     else -> {}
@@ -171,8 +180,16 @@ internal object GpxParser {
             }
         }
 
-        /** Skips the current element and everything inside it. */
-        private fun skip(): Unit = children { skip() }
+        /** Skips the current element and everything inside it: the parser keeps count of the depth, so no call per level. */
+        private fun skip() {
+            val depth = parser.depth
+            while (true) {
+                when (next()) {
+                    XmlPullParser.END_TAG -> if (parser.depth == depth) return
+                    XmlPullParser.END_DOCUMENT -> throw XmlPullParserException("Unexpected end of file")
+                }
+            }
+        }
 
         /** The current element's text, with anything nested inside it skipped. */
         private fun text(): String {
