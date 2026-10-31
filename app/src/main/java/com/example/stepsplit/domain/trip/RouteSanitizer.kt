@@ -204,18 +204,14 @@ object RouteSanitizer {
                     MovementPlausibility.STATIONARY_WOBBLE ->
                         rejections += Rejection(candidate, RouteSampleRejectionReason.STATIONARY_WOBBLE)
                     MovementPlausibility.IMPLAUSIBLE_JUMP ->
-                        if (drivenAcross(lastKept, candidate, deduped, RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)) {
-                            pending = candidate
-                        } else if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)) {
-                            keep(candidate.copy(startsStretch = true))
+                        if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)) {
+                            keep(if (drivenAcross(lastKept, candidate, deduped)) candidate else candidate.copy(startsStretch = true))
                         } else {
                             rejections += Rejection(candidate, RouteSampleRejectionReason.IMPLAUSIBLE_JUMP)
                         }
                     MovementPlausibility.SPEED_CONTRADICTION ->
-                        if (drivenAcross(lastKept, candidate, deduped, RouteSampleRejectionReason.SPEED_CONTRADICTION)) {
-                            pending = candidate
-                        } else if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.SPEED_CONTRADICTION)) {
-                            keep(candidate.copy(startsStretch = true))
+                        if (startsNewStretch(lastKept, candidate, deduped.getOrNull(i + 1), RouteSampleRejectionReason.SPEED_CONTRADICTION)) {
+                            keep(if (drivenAcross(lastKept, candidate, deduped)) candidate else candidate.copy(startsStretch = true))
                         } else {
                             rejections += Rejection(candidate, RouteSampleRejectionReason.SPEED_CONTRADICTION)
                         }
@@ -367,14 +363,12 @@ object RouteSanitizer {
     }
 
     /**
-     * Whether [candidate], rejected for [reason] against [lastKept] after a gap, was driven to: a
-     * vehicle's speed was reported at the stored points ([points]) in the
-     * [RoutePointAcceptancePolicy.VEHICLE_CONTEXT_SECONDS] up to [lastKept], and judged with it the
-     * jump is plausible - the live policy's own rule, on the same stored points: see
-     * [RoutePointAcceptancePolicy]'s "A gap driven".
+     * Whether the gap from [lastKept] to [candidate], which starts a new stretch, was driven: two or
+     * more of the stored points ([points]) in the [RoutePointAcceptancePolicy.VEHICLE_CONTEXT_SECONDS]
+     * up to [lastKept] reported a vehicle's speed, and judged with it the jump is plausible - the live
+     * policy's own rule, on the same stored points: see [RoutePointAcceptancePolicy]'s "A gap driven".
      */
-    private fun drivenAcross(lastKept: TripPoint, candidate: TripPoint, points: List<TripPoint>, reason: RouteSampleRejectionReason): Boolean {
-        if (!RoutePointAcceptancePolicy.isTooFastAfterGap(reason, candidate.capturedAtEpochSecond - lastKept.capturedAtEpochSecond)) return false
+    private fun drivenAcross(lastKept: TripPoint, candidate: TripPoint, points: List<TripPoint>): Boolean {
         // [points] is in time order: from the first one in the window up to [lastKept].
         val from = lastKept.capturedAtEpochSecond - RoutePointAcceptancePolicy.VEHICLE_CONTEXT_SECONDS
         var first = points.binarySearchBy(from) { it.capturedAtEpochSecond }.let { if (it < 0) -it - 1 else it }

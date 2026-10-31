@@ -86,14 +86,16 @@ sealed interface RouteSampleDecision {
  * isn't part of the walk ([com.example.stepsplit.domain.model.TripPoint.startsStretch]).
  *
  * **A gap driven.** A drive, bus or train ride whose fixes slow down at both ends of a gap - a red
- * light before a tunnel and a queue after it - would look like walking at both ends. So before
- * any of this, the regime of a gap's jump also takes in the speeds reported at the points kept in
- * the [VEHICLE_CONTEXT_SECONDS] up to the last one ([drivingSpeed]): a vehicle's speed there, and
- * the jump is judged as driving, with that speed - kept, and its straight line counts, as a drive's
- * does. Only a gap that looks like walking before it (a drive between two hikes, with the phone
- * walking to and from the car) becomes a new stretch. The last kept point at a red light is the
- * first fix after stopping (the ones after it are drift, not kept), so a long wait doesn't hide the
- * drive before it.
+ * light before a tunnel and a queue after it - would look like walking at both ends. So the jump
+ * to a new stretch is also judged with the speeds reported at the points kept in the
+ * [VEHICLE_CONTEXT_SECONDS] up to the last one ([drivingSpeed]): when two or more of them are a
+ * vehicle's, and judged as driving with that speed the jump is plausible, the gap was driven, and
+ * the jump's straight line counts, as a drive's does. Otherwise (a drive between two hikes, with the
+ * phone walking to and from the car) it counts nothing. Either way it is the same new stretch - an
+ * accurate fix, confirmed by the next one - so a single stray fix during a long stop is never kept,
+ * and a single walking fix with a glitched speed never makes a drive count. The last kept point at
+ * a red light is the first fix after stopping (the ones after it are drift, not kept), so a long
+ * wait doesn't hide the drive before it.
  *
  * Live, the first fix waits in memory for the next one (see
  * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]); read back, [RouteSanitizer]
@@ -182,20 +184,22 @@ object RoutePointAcceptancePolicy {
      * class doc comment's "After a gap" section.
      */
     fun mayStartNewStretch(reason: RouteSampleRejectionReason, elapsedSeconds: Long, accuracyMeters: Float): Boolean =
-        isTooFastAfterGap(reason, elapsedSeconds) && accuracyMeters <= NEW_STRETCH_MAX_ACCURACY_METERS
-
-    /** Whether a fix rejected for [reason], [elapsedSeconds] after the last kept one, failed only for being too fast, after a gap. */
-    fun isTooFastAfterGap(reason: RouteSampleRejectionReason, elapsedSeconds: Long): Boolean =
         (reason == RouteSampleRejectionReason.IMPLAUSIBLE_JUMP || reason == RouteSampleRejectionReason.SPEED_CONTRADICTION) &&
-            elapsedSeconds > NEW_STRETCH_MIN_GAP_SECONDS
+            elapsedSeconds > NEW_STRETCH_MIN_GAP_SECONDS &&
+            accuracyMeters <= NEW_STRETCH_MAX_ACCURACY_METERS
 
     /**
-     * The fastest of [reportedSpeeds] - those of the points kept in the [VEHICLE_CONTEXT_SECONDS] up
-     * to a gap - when it is a vehicle's (over [RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS]),
-     * else null: see the class doc comment's "A gap driven".
+     * The speed a gap is judged with as driving, from [reportedSpeeds] - those of the points kept in
+     * the [VEHICLE_CONTEXT_SECONDS] up to it: the second fastest of those that are a vehicle's (over
+     * [RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS]), so one glitched reading can
+     * neither make a walk look like a drive nor set the speed; null with fewer than two. See the
+     * class doc comment's "A gap driven".
      */
     fun drivingSpeed(reportedSpeeds: List<Float?>): Float? =
-        reportedSpeeds.filterNotNull().filter { it.isFinite() && it > RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS }.maxOrNull()
+        reportedSpeeds.filterNotNull()
+            .filter { it.isFinite() && it > RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS }
+            .sortedDescending()
+            .getOrNull(1)
 
     /**
      * Whether the fix after one that [mayStartNewStretch], [elapsedSeconds] later, confirms it: an

@@ -140,8 +140,10 @@ class NewStretchAfterGapTest {
     }
 
     @Test
-    fun `the vehicle speed is the fastest in the minute, and only a vehicle's`() {
-        assertEquals(15f, RoutePointAcceptancePolicy.drivingSpeed(listOf(1f, null, 15f, 10f))!!, 0f)
+    fun `the driving speed needs two vehicle readings in the minute, and is the slower of the two fastest`() {
+        assertEquals(10f, RoutePointAcceptancePolicy.drivingSpeed(listOf(1f, null, 15f, 10f))!!, 0f)
+        assertEquals(15f, RoutePointAcceptancePolicy.drivingSpeed(listOf(15f, 1f, 15f, 40f))!!, 0f)
+        assertEquals("one glitch is no drive", null, RoutePointAcceptancePolicy.drivingSpeed(listOf(1.3f, 7f, 1.3f)))
         assertEquals(null, RoutePointAcceptancePolicy.drivingSpeed(listOf(1.3f, 6f, null, Float.NaN)))
         assertEquals(null, RoutePointAcceptancePolicy.drivingSpeed(emptyList()))
     }
