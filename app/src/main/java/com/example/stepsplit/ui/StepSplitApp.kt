@@ -103,6 +103,11 @@ fun StepSplitApp(
         Scaffold(
             bottomBar = { StepSplitBottomBar(navController) },
         ) { innerPadding ->
+            // Every screen's uiState is collected with the lifecycle: while a recording runs, the
+            // process and this composition stay alive with the app in the background, and plain
+            // collectAsState would keep each screen re-reading (and, for Trips and Map, re-smoothing)
+            // the route on every fix. Collecting stops as the app leaves the screen, and the
+            // ViewModel's flows (WhileSubscribed) five seconds later.
             NavHost(
                 navController = navController,
                 startDestination = Screen.Today.route,
@@ -110,7 +115,7 @@ fun StepSplitApp(
             ) {
                 composable(Screen.Today.route) {
                     val viewModel: TodayViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                     TodayScreen(
                         uiState = uiState,
@@ -129,17 +134,17 @@ fun StepSplitApp(
                 }
                 composable(Screen.History.route) {
                     val viewModel: HistoryViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
                 }
                 composable(Screen.Stats.route) {
                     val viewModel: StatsViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
                 }
                 composable(Screen.Trips.route) {
                     val viewModel: TripsViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     TripsScreen(
                         uiState = uiState,
                         onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
@@ -152,7 +157,7 @@ fun StepSplitApp(
                 }
                 composable(Screen.OpenMap.route) {
                     val viewModel: OpenMapViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     // Collected only while this tab's back stack entry is at least started: switching to
                     // another tab or leaving the app stops the location request at once (see
                     // OpenMapViewModel.location).
@@ -200,7 +205,7 @@ fun StepSplitApp(
                     val tripId = backStackEntry.arguments?.getLong(Screen.TripDetail.ARG_TRIP_ID) ?: return@composable
                     val detailFactory = remember(container, tripId) { factory.forTrip(tripId) }
                     val viewModel: TripDetailViewModel = viewModel(factory = detailFactory, key = "trip_detail_$tripId")
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     TripDetailScreen(
                         uiState = uiState,
                         onSaveTripDetails = viewModel::saveTripDetails,
@@ -212,7 +217,7 @@ fun StepSplitApp(
                 }
                 composable(Screen.Settings.route) {
                     val viewModel: SettingsViewModel = viewModel(factory = factory)
-                    val uiState by viewModel.uiState.collectAsState()
+                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     val offlineMaps: OfflineMapsViewModel = viewModel(factory = factory)
                     val offlineMapsState by offlineMaps.state.collectAsStateWithLifecycle()
                     SettingsScreen(

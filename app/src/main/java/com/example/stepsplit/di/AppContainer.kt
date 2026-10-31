@@ -63,10 +63,11 @@ class AppContainer(
     val locationClient: TripLocationClient = FusedTripLocationClient(context),
     /** Where the phone is, for the Map tab's dot only; never used by trip recording. */
     val mapLocationClient: MapLocationClient = FusedMapLocationClient(context),
-) {
     // Not Clock.systemDefaultZone(): that freezes the zone at construction time, so a device
-    // timezone change while the process stays alive would go unnoticed until restart.
-    val clock: Clock = DeviceZoneClock()
+    // timezone change while the process stays alive would go unnoticed until restart. Only tests
+    // pass another.
+    val clock: Clock = DeviceZoneClock(),
+) {
 
     val database: StepSplitDatabase = StepSplitDatabase.build(context)
 
