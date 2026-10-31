@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" creator="Wikiloc Demo - https://www.example.org" version="1.1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name><![CDATA[Canyon loop & spring]]></name>
+    <author><name>Demo hiker</name><link href="https://www.example.org/user/1"/></author>
+    <link href="https://www.example.org/trails/1"><text>Canyon loop</text></link>
+    <time>2026-03-01T07:00:00Z</time>
+  </metadata>
+  <wpt lat="32.701" lon="35.101">
+    <ele>120.0</ele>
+    <time>2026-03-01T07:30:00Z</time>
+    <name><![CDATA[Spring  &  pool]]></name>
+    <cmt><![CDATA[<p>Cold water</p>]]></cmt>
+    <desc><![CDATA[<p>Cold water, take a hat</p>]]></desc>
+    <link href="https://www.example.org/waypoints/1"/>
+    <sym>Water</sym>
+    <type>Water</type>
+  </wpt>
+  <trk>
+    <name><![CDATA[Canyon loop]]></name>
+    <cmt></cmt>
+    <desc><![CDATA[A short loop]]></desc>
+    <trkseg>
+      <trkpt lat="32.700000" lon="35.100000"><ele>100.000000</ele><time>2026-03-01T07:00:00Z</time></trkpt>
+      <trkpt lat="32.700500" lon="35.100400"><ele>108.500000</ele><time>2026-03-01T07:05:00Z</time></trkpt>
+      <trkpt lat="32.701000" lon="35.101000"><ele>120.000000</ele><time>2026-03-01T07:10:00Z</time></trkpt>
+      <trkpt lat="32.700000" lon="35.100000"><ele>100.000000</ele><time>2026-03-01T07:40:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

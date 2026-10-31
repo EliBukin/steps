@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>מסלול   לדוגמה</name></metadata>
+  <wpt lat="31.30" lon="35.30"><name>&#x05DE;&#x05E2;&#x05D9;&#x05DF;</name></wpt>
+  <trk><name>יום ראשון</name><trkseg>
+    <trkpt lat="31.30" lon="35.30"/><trkpt lat="31.31" lon="35.31"/>
+  </trkseg></trk>
+</gpx>

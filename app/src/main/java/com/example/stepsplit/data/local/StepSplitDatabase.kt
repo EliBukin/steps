@@ -17,6 +17,10 @@ import com.example.stepsplit.data.local.motion.MotionEvidenceDao
 import com.example.stepsplit.data.local.motion.MotionEvidenceEntity
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
+import com.example.stepsplit.data.local.route.ImportedRouteDao
+import com.example.stepsplit.data.local.route.ImportedRouteEntity
+import com.example.stepsplit.data.local.route.ImportedRoutePointEntity
+import com.example.stepsplit.data.local.route.ImportedRouteWaypointEntity
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleDao
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleEntity
 import com.example.stepsplit.data.local.trip.DeletedTripTotalsDao
@@ -62,8 +66,11 @@ import com.example.stepsplit.domain.trip.TripTypeRule
         StepCounterSampleEntity::class,
         DeletedTripTotalsEntity::class,
         TripSpotEntity::class,
+        ImportedRouteEntity::class,
+        ImportedRoutePointEntity::class,
+        ImportedRouteWaypointEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class StepSplitDatabase : RoomDatabase() {
@@ -77,6 +84,7 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
     abstract fun motionEvidenceDao(): MotionEvidenceDao
     abstract fun stepCounterSampleDao(): StepCounterSampleDao
+    abstract fun importedRouteDao(): ImportedRouteDao
 
     companion object {
         private const val DATABASE_NAME = "stepsplit.db"
@@ -325,9 +333,40 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v10 -> v11: adds the three empty tables of routes imported from GPX files
+         * ([ImportedRouteEntity], [ImportedRoutePointEntity], [ImportedRouteWaypointEntity]).
+         * Purely additive: no existing table or row is touched, so every trip, point, spot and step
+         * survives as it is. Points and waypoints cascade with their route.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `imported_routes` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT, " +
+                        "`fileName` TEXT, `importedAtEpochSecond` INTEGER NOT NULL, `contentSha256` TEXT NOT NULL, `shown` INTEGER NOT NULL, " +
+                        "`distanceMeters` REAL NOT NULL, `climbMeters` REAL, `descentMeters` REAL, `lineCount` INTEGER NOT NULL, " +
+                        "`pointCount` INTEGER NOT NULL, `waypointCount` INTEGER NOT NULL, `minLatitude` REAL NOT NULL, " +
+                        "`minLongitude` REAL NOT NULL, `maxLatitude` REAL NOT NULL, `maxLongitude` REAL NOT NULL)",
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_imported_routes_contentSha256` ON `imported_routes` (`contentSha256`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `imported_route_points` (`routeId` INTEGER NOT NULL, `seq` INTEGER NOT NULL, " +
+                        "`line` INTEGER NOT NULL, `segment` INTEGER NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, " +
+                        "`elevationMeters` REAL, PRIMARY KEY(`routeId`, `seq`), FOREIGN KEY(`routeId`) REFERENCES `imported_routes`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `imported_route_waypoints` (`routeId` INTEGER NOT NULL, `seq` INTEGER NOT NULL, " +
+                        "`latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `elevationMeters` REAL, `name` TEXT, `note` TEXT, " +
+                        "PRIMARY KEY(`routeId`, `seq`), FOREIGN KEY(`routeId`) REFERENCES `imported_routes`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )",
+                )
+            }
+        }
+
         internal val MIGRATIONS = arrayOf<Migration>(
             MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-            MIGRATION_9_10,
+            MIGRATION_9_10, MIGRATION_10_11,
         )
 
         fun build(context: Context): StepSplitDatabase =

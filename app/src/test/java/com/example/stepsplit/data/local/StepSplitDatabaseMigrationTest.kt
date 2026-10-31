@@ -1334,6 +1334,148 @@ class StepSplitDatabaseMigrationTest {
         }
     }
 
+    /**
+     * Proves the v10 -> v11 migration (`MIGRATION_10_11`: the three imported-route tables) keeps
+     * every trip, point, spot, kept deleted trip and step as they are, adds empty tables that Room
+     * accepts, and that a route's points and waypoints then go with it on delete - while deleting
+     * a trip leaves routes alone.
+     */
+    @Test
+    fun `v10 to v11 adds empty imported route tables and keeps every trip`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val dbName = "schema_v10_v11.db"
+        context.deleteDatabase(dbName)
+
+        try {
+            buildV10Database(context, dbName)
+
+            val roomDb = Room.databaseBuilder(context, StepSplitDatabase::class.java, dbName)
+                .addMigrations(*StepSplitDatabase.MIGRATIONS)
+                .build()
+            try {
+                val migrated = roomDb.openHelper.writableDatabase
+
+                fun count(sql: String): Int = migrated.query(sql).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    cursor.getInt(0)
+                }
+
+                migrated.query("SELECT id, state, distanceMeters, name, typeOverride FROM trips ORDER BY id").use { cursor ->
+                    assertEquals(2, cursor.count)
+                    cursor.moveToFirst()
+                    assertEquals(1L, cursor.getLong(0))
+                    assertEquals("FINISHED", cursor.getString(1))
+                    assertEquals(4_490.0, cursor.getDouble(2), 1e-9)
+                    assertEquals("Sataf loop", cursor.getString(3))
+                    assertEquals("WALK", cursor.getString(4))
+                    cursor.moveToNext()
+                    assertEquals("INTERRUPTED", cursor.getString(1))
+                }
+                assertEquals(2, count("SELECT COUNT(*) FROM trip_points WHERE tripId = 1"))
+                migrated.query("SELECT number, name, altitudeMeters FROM trip_spots").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                    assertEquals("Spring", cursor.getString(1))
+                    assertEquals(640.0, cursor.getDouble(2), 1e-9)
+                }
+                assertEquals(1, count("SELECT COUNT(*) FROM deleted_trip_totals WHERE type = 'DRIVE'"))
+                assertEquals(42, count("SELECT steps FROM step_buckets WHERE id = 1"))
+                assertEquals(0, count("SELECT COUNT(*) FROM imported_routes"))
+                assertEquals(0, count("SELECT COUNT(*) FROM imported_route_points"))
+                assertEquals(0, count("SELECT COUNT(*) FROM imported_route_waypoints"))
+
+                // The new tables work: a route with a point and a waypoint, which go with it.
+                migrated.execSQL(
+                    "INSERT INTO imported_routes (id, name, fileName, importedAtEpochSecond, contentSha256, shown, distanceMeters, " +
+                        "climbMeters, descentMeters, lineCount, pointCount, waypointCount, minLatitude, minLongitude, maxLatitude, maxLongitude) " +
+                        "VALUES (1, 'Made-up loop', 'loop.gpx', 5000, 'abc', 1, 1200.0, NULL, NULL, 1, 1, 1, 31.0, 35.0, 31.0, 35.0)",
+                )
+                migrated.execSQL("INSERT INTO imported_route_points (routeId, seq, line, segment, latitude, longitude, elevationMeters) VALUES (1, 0, 0, 0, 31.0, 35.0, NULL)")
+                migrated.execSQL("INSERT INTO imported_route_waypoints (routeId, seq, latitude, longitude, elevationMeters, name, note) VALUES (1, 0, 31.0, 35.0, 10.0, 'Gate', NULL)")
+                // Deleting a trip leaves routes alone...
+                migrated.execSQL("DELETE FROM trips WHERE id = 1")
+                assertEquals(1, count("SELECT COUNT(*) FROM imported_route_points"))
+                assertEquals(0, count("SELECT COUNT(*) FROM trip_spots"))
+                // ...and deleting the route takes its points and waypoints.
+                migrated.execSQL("DELETE FROM imported_routes WHERE id = 1")
+                assertEquals(0, count("SELECT COUNT(*) FROM imported_route_points"))
+                assertEquals(0, count("SELECT COUNT(*) FROM imported_route_waypoints"))
+            } finally {
+                roomDb.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    /**
+     * Same approach as [buildV9Database], from `10.json`. Seeds a named, finished walk with two
+     * points and a named spot, an interrupted trip, a kept deleted drive, and a step bucket.
+     */
+    private fun buildV10Database(context: android.content.Context, dbName: String) {
+        val schemaFile = File("schemas/com.example.stepsplit.data.local.StepSplitDatabase/10.json")
+        check(schemaFile.exists()) { "Expected the exported v10 schema at ${schemaFile.absolutePath}" }
+        val database = JSONObject(schemaFile.readText()).getJSONObject("database")
+        val entities = database.getJSONArray("entities")
+        val setupQueries = database.getJSONArray("setupQueries")
+
+        val openHelper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(dbName)
+                .callback(object : SupportSQLiteOpenHelper.Callback(10) {
+                    override fun onCreate(db: SupportSQLiteDatabase) {
+                        for (i in 0 until entities.length()) {
+                            val entity = entities.getJSONObject(i)
+                            val tableName = entity.getString("tableName")
+                            db.execSQL(entity.getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+
+                            val indices = entity.optJSONArray("indices") ?: continue
+                            for (j in 0 until indices.length()) {
+                                db.execSQL(indices.getJSONObject(j).getString("createSql").replace(TABLE_NAME_PLACEHOLDER, tableName))
+                            }
+                        }
+                        for (i in 0 until setupQueries.length()) {
+                            db.execSQL(setupQueries.getString(i))
+                        }
+                    }
+
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+                })
+                .build(),
+        )
+
+        try {
+            val db = openHelper.writableDatabase
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond, name, typeOverride) " +
+                    "VALUES (1, 1000, 4600, 'Asia/Jerusalem', 'FINISHED', 4490.0, 4590, 1000, 'Sataf loop', 'WALK')",
+            )
+            db.execSQL(
+                "INSERT INTO trips (id, startEpochSecond, endEpochSecond, startZoneId, state, distanceMeters, " +
+                    "lastAcceptedPointEpochSecond, createdAtEpochSecond) VALUES (2, 9000, NULL, 'UTC', 'INTERRUPTED', 120.0, 9100, 9000)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_points (id, tripId, capturedAtEpochSecond, latitude, longitude, accuracyMeters, " +
+                    "altitudeMeters, speedMetersPerSecond) VALUES (1, 1, 1000, 31.8, 35.4, 5.0, 120.0, 1.2), (2, 1, 4590, 31.84, 35.4, 6.0, NULL, NULL)",
+            )
+            db.execSQL(
+                "INSERT INTO trip_spots (tripId, number, capturedAtEpochSecond, latitude, longitude, altitudeMeters, name) " +
+                    "VALUES (1, 1, 2000, 31.79, 35.13, 640.0, 'Spring')",
+            )
+            db.execSQL(
+                "INSERT INTO deleted_trip_totals (id, startEpochSecond, durationSeconds, distanceMeters, type) VALUES (1, 600, 5400, 30000.0, 'DRIVE')",
+            )
+            db.execSQL(
+                "INSERT INTO step_buckets (id, source, startEpochSecond, endEpochSecond, steps, zoneId, localDate, " +
+                    "importedAtEpochSecond, validationState, acceptedSteps, observationStartEpochSecond, observationEndEpochSecond) " +
+                    "VALUES (1, 'local_recording_api', 1000, 1060, 42, 'UTC', '1970-01-01', 1060, 'LEGACY_UNVERIFIED', 0, 1000, 1060)",
+            )
+        } finally {
+            openHelper.close()
+        }
+    }
+
     private companion object {
         /** The placeholder Room itself writes into every `createSql` string in the exported schema JSON. */
         const val TABLE_NAME_PLACEHOLDER = "\${TABLE_NAME}"

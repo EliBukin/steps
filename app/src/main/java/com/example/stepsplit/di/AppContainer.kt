@@ -11,9 +11,10 @@ import com.example.stepsplit.data.mappack.MapPackStore
 import com.example.stepsplit.data.mappack.SharedPreferencesMapPackPreferences
 import com.example.stepsplit.data.mappack.SystemMapPackDownloader
 import com.example.stepsplit.data.mappack.allocatableBytes
-import com.example.stepsplit.ui.settings.regionName
-import java.io.File
 import com.example.stepsplit.data.repository.StepRepository
+import com.example.stepsplit.data.route.ContentResolverRouteFileReader
+import com.example.stepsplit.data.route.ImportedRouteRepository
+import com.example.stepsplit.data.route.RouteFileReader
 import com.example.stepsplit.data.settings.SettingsRepository
 import com.example.stepsplit.data.stepsource.AsyncStepSourceHealthRecorder
 import com.example.stepsplit.data.stepsource.HealthConnectStepSource
@@ -33,6 +34,8 @@ import com.example.stepsplit.data.trip.TripSpotMarker
 import com.example.stepsplit.debug.DeviceDiagnostics
 import com.example.stepsplit.debug.DeviceDiagnosticsSnapshot
 import com.example.stepsplit.domain.time.DeviceZoneClock
+import com.example.stepsplit.ui.settings.regionName
+import java.io.File
 import java.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,6 +86,14 @@ class AppContainer(
         io = Dispatchers.IO,
         freeBytes = { dir -> allocatableBytes(context, dir) },
     )
+
+    // ---- Routes imported from GPX files (see data.route.ImportedRouteRepository) - planned hikes
+    // and drives for the Map tab, in their own tables; never trips, and nothing here touches steps. ----
+
+    val importedRouteRepository: ImportedRouteRepository = ImportedRouteRepository(database = database, clock = clock)
+
+    /** Reads the GPX file the owner opened with the app, shared to it, or picked with Import. */
+    val routeFileReader: RouteFileReader = ContentResolverRouteFileReader(context)
 
     // ---- Automatic step counting (see data.repository.StepRepository) - Health Connect is the
     // sole production step source; see HealthConnectStepSource's own doc comment for why this app

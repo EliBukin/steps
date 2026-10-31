@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" creator="Device Demo" version="1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <link href="http://www.example.com"><text>Demo device</text></link>
+    <time>2026-05-02T05:10:00Z</time>
+  </metadata>
+  <wpt lat="30.512000" lon="34.912000">
+    <ele>640.2</ele>
+    <time>2026-05-02T05:40:00Z</time>
+    <name>Water cache</name>
+    <sym>Flag, Blue</sym>
+    <extensions><gpxx:WaypointExtension><gpxx:DisplayMode>SymbolAndName</gpxx:DisplayMode></gpxx:WaypointExtension></extensions>
+  </wpt>
+  <trk>
+    <name>Morning walk</name>
+    <extensions><gpxx:TrackExtension><gpxx:DisplayColor>Magenta</gpxx:DisplayColor></gpxx:TrackExtension></extensions>
+    <trkseg>
+      <trkpt lat="30.510000" lon="34.910000"><ele>630.0</ele><time>2026-05-02T05:10:00Z</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>96</gpxtpx:hr><gpxtpx:cad>52</gpxtpx:cad></gpxtpx:TrackPointExtension></extensions></trkpt>
+      <trkpt lat="30.511000" lon="34.911000"><ele>634.5</ele><time>2026-05-02T05:11:00Z</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>101</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+      <trkpt lat="30.512000" lon="34.912000"><ele>640.2</ele><time>2026-05-02T05:12:00Z</time></trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="30.514000" lon="34.914000"><ele>648.0</ele><time>2026-05-02T05:30:00Z</time></trkpt>
+      <trkpt lat="30.515000" lon="34.915000"><ele>650.1</ele><time>2026-05-02T05:31:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

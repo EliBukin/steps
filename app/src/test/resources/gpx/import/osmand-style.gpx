@@ -1,0 +1,36 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<gpx version="1.1" creator="OsmAnd Demo" xmlns="http://www.topografix.com/GPX/1/1" xmlns:osmand="https://osmand.net" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name>Wadi plan</name>
+  </metadata>
+  <wpt lat="29.81" lon="35.02">
+    <name>Lookout</name>
+    <desc>Short climb on the left</desc>
+    <type>Favorites</type>
+    <extensions>
+      <osmand:icon>special_star</osmand:icon>
+      <osmand:color>#eecc22</osmand:color>
+    </extensions>
+  </wpt>
+  <wpt lat="29.82" lon="35.03">
+    <name>Parking</name>
+    <cmt>Gate closes at dusk</cmt>
+  </wpt>
+  <rte>
+    <name>Drive in</name>
+    <rtept lat="29.800" lon="35.000"><ele>210</ele><name>Turn right</name></rtept>
+    <rtept lat="29.805" lon="35.010"><ele>220</ele></rtept>
+    <rtept lat="29.810" lon="35.020"><ele>231</ele></rtept>
+    <rtept lat="29.820" lon="35.030"><ele>240</ele></rtept>
+  </rte>
+  <trk>
+    <name>Walk up</name>
+    <trkseg>
+      <trkpt lat="29.820" lon="35.030"><ele>240</ele><extensions><osmand:speed>1.2</osmand:speed></extensions></trkpt>
+      <trkpt lat="29.821" lon="35.031"><ele>255</ele></trkpt>
+    </trkseg>
+  </trk>
+  <extensions>
+    <osmand:color>#ff0000</osmand:color>
+  </extensions>
+</gpx>

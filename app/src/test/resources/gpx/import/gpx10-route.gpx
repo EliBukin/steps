@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<gpx version="1.0" creator="Old planner" xmlns="http://www.topografix.com/GPX/1/0">
+  <name>Old route</name>
+  <time>2009-01-01T00:00:00Z</time>
+  <wpt lat="31.5" lon="34.9"><name>Caf&#233;</name></wpt>
+  <rte>
+    <name>Route A</name>
+    <rtept lat="31.50" lon="34.90"/>
+    <rtept lat="31.51" lon="34.91"/>
+    <rtept lat="31.52" lon="34.93"/>
+  </rte>
+</gpx>

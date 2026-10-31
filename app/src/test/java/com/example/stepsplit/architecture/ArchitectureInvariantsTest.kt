@@ -108,6 +108,10 @@ class ArchitectureInvariantsTest {
         "trip/service",
         "domain/trip",
         "data/local/trip",
+        // Routes imported from GPX files: map-side, like trips - never steps.
+        "data/route",
+        "domain/route",
+        "data/local/route",
     )
 
     private fun importLines(dirs: List<String>): List<Pair<File, String>> = dirs.flatMap { dir ->

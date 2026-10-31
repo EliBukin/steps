@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<gpx version="1.1" creator="https://www.example.com/planner" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name>Ridge hike (planned)</name>
+    <author>
+      <link href="https://www.example.com">
+        <text>Demo planner</text>
+        <type>text/html</type>
+      </link>
+    </author>
+  </metadata>
+  <trk>
+    <name>Ridge hike (planned)</name>
+    <trkseg>
+      <trkpt lat="33.000100" lon="35.500100">
+        <ele>500.1</ele>
+        <time>2026-06-01T05:00:00.000Z</time>
+      </trkpt>
+      <trkpt lat="33.000900" lon="35.500800">
+        <ele>505.9</ele>
+        <time>2026-06-01T05:01:00.000Z</time>
+      </trkpt>
+      <trkpt lat="33.001500" lon="35.501900">
+        <ele>512.3</ele>
+        <time>2026-06-01T05:02:00.000Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
