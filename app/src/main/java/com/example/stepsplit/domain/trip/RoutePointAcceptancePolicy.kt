@@ -85,6 +85,16 @@ sealed interface RouteSampleDecision {
  * counts in no distance or moving time: nobody walked it, and a 20 km drive to the next trailhead
  * isn't part of the walk ([com.example.stepsplit.domain.model.TripPoint.startsStretch]).
  *
+ * **A gap driven.** A drive, bus or train ride whose fixes slow down at both ends of a gap - a red
+ * light before a tunnel and a queue after it - would look like walking at both ends. So before
+ * any of this, the regime of a gap's jump also takes in the speeds reported at the points kept in
+ * the [VEHICLE_CONTEXT_SECONDS] up to the last one ([drivingSpeed]): a vehicle's speed there, and
+ * the jump is judged as driving, with that speed - kept, and its straight line counts, as a drive's
+ * does. Only a gap that looks like walking before it (a drive between two hikes, with the phone
+ * walking to and from the car) becomes a new stretch. The last kept point at a red light is the
+ * first fix after stopping (the ones after it are drift, not kept), so a long wait doesn't hide the
+ * drive before it.
+ *
  * Live, the first fix waits in memory for the next one (see
  * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]); read back, [RouteSanitizer]
  * looks ahead to the next stored point - the same pair, so both keep the same fixes.
@@ -115,6 +125,9 @@ object RoutePointAcceptancePolicy {
 
     /** The fix that starts a new stretch must be at least this accurate: a good fix, not just an acceptable one ([MAX_ACCURACY_METERS]). */
     const val NEW_STRETCH_MAX_ACCURACY_METERS = 20f
+
+    /** How long before a gap the reported speeds say whether the phone was in a vehicle - see the class doc comment's "A gap driven". */
+    const val VEHICLE_CONTEXT_SECONDS = 60L
 
     fun evaluate(
         candidate: RawLocationSample,
@@ -169,9 +182,20 @@ object RoutePointAcceptancePolicy {
      * class doc comment's "After a gap" section.
      */
     fun mayStartNewStretch(reason: RouteSampleRejectionReason, elapsedSeconds: Long, accuracyMeters: Float): Boolean =
+        isTooFastAfterGap(reason, elapsedSeconds) && accuracyMeters <= NEW_STRETCH_MAX_ACCURACY_METERS
+
+    /** Whether a fix rejected for [reason], [elapsedSeconds] after the last kept one, failed only for being too fast, after a gap. */
+    fun isTooFastAfterGap(reason: RouteSampleRejectionReason, elapsedSeconds: Long): Boolean =
         (reason == RouteSampleRejectionReason.IMPLAUSIBLE_JUMP || reason == RouteSampleRejectionReason.SPEED_CONTRADICTION) &&
-            elapsedSeconds > NEW_STRETCH_MIN_GAP_SECONDS &&
-            accuracyMeters <= NEW_STRETCH_MAX_ACCURACY_METERS
+            elapsedSeconds > NEW_STRETCH_MIN_GAP_SECONDS
+
+    /**
+     * The fastest of [reportedSpeeds] - those of the points kept in the [VEHICLE_CONTEXT_SECONDS] up
+     * to a gap - when it is a vehicle's (over [RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS]),
+     * else null: see the class doc comment's "A gap driven".
+     */
+    fun drivingSpeed(reportedSpeeds: List<Float?>): Float? =
+        reportedSpeeds.filterNotNull().filter { it.isFinite() && it > RouteMovementPlausibility.VEHICLE_REPORTED_SPEED_THRESHOLD_MPS }.maxOrNull()
 
     /**
      * Whether the fix after one that [mayStartNewStretch], [elapsedSeconds] later, confirms it: an

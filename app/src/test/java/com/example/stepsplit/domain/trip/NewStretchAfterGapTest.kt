@@ -88,6 +88,64 @@ class NewStretchAfterGapTest {
         assertEquals(pathMeters(before + after), displayed.distanceMeters, 5.0)
     }
 
+    /**
+     * The code re-review's probe: 15 m/s, slowing to a stop at a red light, a 1.5 km tunnel with no
+     * fix (100 s), crawling at 1 m/s in a queue after it, then 15 m/s again. Both ends of the gap
+     * look like walking, but the minute before it was a drive.
+     */
+    private fun tunnelDrive(): List<TripPoint> = buildList {
+        var at = 0.0
+        var t = 1_000L
+        repeat(30) { add(point(at, t, accuracy = 6f, speed = 15f)); at += 30.0; t += 2 }
+        for (v in listOf(10f, 6f, 3f, 1f)) { add(point(at, t, accuracy = 6f, speed = v)); at += v * 2; t += 2 }
+        repeat(10) { add(point(at + (it % 2), t, accuracy = 6f, speed = 0.1f)); t += 2 }
+        at += 1_500.0
+        t += 100
+        repeat(15) { add(point(at, t, speed = 1f)); at += 2.0; t += 2 }
+        repeat(30) { add(point(at, t, accuracy = 6f, speed = 15f)); at += 30.0; t += 2 }
+    }
+
+    @Test
+    fun `a tunnel after a red light, slow at both ends, counts as the drive it was`() {
+        val stored = tunnelDrive()
+
+        val sanitized = RouteSanitizer.sanitize(stored)
+        val displayed = RouteSmoother.smooth(sanitized.points)
+
+        assertTrue(sanitized.points.none { it.startsStretch })
+        // About 900 m, 32 m of slowing, the 1.5 km tunnel, 30 m of queue, then 900 m: about 3.36 km.
+        assertEquals(3_362.0, displayed.distanceMeters, 30.0)
+    }
+
+    @Test
+    fun `a drive between two hikes, walking to and from the car, is still a new stretch with no distance`() {
+        // The minute before the gap is walking: nothing says the phone was in a vehicle.
+        val before = walk(0.0, 1_000L, 8)
+        val after = walk(20_000.0, before.last().capturedAtEpochSecond + 20 * 60, 10)
+
+        val displayed = RouteSmoother.smooth(RouteSanitizer.sanitize(before + after).points)
+
+        assertTrue(displayed.points[before.size].startsStretch)
+        assertEquals(pathMeters(before) + pathMeters(after), displayed.distanceMeters, 20.0)
+    }
+
+    @Test
+    fun `driving speeds more than a minute before the gap don't count`() {
+        // Parked, then walked for two minutes before the gap: the drive is out of the minute.
+        val drive = (0 until 10).map { point(30.0 * it, 1_000L + 2L * it, speed = 15f) }
+        val walking = walk(300.0, drive.last().capturedAtEpochSecond + 10, 13)
+        val after = walk(20_000.0, walking.last().capturedAtEpochSecond + 20 * 60, 10)
+
+        assertTrue(RouteSanitizer.sanitize(drive + walking + after).points[drive.size + walking.size].startsStretch)
+    }
+
+    @Test
+    fun `the vehicle speed is the fastest in the minute, and only a vehicle's`() {
+        assertEquals(15f, RoutePointAcceptancePolicy.drivingSpeed(listOf(1f, null, 15f, 10f))!!, 0f)
+        assertEquals(null, RoutePointAcceptancePolicy.drivingSpeed(listOf(1.3f, 6f, null, Float.NaN)))
+        assertEquals(null, RoutePointAcceptancePolicy.drivingSpeed(emptyList()))
+    }
+
     @Test
     fun `a spike within a minute of the last point is still removed, even two that agree`() {
         val path = walk(0.0, 1_000L, 12)

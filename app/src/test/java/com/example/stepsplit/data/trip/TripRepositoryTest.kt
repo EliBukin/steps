@@ -285,6 +285,34 @@ class TripRepositoryTest {
     }
 
     @Test
+    fun `a tunnel after a red light, slow at both ends, counts as the drive it was - live and on screen`() = runTest {
+        // The code re-review's probe: 15 m/s, slowing to a stop, a 1.5 km tunnel (100 s), a queue at 1 m/s, 15 m/s again.
+        val t0 = fixedNow.epochSecond
+        val tripId = repository.startTrip()
+        val fixes = buildList {
+            var at = 0.0
+            var t = t0 + 5
+            fun add(speed: Float, accuracy: Float = 6f, wobble: Double = 0.0) = add(sample(32.0 + degreesLatFor(at + wobble), 34.0, t, accuracy = accuracy, speed = speed))
+            repeat(30) { add(15f); at += 30.0; t += 2 }
+            for (v in listOf(10f, 6f, 3f, 1f)) { add(v); at += v * 2; t += 2 }
+            repeat(10) { add(0.1f, wobble = (it % 2).toDouble()); t += 2 }
+            at += 1_500.0
+            t += 100
+            repeat(15) { add(1f, accuracy = 8f); at += 2.0; t += 2 }
+            repeat(30) { add(15f); at += 30.0; t += 2 }
+        }
+
+        deliver(tripId, fixes)
+
+        val points = repository.getTripPoints(tripId)
+        // About 900 m, 32 m of slowing, the 1.5 km tunnel, 30 m of queue, then 900 m.
+        assertEquals(3_362.0, repository.getTrip(tripId)!!.distanceMeters, 30.0)
+        val displayed = RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
+        assertTrue(displayed.points.none { it.startsStretch })
+        assertEquals(3_362.0, displayed.distanceMeters, 30.0)
+    }
+
+    @Test
     fun `a two-minute tunnel while driving still counts its straight line, live and on screen`() = runTest {
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()

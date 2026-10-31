@@ -494,10 +494,13 @@ class TripRepository(
                 if (sample.capturedAtEpochSecond > nowEpochSecond + MAX_FUTURE_SKEW_SECONDS) continue
                 if (cutoffEpochSecond != null && sample.capturedAtEpochSecond > cutoffEpochSecond) continue
 
-                // After a rejection, anything kept is a new stretch: its start, then the fix confirming it.
+                // After a rejection, anything kept is a gap driven across, or a new stretch: its start,
+                // then the fix confirming it.
                 val (keep, newStretch) = when (val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted, nowEpochSecond)) {
                     is RouteSampleDecision.Accepted -> listOf(decision.sample) to false
-                    is RouteSampleDecision.Rejected -> keptAfterRejection(tripId, sample, decision.reason, lastAccepted, nowEpochSecond) to true
+                    is RouteSampleDecision.Rejected ->
+                        drivenAcross(tripId, sample, decision.reason, lastAccepted, nowEpochSecond)?.let { listOf(it) to false }
+                            ?: (keptAfterRejection(tripId, sample, decision.reason, lastAccepted, nowEpochSecond) to true)
                 }
 
                 for ((index, accepted) in keep.withIndex()) {
@@ -521,6 +524,31 @@ class TripRepository(
                 }
             }
         }
+    }
+
+    /**
+     * [sample], rejected for [reason] against [lastAccepted] after a gap, when that gap was driven: a
+     * vehicle's speed was reported at the trip's points in the
+     * [RoutePointAcceptancePolicy.VEHICLE_CONTEXT_SECONDS] up to [lastAccepted], and judged with it
+     * the jump is plausible - see [RoutePointAcceptancePolicy]'s "A gap driven". Null otherwise.
+     * Call only under [tripMutex].
+     */
+    private suspend fun drivenAcross(
+        tripId: Long,
+        sample: RawLocationSample,
+        reason: RouteSampleRejectionReason,
+        lastAccepted: RawLocationSample?,
+        nowEpochSecond: Long,
+    ): RawLocationSample? {
+        if (lastAccepted == null) return null
+        if (!RoutePointAcceptancePolicy.isTooFastAfterGap(reason, sample.capturedAtEpochSecond - lastAccepted.capturedAtEpochSecond)) return null
+        val recent = database.tripPointDao().reportedSpeedsSince(
+            tripId,
+            lastAccepted.capturedAtEpochSecond - RoutePointAcceptancePolicy.VEHICLE_CONTEXT_SECONDS,
+        )
+        val driving = RoutePointAcceptancePolicy.drivingSpeed(recent) ?: return null
+        val decision = RoutePointAcceptancePolicy.evaluate(sample, lastAccepted.copy(speedMetersPerSecond = driving), nowEpochSecond)
+        return (decision as? RouteSampleDecision.Accepted)?.sample
     }
 
     /**
