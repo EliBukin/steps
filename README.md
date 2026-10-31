@@ -238,10 +238,10 @@ Open the **Map** tab at the bottom. It works whether or not a trip is recording.
   direction of travel. The map follows you as you go; drag, pinch or rotate it and it stops
   following, and the round **My location** button (crosshairs) follows you again. While the map
   follows you, the screen stays on; it turns off as usual once you move the map away or leave it.
-- **Map turns with me.** The compass button, above **My location**, turns the map with the phone,
-  so what's in front of you is up. Above 15 km/h (driving, cycling) it turns with your GPS
-  direction of travel instead, which a phone in a car holder gets right and its compass often
-  doesn't; below 10 km/h it's the compass again. The needle on the button points north; tap it
+- **Map turns with me.** The navigation arrow button, above **My location**, turns the map with
+  the phone, so what's in front of you is up. Above 15 km/h (driving, cycling) it turns with your
+  GPS direction of travel instead, which a phone in a car holder gets right and its compass often
+  doesn't; below 10 km/h it's the compass again. The arrow is filled while the map turns; tap it
   to go back to north up. Twisting the map by hand is off meanwhile. On a phone without a
   compass, the map turns only while you move.
 - **The trip you're recording,** if one is: its route so far in orange, its start (green) and the

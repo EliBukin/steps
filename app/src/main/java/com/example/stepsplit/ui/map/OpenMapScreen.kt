@@ -178,9 +178,9 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  *   while moving. The map follows it until the user pans, zooms or rotates; the My location button
  *   follows it again. While it follows, the screen stays on (it turns off as usual once the map stops
  *   following, or the screen closes). An old fix stays as a gray dot, with "Finding your location...".
- * - **Map turns with me.** The compass button turns the map with the phone, so what's ahead is up -
- *   with the GPS direction of travel instead while moving fast (see [MapBearing]); tapping it again
- *   turns the map back to north up. Turning the map by hand is off meanwhile.
+ * - **Map turns with me.** The navigation arrow button turns the map with the phone, so what's ahead
+ *   is up - with the GPS direction of travel instead while moving fast (see [MapBearing]); tapping it
+ *   again turns the map back to north up. Turning the map by hand is off meanwhile.
  * - **The trip being recorded:** its route so far, its start and its spots, updating as it grows.
  * - **What can go wrong** is said above the map, with the way out: no location permission (Allow,
  *   or the app's settings once Android stops asking), location turned off (Turn on location), no
@@ -574,7 +574,7 @@ private fun OpenMapView(
             options = MapOptions(
                 // As on the trip screen: pan, zoom and rotate, no tilt; the app's own metric scale bar.
                 // While the map turns with the phone, turning it by hand is off, and so is MapLibre's
-                // compass: the app's compass button turns it back to north.
+                // compass: the app's "map turns with me" button turns it back to north.
                 gestureOptions = GestureOptions(isTiltEnabled = false, isRotateEnabled = !rotateWithMe),
                 ornamentOptions = OrnamentOptions(isScaleBarEnabled = false, isCompassEnabled = !rotateWithMe),
             ),
@@ -708,11 +708,12 @@ private fun OpenMapView(
                 },
                 modifier = Modifier.semantics { contentDescription = rotateLabel },
                 containerColor = if (rotateWithMe) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                contentColor = if (rotateWithMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
-                // Shows where north is while the map turns; plain north up otherwise.
-                CompassNeedle(
-                    bearing = { if (rotateWithMe) cameraState.position.bearing.toFloat() else 0f },
-                    southColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                // A navigation arrow, not a compass (the dot's cone is that): filled while the map turns.
+                Icon(
+                    painterResource(if (rotateWithMe) R.drawable.ic_heading_up_24 else R.drawable.ic_heading_up_outline_24),
+                    contentDescription = null,
                 )
             }
             SmallFloatingActionButton(

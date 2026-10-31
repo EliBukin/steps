@@ -1,15 +1,10 @@
 package com.example.stepsplit.ui.map
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -93,33 +88,3 @@ private fun coneImage(color: Color): ImageVector {
         }
         .build()
 }
-
-/**
- * A compass needle for the "map turns with me" button: red toward north, [southColor] the other
- * way, turned by the map's [bearing] so it points at north on the map (read while drawing, so a
- * turning map only redraws the needle). Never mirrored in right-to-left languages.
- */
-@Composable
-internal fun CompassNeedle(bearing: () -> Float, southColor: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(24.dp).graphicsLayer { rotationZ = -bearing() }) {
-        val cx = size.width / 2
-        val tip = size.height * 0.08f
-        val halfWidth = size.width * 0.16f
-        val north = Path().apply {
-            moveTo(cx, tip)
-            lineTo(cx + halfWidth, size.height / 2)
-            lineTo(cx - halfWidth, size.height / 2)
-            close()
-        }
-        val south = Path().apply {
-            moveTo(cx, size.height - tip)
-            lineTo(cx + halfWidth, size.height / 2)
-            lineTo(cx - halfWidth, size.height / 2)
-            close()
-        }
-        drawPath(north, NeedleNorthColor)
-        drawPath(south, southColor)
-    }
-}
-
-private val NeedleNorthColor = Color(0xFFD32F2F)
