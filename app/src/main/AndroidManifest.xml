@@ -26,11 +26,13 @@
 
     <!--
       The maps only (ui/trips/TripRouteMap.kt and ui/map/OpenMapScreen.kt): fetches basemap
-      style/vector tiles from OpenFreeMap (a free, keyless tile provider - no API key/secret is
-      stored anywhere in this app) while the trip-detail screen or the Map tab is visible.
-      No location is ever sent: the requests are for the map's style, fonts and tiles only. Never
-      used for background loading - see README's "Map" and "The Map screen" sections. No other
-      feature in this app performs any network request.
+      style/vector tiles from OpenFreeMap and hill shading from Mapterhorn (free, keyless tile
+      providers - no API key/secret is stored anywhere in this app) while the trip-detail screen or
+      the Map tab is visible. No location is ever sent: the requests are for the map's style, fonts
+      and tiles only. Never used for background loading - see README's "Map" and "The Map screen"
+      sections. The one other request is the Offline maps settings reading the list of map packs
+      from the app's GitHub release when they open (data/mappack); the packs themselves download
+      through Android's download manager.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 

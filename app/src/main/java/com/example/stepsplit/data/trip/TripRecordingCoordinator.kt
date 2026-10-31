@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.onEach
 /**
  * Owns the actual "collect live GPS fixes and forward accepted ones to [TripRepository]" work,
  * deliberately kept as a plain class (not an Android [android.app.Service]) so it is fully
- * unit-testable with [FakeTripLocationClient] and a fake clock/repository, with no Robolectric or
+ * unit-testable with the tests' `FakeTripLocationClient` and a fake clock/repository, with no Robolectric or
  * real service lifecycle involved. [com.example.stepsplit.trip.service.TripRecordingService] is a
  * thin shell around this: it owns the foreground-service/notification mechanics, this owns the
  * actual recording logic, and it holds no reference to any Activity, ViewModel, or composable.

@@ -11,17 +11,13 @@ import com.example.stepsplit.data.local.bout.WalkBoutEntity
 import com.example.stepsplit.data.local.bucket.StepBucketDao
 import com.example.stepsplit.data.local.bucket.StepBucketEntity
 import com.example.stepsplit.data.local.manualwalk.ManualWalkEntity
-import com.example.stepsplit.data.local.motion.ActivityIntervalDao
 import com.example.stepsplit.data.local.motion.ActivityIntervalEntity
-import com.example.stepsplit.data.local.motion.MotionEvidenceDao
 import com.example.stepsplit.data.local.motion.MotionEvidenceEntity
-import com.example.stepsplit.data.local.motion.TemporalContinuityStateDao
 import com.example.stepsplit.data.local.motion.TemporalContinuityStateEntity
 import com.example.stepsplit.data.local.route.ImportedRouteDao
 import com.example.stepsplit.data.local.route.ImportedRouteEntity
 import com.example.stepsplit.data.local.route.ImportedRoutePointEntity
 import com.example.stepsplit.data.local.route.ImportedRouteWaypointEntity
-import com.example.stepsplit.data.local.stepcounter.StepCounterSampleDao
 import com.example.stepsplit.data.local.stepcounter.StepCounterSampleEntity
 import com.example.stepsplit.data.local.trip.DeletedTripTotalsDao
 import com.example.stepsplit.data.local.trip.DeletedTripTotalsEntity
@@ -80,10 +76,6 @@ abstract class StepSplitDatabase : RoomDatabase() {
     abstract fun tripPointDao(): TripPointDao
     abstract fun tripSpotDao(): TripSpotDao
     abstract fun deletedTripTotalsDao(): DeletedTripTotalsDao
-    abstract fun activityIntervalDao(): ActivityIntervalDao
-    abstract fun temporalContinuityStateDao(): TemporalContinuityStateDao
-    abstract fun motionEvidenceDao(): MotionEvidenceDao
-    abstract fun stepCounterSampleDao(): StepCounterSampleDao
     abstract fun importedRouteDao(): ImportedRouteDao
 
     companion object {
@@ -149,8 +141,7 @@ abstract class StepSplitDatabase : RoomDatabase() {
          * (the same mechanic [MIGRATION_1_2] already relies on for `autoCompleted`). Every
          * pre-existing row becomes `validationState = 'LEGACY_UNVERIFIED'` - it predates motion
          * evidence collection and cannot honestly be called vehicle-verified, but its raw [steps]
-         * value is preserved exactly, permanently, never deleted or reset (see
-         * [com.example.stepsplit.data.local.bucket.StepBucketDao.observeLegacyAggregate]). No
+         * value is preserved exactly, permanently, never deleted or reset. No
          * existing table (`walk_bouts`, `session_overrides`, `trips`, `trip_points`, `manual_walks`)
          * is touched at all.
          */
@@ -269,7 +260,6 @@ abstract class StepSplitDatabase : RoomDatabase() {
             }
         }
 
-        /** Internal (not private) so migration tests can run these exact objects directly against real schema JSON via MigrationTestHelper. */
         /** Index-only: see [StepBucketEntity]'s own indices for why these two exist. No data changes. */
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {

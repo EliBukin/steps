@@ -30,8 +30,9 @@ import kotlinx.coroutines.CancellationException
  * which source produces it.
  *
  * [id] is deliberately the OLD Local Recording source's own id, not a new value - every existing
- * `step_buckets` row (real, field-collected production history, including rows currently marked
- * `REJECTED_UNVERIFIED`/`LEGACY_UNVERIFIED` by the now-removed validator) is keyed by it, and every
+ * `step_buckets` row (real, field-collected production history - in the old
+ * `com.example.stepsplit` app's database, also rows marked `REJECTED_UNVERIFIED`/`LEGACY_UNVERIFIED`
+ * by the now-removed validator) is keyed by it, and every
  * lifetime-stats/debug-diagnostics query in [com.example.stepsplit.data.repository.StepRepository]
  * filters by this id. Reusing it means this cutover needs no data migration at all: it stays the
  * one canonical identity per minute the product requirement calls for, existing history stays

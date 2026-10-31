@@ -59,7 +59,7 @@ import kotlinx.coroutines.launch
  */
 class AppContainer(
     context: Context,
-    /** Live GPS fixes for trip recording; only tests pass another (a [com.example.stepsplit.data.trip.FakeTripLocationClient]). */
+    /** Live GPS fixes for trip recording; only tests pass another (their `FakeTripLocationClient`). */
     val locationClient: TripLocationClient = FusedTripLocationClient(context),
     /** Where the phone is, for the Map tab's dot only; never used by trip recording. */
     val mapLocationClient: MapLocationClient = FusedMapLocationClient(context),

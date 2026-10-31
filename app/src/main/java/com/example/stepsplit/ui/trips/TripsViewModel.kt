@@ -44,8 +44,9 @@ import kotlinx.coroutines.launch
  * command reaches the service even if this ViewModel/its Activity is backgrounded immediately
  * afterward. The service is what actually creates/finishes/resumes the trip in Room, atomically and
  * with its own generation-safety guarantees; this ViewModel's flows pick that up automatically once
- * it does. This ViewModel only owns [finishInterruptedTripAtLastPoint] and [deleteTrip], which are
- * plain repository calls with no service interaction at all, and [markSpot].
+ * it does. This ViewModel only owns [finishInterruptedTripAtLastPoint], a plain repository call with
+ * no service interaction at all, and [markSpot]. Deleting a trip is the trip screen's
+ * ([TripDetailViewModel]), so it can keep the trip in Stats.
  *
  * Mark spot doesn't go through the service either: the recording runs in this same process, and
  * [com.example.stepsplit.data.trip.TripSpotMarker] does the work on its own process-lifetime scope,
@@ -151,10 +152,6 @@ class TripsViewModel(
 
     fun finishInterruptedTripAtLastPoint(tripId: Long) {
         viewModelScope.launch { repository.finishInterruptedTripAtLastPoint(tripId) }
-    }
-
-    fun deleteTrip(tripId: Long) {
-        viewModelScope.launch { repository.deleteTrip(tripId) }
     }
 
     private companion object {

@@ -222,8 +222,6 @@ class MapPackRepository(
         }
     }
 
-    fun dismissProblem() = _state.update { it.copy(problem = null) }
-
     /** The Map tab's offer of an offline map was answered (Download or Not now). */
     fun answerOffer() {
         preferences.offerAnswered = true

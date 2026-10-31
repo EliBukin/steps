@@ -25,6 +25,4 @@ class OfflineMapsViewModel(private val repository: MapPackRepository) : ViewMode
     fun delete(regionId: String) = repository.delete(regionId)
 
     fun setWifiOnly(wifiOnly: Boolean) = repository.setWifiOnly(wifiOnly)
-
-    fun dismissProblem() = repository.dismissProblem()
 }

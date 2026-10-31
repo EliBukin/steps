@@ -1,5 +1,4 @@
-# Room, WorkManager, DataStore and Compose ship their own consumer ProGuard rules.
-# Kotlin coroutines' debug metadata is safe to strip; nothing app-specific needs keeping here.
-
-# Keep Room-generated implementation classes discoverable by reflection-free codegen.
--keep class com.example.stepsplit.data.local.** { *; }
+# Room, WorkManager, DataStore and Compose ship their own consumer ProGuard rules (Room's keeps the
+# generated StepSplitDatabase_Impl it finds by name), so nothing of the app's own needs keeping here:
+# R8 may shrink and rename all of it, unused database code included.
+# Kotlin coroutines' debug metadata is safe to strip.

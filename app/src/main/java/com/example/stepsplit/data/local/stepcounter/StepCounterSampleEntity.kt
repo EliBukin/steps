@@ -14,7 +14,7 @@ import androidx.room.PrimaryKey
  * The unique ([bootSessionId], [elapsedRealtimeMillisAtSample]) index makes a redelivered/duplicate
  * sensor callback (e.g. after [com.example.stepsplit.stepcounter.service.StepCounterService] is
  * restarted by the OS and immediately receives the current cumulative value again) an idempotent
- * no-op via [StepCounterSampleDao.insertIgnoringDuplicate] - the same convention already used by
+ * no-op via `StepCounterSampleDao.insertIgnoringDuplicate` (since removed) - the same convention already used by
  * `motion_evidence.dedupeKey`.
  *
  * [wallClockEpochMilli] is derived once, at receipt time, via

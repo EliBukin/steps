@@ -70,16 +70,16 @@ object SpotFixRule {
         return if (abs(fix.capturedAtEpochSecond - markedAtEpochSecond) < abs(best.capturedAtEpochSecond - markedAtEpochSecond)) fix else best
     }
 
+    /** Whether [fix] is the fix a spot captured at [capturedAtEpochSecond], at [latitude], [longitude] was placed at - step 5. */
+    fun isSameFix(fix: RawLocationSample, capturedAtEpochSecond: Long, latitude: Double, longitude: Double): Boolean =
+        fix.capturedAtEpochSecond == capturedAtEpochSecond && fix.latitude == latitude && fix.longitude == longitude
+
     /**
      * Whether a closer fix than [best] (a candidate, or null for none yet) is still worth waiting
      * for - steps 2 and 3: always without a candidate; never once [best] was captured at or after
      * [markedAtEpochSecond]; otherwise when the phone may have moved more than [MAX_DRIFT_METERS]
      * since [best], at the speed it reported (none counts as standing still).
      */
-    /** Whether [fix] is the fix a spot captured at [capturedAtEpochSecond], at [latitude], [longitude] was placed at - step 5. */
-    fun isSameFix(fix: RawLocationSample, capturedAtEpochSecond: Long, latitude: Double, longitude: Double): Boolean =
-        fix.capturedAtEpochSecond == capturedAtEpochSecond && fix.latitude == latitude && fix.longitude == longitude
-
     fun needsCloserFix(best: RawLocationSample?, markedAtEpochSecond: Long): Boolean {
         if (best == null) return true
         val secondsBefore = markedAtEpochSecond - best.capturedAtEpochSecond

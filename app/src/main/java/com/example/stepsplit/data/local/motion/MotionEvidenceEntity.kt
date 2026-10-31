@@ -9,7 +9,7 @@ import androidx.room.PrimaryKey
  * Transition API event, or one flattened `DetectedActivity` row from one Sampling API result.
  * Kept forever available for diagnostics/audit (compacted after
  * [com.example.stepsplit.domain.validation.ValidationConstants.motionEvidenceRetentionDays] - see
- * [MotionEvidenceDao.deleteOlderThan] - but never the source of truth for "what is currently
+ * `MotionEvidenceDao.deleteOlderThan` (since removed) - but never the source of truth for "what is currently
  * happening"; that is [ActivityIntervalEntity], permanently materialized from these rows and never
  * compacted).
  *
@@ -19,7 +19,7 @@ import androidx.room.PrimaryKey
  * - valid because Google Play services does not redeliver pending Transition/Sampling events across
  * a reboot (registration itself is invalidated by one). [bootSessionId] is `Settings.Global.BOOT_COUNT`
  * at receipt time, kept for audit/diagnostics; [dedupeKey] is what actually makes replayed/duplicate
- * delivery idempotent (see [MotionEvidenceDao.insertIgnoringDuplicates]).
+ * delivery idempotent (see `MotionEvidenceDao.insertIgnoringDuplicates` (since removed)).
  */
 @Entity(
     tableName = "motion_evidence",
@@ -54,7 +54,7 @@ data class MotionEvidenceEntity(
      * - deterministic from the result's own [com.google.android.gms.location.ActivityRecognitionResult.getElapsedRealtimeMillis],
      * never a randomly generated id, so a replayed/retried identical result produces the identical
      * batchId rather than masquerading as a second batch. Every `DetectedActivity` flattened from
-     * one result shares the same batchId - see [MotionEvidenceDao.getTopActivityForBatch].
+     * one result shares the same batchId - see `MotionEvidenceDao.getTopActivityForBatch` (since removed).
      */
     val batchId: String?,
 )
