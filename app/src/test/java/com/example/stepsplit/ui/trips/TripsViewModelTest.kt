@@ -231,7 +231,6 @@ class TripsViewModelTest {
             calls.incrementAndGet()
             answer.await()
         })
-        // After the launch-time reconciliation, which would mark an ACTIVE trip with no service INTERRUPTED.
         viewModel.uiState.first { !it.isLoading }
         val tripId = database.tripDao().insert(tripEntity(fixedNow.epochSecond - 600, TripState.ACTIVE))
         val idle = viewModel.uiState.first { it.activeTrip != null }

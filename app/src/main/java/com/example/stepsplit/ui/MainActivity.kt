@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
         routeImportEvent = if (savedInstanceState == null) importEventForIntent(intent) else null
 
         val container = (application as StepSplitApplication).container
+        container.reconcileTripOnce()
 
         setContent {
             StepSplitTheme {

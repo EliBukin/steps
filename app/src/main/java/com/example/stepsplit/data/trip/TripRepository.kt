@@ -530,7 +530,8 @@ class TripRepository(
     }
 
     /**
-     * Called once per process start (see [com.example.stepsplit.ui.trips.TripsViewModel]) to
+     * Called once per process, when the app's screen is first created (see
+     * [com.example.stepsplit.di.AppContainer.reconcileTripOnce]), to
      * honestly reconcile an ACTIVE trip whose recording service cannot be confirmed running in
      * *this* process - most plausibly because the app was force-stopped, or Android chose not to
      * restart the service. [isServiceRunning] is evaluated by the caller (only it knows the

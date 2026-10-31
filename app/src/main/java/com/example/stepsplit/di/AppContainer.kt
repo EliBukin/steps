@@ -35,12 +35,15 @@ import com.example.stepsplit.debug.DeviceDiagnostics
 import com.example.stepsplit.debug.DeviceDiagnosticsSnapshot
 import com.example.stepsplit.domain.time.DeviceZoneClock
 import com.example.stepsplit.ui.settings.regionName
+import com.example.stepsplit.trip.service.TripRecordingService
 import java.io.File
 import java.time.Clock
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Hand-written dependency container - the app is a single module with a handful of
@@ -189,6 +192,21 @@ class AppContainer(
         locationClient = locationClient,
         scope = tripRecordingScope,
     )
+
+    private val tripReconciled = AtomicBoolean(false)
+
+    /**
+     * Once per process, when the app's screen is first created ([com.example.stepsplit.ui.MainActivity]):
+     * an ACTIVE trip whose recording service isn't running in this process is marked interrupted
+     * (see [TripRepository.reconcileActiveTripOnLaunch]), before any tab - the Map tab, say - shows
+     * it as recording. Not from [com.example.stepsplit.StepSplitApplication.onCreate]: when Android
+     * starts the process to restart the recording service, that runs before the service does, and
+     * would interrupt the trip the restart is about to recover.
+     */
+    fun reconcileTripOnce() {
+        if (!tripReconciled.compareAndSet(false, true)) return
+        tripRecordingScope.launch { tripRepository.reconcileActiveTripOnLaunch(TripRecordingService.isRunning) }
+    }
 
     // Marks a spot on the trip being recorded, for the Trips screen's button and the recording
     // notification's action alike. Its work runs on tripRecordingScope, so a spot that is waiting

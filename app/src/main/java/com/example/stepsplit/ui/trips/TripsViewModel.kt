@@ -8,7 +8,6 @@ import com.example.stepsplit.domain.model.TripPoint
 import com.example.stepsplit.domain.model.TripState
 import com.example.stepsplit.domain.model.TripSummary
 import com.example.stepsplit.domain.trip.SmoothedRoute
-import com.example.stepsplit.trip.service.TripRecordingService
 import java.time.Clock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,12 +61,6 @@ class TripsViewModel(
     /** The displayed route for a list of raw points - a parameter only so a test can count how often it runs. */
     private val smoothRoute: (List<TripPoint>) -> SmoothedRoute = ::smoothedRoute,
 ) : ViewModel() {
-
-    init {
-        // Once per process start - see TripRepository.reconcileActiveTripOnLaunch's own doc
-        // comment for what this does and its inherent timing caveat.
-        viewModelScope.launch { repository.reconcileActiveTripOnLaunch(TripRecordingService.isRunning) }
-    }
 
     private val activeTripId: Flow<Long?> = repository.observeTrips()
         .map { trips -> trips.firstOrNull { it.state == TripState.ACTIVE }?.id }
