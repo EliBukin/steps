@@ -30,7 +30,9 @@ data class MapPackManifest(val schema: Int, val regions: List<MapPackRegion>) {
 
         /**
          * Reads [json], resolving each file's name against [manifestUrl] (the files sit next to the
-         * manifest). Null when it isn't a manifest this app understands.
+         * manifest). Null when it isn't a manifest this app understands - or when a region's id or
+         * version, or a file's name, isn't a plain name ([MapPackFile.isSafeName]): each is a folder
+         * or file name on the phone, and folders are deleted with everything in them.
          */
         fun parse(json: String, manifestUrl: String): MapPackManifest? = runCatching {
             val root = Json.parseToJsonElement(json).jsonObject
@@ -41,8 +43,8 @@ data class MapPackManifest(val schema: Int, val regions: List<MapPackRegion>) {
         }.getOrNull()
 
         private fun region(json: JsonObject, manifestUrl: String) = MapPackRegion(
-            id = json.getValue("id").jsonPrimitive.content,
-            version = json.getValue("version").jsonPrimitive.content,
+            id = json.getValue("id").jsonPrimitive.content.also { require(MapPackFile.isSafeName(it)) { "bad region id $it" } },
+            version = json.getValue("version").jsonPrimitive.content.also { require(MapPackFile.isSafeName(it)) { "bad version $it" } },
             minAppVersionCode = json["minAppVersionCode"]?.jsonPrimitive?.intOrNull ?: 0,
             area = MapPackArea.fromJson(json.getValue("area").jsonArray),
             files = json.getValue("files").jsonArray.map { file ->
@@ -83,7 +85,10 @@ data class MapPackFile(val role: String, val name: String, val url: String, val 
         /** Heights for the hill shading (Terrarium-encoded WebP tiles). */
         const val ROLE_DEM = "dem"
 
-        /** A plain file name: no folders, so a manifest can never point a download outside the pack's folder. */
+        /**
+         * A plain name: no folders, no leading dot, not empty - so a manifest can never point a
+         * download, or a folder that is deleted, outside the pack's folder.
+         */
         fun isSafeName(name: String) = name.matches(Regex("[A-Za-z0-9._-]+")) && !name.startsWith(".")
     }
 }

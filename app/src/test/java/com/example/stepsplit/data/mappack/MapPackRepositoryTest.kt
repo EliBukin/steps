@@ -7,9 +7,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -114,7 +116,6 @@ class MapPackRepositoryTest {
         val pack = state.installed.single()
         assertEquals("2026-10-29", pack.version)
         assertTrue(pack.vectorFile.readBytes().contentEquals(MapPackTestData.vectorBytes))
-        assertEquals(listOf(pack), repository.installedPacks.value)
         assertTrue("downloading a pack answers the Map tab's offer", state.offerAnswered)
         assertEquals(2, downloader.enqueued.size)
     }
@@ -307,11 +308,103 @@ class MapPackRepositoryTest {
         assertNotNull(repository.state.value.download)
 
         broken = true
-        advanceTimeBy(1_500)
+        advanceTimeBy(61_000)
         assertEquals(emptyList<Throwable>(), escaped)
         assertEquals(MapPacksState.Problem.DOWNLOAD_FAILED, repository.state.value.problem)
         assertNull(repository.state.value.download)
         assertNull(MapPackStore(root).readPendingDownload())
+    }
+
+    @Test
+    fun `the download's record is written before each file goes to the download manager`() = runTest {
+        val fake = FakeMapPackDownloader()
+        val recordedBeforeEach = mutableListOf<List<Long>?>()
+        val downloader = object : MapPackDownloader by fake {
+            override fun enqueue(url: String, destination: File, title: String, wifiOnly: Boolean): Long {
+                recordedBeforeEach += MapPackStore(root).readPendingDownload()?.downloadIds
+                return fake.enqueue(url, destination, title, wifiOnly)
+            }
+        }
+        val repository = repository(downloader)
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceTimeBy(1)
+
+        assertEquals(listOf(emptyList(), listOf(100L)), recordedBeforeEach)
+        assertEquals(listOf(100L, 101L), MapPackStore(root).readPendingDownload()!!.downloadIds)
+    }
+
+    @Test
+    fun `a download the app ended in the middle of handing over is cancelled on the next start`() = runTest {
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING))
+        val firstProcess = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        repository(fake, scope = firstProcess).apply {
+            refreshManifest()
+            advanceUntilIdle()
+            download("israel")
+        }
+        advanceTimeBy(1)
+        firstProcess.cancel()
+        // The app ended right after the first of the two files was handed over: its record has one id.
+        val store = MapPackStore(root)
+        store.writePendingDownload(store.readPendingDownload()!!.copy(downloadIds = listOf(100L)))
+
+        val restarted = repository(fake)
+        advanceUntilIdle()
+        assertEquals(MapPacksState.Problem.DOWNLOAD_FAILED, restarted.state.value.problem)
+        assertNull(restarted.state.value.download)
+        assertNull(store.readPendingDownload())
+        assertEquals(listOf(100L), fake.cancelled)
+        assertFalse(File(root, "israel/download-2026-10-29").exists())
+    }
+
+    @Test
+    fun `a pack installed just before the app ended is not reported as failed on the next start`() = runTest {
+        val repository = repository()
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+        val pending = PendingDownload("israel", "2026-10-29", listOf(100L, 101L), MapPackStore(root).readCachedManifest()!!)
+        // The app ended between installing the pack and clearing its record.
+        MapPackStore(root).writePendingDownload(pending)
+
+        val restarted = repository()
+        advanceUntilIdle()
+        assertNull(restarted.state.value.problem)
+        assertNull(restarted.state.value.download)
+        assertEquals("2026-10-29", restarted.state.value.installed.single().version)
+        assertNull(MapPackStore(root).readPendingDownload())
+    }
+
+    @Test
+    fun `a download is asked about every second on screen, and once a minute with the app in the background`() = runTest {
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.RUNNING))
+        var looks = 0
+        val downloader = object : MapPackDownloader by fake {
+            override fun status(ids: List<Long>) = fake.status(ids).also { looks++ }
+        }
+        val repository = repository(downloader)
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceTimeBy(1)
+        assertEquals(1, looks)
+
+        advanceTimeBy(30_000)
+        assertEquals("nobody looks", 1, looks)
+        // A screen shows the download: asked at once, then every second.
+        val screen = launch(UnconfinedTestDispatcher(testScheduler)) { repository.state.collect {} }
+        advanceTimeBy(10_500)
+        assertTrue("looks $looks", looks in 11..13)
+
+        screen.cancel()
+        val before = looks
+        advanceTimeBy(119_000)
+        assertTrue("looks ${looks - before}", looks - before in 2..3)
+        repository.cancelDownload()
+        advanceUntilIdle()
     }
 
     @Test

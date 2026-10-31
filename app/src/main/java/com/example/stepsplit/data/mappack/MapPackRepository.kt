@@ -9,17 +9,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the Offline maps settings show; see [MapPackRepository]. */
 data class MapPacksState(
@@ -75,7 +73,9 @@ class SharedPreferencesMapPackPreferences(context: Context) : MapPackPreferences
  * Nothing here runs on its own schedule: the manifest is read only when the Offline maps settings
  * open ([refreshManifest]), and files download only when the user taps Download. A download keeps
  * going in Android's download manager if the app closes; the next time the app starts, the
- * finished files are checked and installed (or the progress picked up again).
+ * finished files are checked and installed (or the progress picked up again). While a download
+ * runs, the download manager is asked how it goes every [pollMillis] while a screen shows [state],
+ * and only every [backgroundPollMillis] while none does (the app in the background).
  *
  * [store] is null when the phone's storage isn't available; then nothing can be downloaded and no
  * pack is installed.
@@ -99,13 +99,10 @@ class MapPackRepository(
     /** Bytes a download may still use in a folder (see [allocatableBytes]). */
     private val freeBytes: (File) -> Long,
     private val pollMillis: Long = 1_000,
+    private val backgroundPollMillis: Long = 60_000,
 ) {
     private val _state = MutableStateFlow(MapPacksState(wifiOnly = preferences.wifiOnly, offerAnswered = preferences.offerAnswered))
     val state: StateFlow<MapPacksState> = _state.asStateFlow()
-
-    /** The packs the map draws from. */
-    val installedPacks: StateFlow<List<InstalledMapPack>> =
-        _state.map { it.installed }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val mutex = Mutex()
     private var pollJob: Job? = null
@@ -177,10 +174,14 @@ class MapPackRepository(
                     withContext(io) {
                         downloadDir.deleteRecursively()
                         downloadDir.mkdirs()
+                        // The record first, then each file's id as soon as it has one: if the app ends
+                        // in between, the next start finds the download and cancels it (see pollDownload),
+                        // instead of the download manager going on with files nothing knows about.
+                        store.writePendingDownload(PendingDownload(region.id, region.version, ids.toList(), manifestText))
                         region.files.forEach { file ->
                             ids += downloader.enqueue(file.url, File(downloadDir, file.name), downloadTitle(region.id), preferences.wifiOnly)
+                            store.writePendingDownload(PendingDownload(region.id, region.version, ids.toList(), manifestText))
                         }
-                        store.writePendingDownload(PendingDownload(region.id, region.version, ids, manifestText))
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -235,7 +236,12 @@ class MapPackRepository(
             while (true) {
                 val done = mutex.withLock { pollOnce() }
                 if (done) break
-                delay(pollMillis)
+                if (_state.subscriptionCount.value > 0) {
+                    delay(pollMillis)
+                } else {
+                    // Nobody looks: once in a while, or as soon as a screen shows the download again.
+                    withTimeoutOrNull(backgroundPollMillis) { _state.subscriptionCount.first { it > 0 } }
+                }
             }
         }
     }
@@ -271,8 +277,19 @@ class MapPackRepository(
 
     private suspend fun pollDownload(store: MapPackStore, pending: PendingDownload, onChecking: () -> Unit): Boolean {
         val region = pending.manifest.parse()?.regions?.firstOrNull { it.id == pending.regionId && it.version == pending.version }
+        if (region != null && withContext(io) { store.installed() }.any { it.regionId == region.id && it.version == region.version }) {
+            // Already installed: the app ended after installing it, before the record was cleared.
+            withContext(io) { abandon(store, pending.downloadIds, store.downloadDir(pending.regionId, pending.version)) }
+            _state.update { it.copy(download = null) }
+            return true
+        }
         val statuses = withContext(io) { downloader.status(pending.downloadIds) }
-        if (region == null || statuses.any { it.state == MapPackDownloadStatus.State.FAILED || it.state == MapPackDownloadStatus.State.GONE }) {
+        if (
+            region == null ||
+            // Fewer ids than files: the app ended while the files were being handed to the download manager.
+            pending.downloadIds.size != region.files.size ||
+            statuses.any { it.state == MapPackDownloadStatus.State.FAILED || it.state == MapPackDownloadStatus.State.GONE }
+        ) {
             withContext(io) { abandon(store, pending.downloadIds, store.downloadDir(pending.regionId, pending.version)) }
             _state.update { it.copy(download = null, problem = MapPacksState.Problem.DOWNLOAD_FAILED) }
             return true

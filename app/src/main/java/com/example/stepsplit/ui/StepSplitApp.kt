@@ -95,8 +95,9 @@ fun StepSplitApp(
         if (routeImportEvent != null) navController.navigateToTab(Screen.OpenMap.route)
     }
 
-    // The offline map packs on the phone, for every map in the app (see rememberMapBackground).
-    val mapPacks by container.mapPackRepository.state.collectAsState()
+    // The offline map packs on the phone, for every map in the app (see rememberMapBackground). With
+    // the lifecycle, so a download in progress is asked about less often while the app isn't on screen.
+    val mapPacks by container.mapPackRepository.state.collectAsStateWithLifecycle()
 
     CompositionLocalProvider(LocalMapPacks provides mapPacks.installed) {
         Scaffold(
@@ -213,7 +214,7 @@ fun StepSplitApp(
                     val viewModel: SettingsViewModel = viewModel(factory = factory)
                     val uiState by viewModel.uiState.collectAsState()
                     val offlineMaps: OfflineMapsViewModel = viewModel(factory = factory)
-                    val offlineMapsState by offlineMaps.state.collectAsState()
+                    val offlineMapsState by offlineMaps.state.collectAsStateWithLifecycle()
                     SettingsScreen(
                         uiState = uiState,
                         onSetDailyGoal = viewModel::setDailyGoal,
