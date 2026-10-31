@@ -1,9 +1,11 @@
 package com.example.stepsplit.domain.route
 
+import java.util.concurrent.CancellationException
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class RouteSimplifierTest {
@@ -74,6 +76,50 @@ class RouteSimplifierTest {
         val fitted = RouteSimplifier.fitToLimit(listOf(RouteLine(segments)), maxPoints = 1_000)
 
         assertEquals(500, fitted.single().segments.size)
+    }
+
+    /** A perfectly regular zigzag: every other point [amplitudeMeters] off the line, all equally far. */
+    private fun zigzag(n: Int, amplitudeMeters: Double = 50.0) = RouteSegment(
+        DoubleArray(n) { RouteTestShapes.LAT0 + (if (it % 2 == 0) 0.0 else amplitudeMeters) / RouteTestShapes.METERS_PER_DEGREE },
+        DoubleArray(n) { RouteTestShapes.LON0 + it * 1e-4 },
+        DoubleArray(n) { Double.NaN },
+    )
+
+    @Test
+    fun `a regular zigzag takes time in proportion to its points, not their square`() {
+        // Before, 40,000 points took about 3.7 s on a desktop and 200,000 would take about 90 s.
+        val segment = zigzag(200_001)
+        val start = System.nanoTime()
+        val kept = RouteSimplifier.keptIndices(segment, 2.0)
+        val millis = (System.nanoTime() - start) / 1_000_000
+
+        assertEquals("every corner is further off than the tolerance", segment.size, kept.size)
+        assertTrue("took $millis ms", millis < 5_000)
+        assertArrayEquals(intArrayOf(0, segment.size - 1), RouteSimplifier.keptIndices(segment, 64.0))
+    }
+
+    @Test
+    fun `a file of a million points is thinned evenly to twice the limit first`() {
+        val million = RouteLine(listOf(RouteTestShapes.circle(5_000.0, 999_999)))
+
+        val thinned = RouteSimplifier.evenly(listOf(million), 200_000).single().segments.single()
+
+        assertTrue("${thinned.size} points", thinned.size in 190_000..200_001)
+        assertEquals(million.segments.single().latitudes.last(), thinned.latitudes.last(), 0.0)
+        assertSame("already under it: as it is", million, RouteSimplifier.evenly(listOf(million), 1_000_000).single())
+    }
+
+    @Test
+    fun `simplifying stops when the work is cancelled`() {
+        var checks = 0
+        try {
+            RouteSimplifier.fitToLimit(listOf(RouteLine(listOf(RouteTestShapes.circle(3_000.0, 40_000)))), maxPoints = 1_000) {
+                if (++checks > 10) throw CancellationException("left the screen")
+            }
+            fail("not cancelled")
+        } catch (_: CancellationException) {
+        }
+        assertEquals(11, checks)
     }
 
     @Test

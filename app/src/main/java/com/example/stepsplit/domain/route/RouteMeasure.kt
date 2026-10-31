@@ -11,6 +11,9 @@ import com.example.stepsplit.domain.trip.TripElevation
  * along the distance, then rises and falls counted past a dead band - so a planned route and the
  * trip recorded along it get comparable numbers. Each line is measured on its own and the lines
  * add up; a line with too few heights adds nothing, and with none anywhere there is no climb.
+ * Within a line, each segment is smoothed and counted on its own too: nothing joins the gap
+ * between two segments, not even the height step across it (a cable car, a recording paused on
+ * the way up).
  */
 object RouteMeasure {
     data class Measure(
@@ -49,24 +52,38 @@ object RouteMeasure {
     }
 
     private fun climbAndDescent(line: RouteLine): Pair<Double, Double>? {
-        val distances = ArrayList<Double>()
-        val heights = ArrayList<Double>()
+        // Each segment's heights with their distance along the line (which a gap doesn't advance).
+        val distances = mutableListOf<DoubleArray>()
+        val heights = mutableListOf<DoubleArray>()
         var along = 0.0
         for (segment in line.segments) {
+            val segmentDistances = ArrayList<Double>()
+            val segmentHeights = ArrayList<Double>()
             for (i in 0 until segment.size) {
                 if (i > 0) along += RouteMath.haversineMeters(segment.latitudes[i - 1], segment.longitudes[i - 1], segment.latitudes[i], segment.longitudes[i])
                 val height = segment.elevations[i]
                 if (height.isFinite()) {
-                    distances += along
-                    heights += height
+                    segmentDistances += along
+                    segmentHeights += height
                 }
             }
+            if (segmentHeights.isNotEmpty()) {
+                distances += segmentDistances.toDoubleArray()
+                heights += segmentHeights.toDoubleArray()
+            }
         }
-        if (heights.size < TripElevation.MIN_POINTS_WITH_HEIGHT || heights.size < line.pointCount * TripElevation.MIN_SHARE_WITH_HEIGHT) return null
-        if (distances.last() - distances.first() < TripElevation.MIN_PROFILE_METERS) return null
-        val distanceArray = distances.toDoubleArray()
-        val smoothed = TripElevation.smooth(distanceArray, heights.toDoubleArray(), TripElevation.smoothingSigmaMeters(distanceArray))
-        return TripElevation.climbAndDescent(smoothed)
+        val heightCount = heights.sumOf { it.size }
+        if (heightCount < TripElevation.MIN_POINTS_WITH_HEIGHT || heightCount < line.pointCount * TripElevation.MIN_SHARE_WITH_HEIGHT) return null
+        if (distances.last().last() - distances.first().first() < TripElevation.MIN_PROFILE_METERS) return null
+        var climb = 0.0
+        var descent = 0.0
+        for ((segmentDistances, segmentHeights) in distances.zip(heights)) {
+            val smoothed = TripElevation.smooth(segmentDistances, segmentHeights, TripElevation.smoothingSigmaMeters(segmentDistances))
+            val (segmentClimb, segmentDescent) = TripElevation.climbAndDescent(smoothed)
+            climb += segmentClimb
+            descent += segmentDescent
+        }
+        return climb to descent
     }
 
     private fun bounds(lines: List<RouteLine>, waypoints: List<RouteWaypoint>): RouteBounds? {

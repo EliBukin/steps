@@ -26,6 +26,8 @@ import com.example.stepsplit.ui.trips.smoothedRoute
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -179,7 +181,7 @@ class OpenMapViewModel(
             shown.mapNotNull { route ->
                 val loaded = loadedRoutes[route.id] ?: importedRouteRepository.geometry(route.id)?.let { geometry ->
                     LoadedRoute(
-                        drawnLines = geometry.lines.map(RouteSimplifier::forDrawing),
+                        drawnLines = geometry.lines.map { RouteSimplifier.forDrawing(it, currentCoroutineContext()::ensureActive) },
                         waypoints = geometry.waypoints,
                         follower = geometry.lines.takeIf { it.isNotEmpty() }?.let(::RouteFollower),
                     ).also { loadedRoutes[route.id] = it }

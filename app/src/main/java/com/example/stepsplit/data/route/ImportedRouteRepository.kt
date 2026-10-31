@@ -17,6 +17,8 @@ import java.security.MessageDigest
 import java.time.Clock
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -118,7 +120,7 @@ class ImportedRouteRepository(
         if (parsed.lines.isEmpty() && parsed.waypoints.isEmpty()) {
             return RouteImportOutcome.Failed(if (parsed.damaged) RouteImportProblem.DAMAGED else RouteImportProblem.NOTHING_TO_SHOW)
         }
-        val lines = RouteSimplifier.fitToLimit(parsed.lines, maxPoints)
+        val lines = RouteSimplifier.fitToLimit(parsed.lines, maxPoints, currentCoroutineContext()::ensureActive)
         val thinned = lines.sumOf { it.pointCount } < parsed.lines.sumOf { it.pointCount }
         val measure = RouteMeasure.measure(lines, parsed.waypoints)
         val bounds = checkNotNull(measure.bounds)
