@@ -83,10 +83,8 @@ class TripsViewModel(
     /**
      * The active trip's displayed distance, from the same `RouteSanitizer -> RouteSmoother`
      * pipeline every other route display/export uses (see [TripDetailViewModel]'s own doc comment) -
-     * not [TripSummary.distanceMeters] as persisted, which is accumulated live at accept-time and
-     * can still include outlier-inflated segments an in-progress
-     * [com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy] pass didn't catch, or ordinary
-     * wobble the live policy has no way to reduce (see [RouteSmoother]'s own doc comment). Once a
+     * [TripSummary.distanceMeters] as persisted isn't kept up while recording (see
+     * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]). Once a
      * trip is active this recomputes as it grows: the smoother's endpoint safeguard keeps the most
      * recent point exact, while earlier points are progressively properly-centered as later points
      * arrive - no special-casing needed for "still recording" vs. "finished". Deliberately its own

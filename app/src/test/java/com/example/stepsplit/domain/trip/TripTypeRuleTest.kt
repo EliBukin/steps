@@ -138,23 +138,6 @@ class TripTypeRuleTest {
         assertEquals(TripType.WALK, TripTypeRule.suggest(gappy.points))
     }
 
-    // ---- From an average speed ----
-
-    @Test
-    fun `from an average speed, 10 kmh and up is a drive`() {
-        assertEquals(TripType.WALK, TripTypeRule.fromAverageSpeed(distanceMeters = 4_490.0, durationSeconds = 3_600))
-        assertEquals(TripType.WALK, TripTypeRule.fromAverageSpeed(distanceMeters = 9_990.0, durationSeconds = 3_600))
-        assertEquals(TripType.DRIVE, TripTypeRule.fromAverageSpeed(distanceMeters = 10_000.0, durationSeconds = 3_600))
-        assertEquals(TripType.DRIVE, TripTypeRule.fromAverageSpeed(distanceMeters = 30_000.0, durationSeconds = 5_400))
-    }
-
-    @Test
-    fun `from an average speed, no time or no distance is a walk`() {
-        assertEquals(TripType.WALK, TripTypeRule.fromAverageSpeed(distanceMeters = 5_000.0, durationSeconds = 0))
-        assertEquals(TripType.WALK, TripTypeRule.fromAverageSpeed(distanceMeters = 0.0, durationSeconds = 600))
-        assertEquals(TripType.WALK, TripTypeRule.fromAverageSpeed(distanceMeters = 5_000.0, durationSeconds = -10))
-    }
-
     private companion object {
         const val METERS_PER_DEGREE_LATITUDE = 111_194.93
     }

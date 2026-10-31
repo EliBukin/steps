@@ -53,12 +53,5 @@ object TripTypeRule {
         return if (metersPerSecond * KMH_PER_METER_PER_SECOND > DRIVE_SPEED_KMH) TripType.DRIVE else TripType.WALK
     }
 
-    /** The type from an average speed alone - see [DRIVE_AVERAGE_SPEED_KMH]. No time or no distance is a walk. */
-    fun fromAverageSpeed(distanceMeters: Double, durationSeconds: Long): TripType {
-        if (durationSeconds <= 0L || distanceMeters <= 0.0) return TripType.WALK
-        val kmh = distanceMeters / durationSeconds * KMH_PER_METER_PER_SECOND
-        return if (kmh >= DRIVE_AVERAGE_SPEED_KMH) TripType.DRIVE else TripType.WALK
-    }
-
     private const val KMH_PER_METER_PER_SECOND = 3.6
 }

@@ -99,7 +99,9 @@ sealed interface RouteSampleDecision {
  *
  * Live, the first fix waits in memory for the next one (see
  * [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch]); read back, [RouteSanitizer]
- * looks ahead to the next stored point - the same pair, so both keep the same fixes.
+ * looks ahead to the next stored point - the same pair, so both keep the same fixes. Whether the
+ * jump counts is decided only when the points are read back ([RouteSanitizer]): live recording
+ * decides which fixes are kept, not what they mean.
  */
 object RoutePointAcceptancePolicy {
     /**

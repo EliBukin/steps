@@ -19,11 +19,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * A trip's distance across a gap - live (as recorded) and on screen (sanitized and smoothed) - in
- * the code re-review's probes: a gap walked counts, a gap driven counts, a drive between two walks
+ * A trip's distance across a gap on screen (its recorded points sanitized and smoothed, as every
+ * screen, the GPX file and Stats show it), in the code re-review's probes: a gap walked counts, a gap driven counts, a drive between two walks
  * counts nothing, and one glitched speed or one stray fix changes none of that. See
  * [com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy]'s "After a gap" and "A gap driven".
- * Made-up points in open sea.
+ * Made-up points in open sea. (Until review 2's C1 the trip also kept a live distance, checked here
+ * too; no screen showed it, so it is gone.)
  */
 @RunWith(RobolectricTestRunner::class)
 class TripGapDistanceTest {
@@ -52,8 +53,8 @@ class TripGapDistanceTest {
 
     private fun fix(meters: Double, t: Long, speed: Float, accuracy: Float = 8f) = RawLocationSample(north(meters), 20.0, accuracy, t, speedMetersPerSecond = speed)
 
-    /** The live and on-screen distance of a trip recorded from [fixes], one per batch; [interruptBefore]: the app is killed before that fix and the trip resumed. */
-    private suspend fun record(fixes: List<RawLocationSample>, interruptBefore: Int? = null): Pair<Double, Double> {
+    /** The on-screen distance of a trip recorded from [fixes], one per batch; [interruptBefore]: the app is killed before that fix and the trip resumed. */
+    private suspend fun record(fixes: List<RawLocationSample>, interruptBefore: Int? = null): Double {
         val clock = MutableClock(Instant.ofEpochSecond(fixes.first().capturedAtEpochSecond))
         val repository = TripRepository(database, clock)
         val tripId = repository.startTrip()
@@ -66,13 +67,11 @@ class TripGapDistanceTest {
             clock.instant = Instant.ofEpochSecond(fix.capturedAtEpochSecond + 1)
             repository.recordAcceptedBatch(tripId, listOf(fix))
         }
-        val onScreen = RouteSmoother.smooth(RouteSanitizer.sanitize(repository.getTripPoints(tripId)).points).distanceMeters
-        return repository.getTrip(tripId)!!.distanceMeters to onScreen
+        return RouteSmoother.smooth(RouteSanitizer.sanitize(repository.getTripPoints(tripId)).points).distanceMeters
     }
 
-    private fun assertDistance(expected: Double, recorded: Pair<Double, Double>, tolerance: Double) {
-        assertEquals("live", expected, recorded.first, tolerance)
-        assertEquals("on screen", expected, recorded.second, tolerance)
+    private fun assertDistance(expected: Double, onScreen: Double, tolerance: Double) {
+        assertEquals("on screen", expected, onScreen, tolerance)
     }
 
     /** 15 m/s, slowing to a stop at a light, a 1.5 km tunnel (100 s), a queue at 1 m/s, then 15 m/s. About 900 + 40 + 1,500 + 30 + 900 m. */

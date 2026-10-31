@@ -125,46 +125,13 @@ class TripRepositoryTest {
         assertEquals(trip.startEpochSecond, trip.endEpochSecond)
     }
 
-    @Test
-    fun `the first accepted point of a trip contributes zero distance`() = runTest {
-        val tripId = repository.startTrip()
-        repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond + 10)))
-
-        val trip = repository.getTrip(tripId)!!
-        assertEquals(0.0, trip.distanceMeters, 1e-9)
-        assertEquals(1, database.tripPointDao().getAllForTrip(tripId).size)
-    }
+    // The trip's stored distance is no longer kept up while recording (review 2, C1): every screen,
+    // the GPX file and Stats work it out from the points. Its live bookkeeping tests ("the first
+    // point adds nothing", "distance accumulates between accepted points") went with it; what is
+    // stored - the points, and the last point's time - is still checked below.
 
     @Test
-    fun `distance accumulates only between consecutive accepted points`() = runTest {
-        val tripId = repository.startTrip()
-        val t0 = fixedNow.epochSecond
-        // 30s gaps (not 10s): each ~111m segment implies ~3.7 m/s, safely under the plausibility
-        // ceiling - this test is about distance bookkeeping, not speed, so the timing here is
-        // deliberately generous rather than coupled to that threshold.
-        repository.recordAcceptedBatch(
-            tripId,
-            listOf(
-                sample(32.0000, 34.0000, t0 + 10),
-                sample(32.0010, 34.0000, t0 + 40),
-                sample(32.0020, 34.0000, t0 + 70),
-            ),
-        )
-
-        val points = repository.getTripPoints(tripId)
-        assertEquals(3, points.size)
-
-        val expectedDistance =
-            RouteMath.haversineMeters(32.0000, 34.0000, 32.0010, 34.0000) +
-                RouteMath.haversineMeters(32.0010, 34.0000, 32.0020, 34.0000)
-
-        val trip = repository.getTrip(tripId)!!
-        assertEquals(expectedDistance, trip.distanceMeters, 1e-6)
-        assertEquals(t0 + 70, trip.lastAcceptedPointEpochSecond)
-    }
-
-    @Test
-    fun `a rejected point in a batch is not persisted and does not affect distance`() = runTest {
+    fun `a rejected point in a batch is not persisted`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.recordAcceptedBatch(
@@ -180,21 +147,18 @@ class TripRepositoryTest {
         val points = repository.getTripPoints(tripId)
         assertEquals(2, points.size)
         assertTrue(points.none { it.latitude == 37.0000 })
-
-        val expectedDistance = RouteMath.haversineMeters(32.0000, 34.0000, 32.0001, 34.0000)
-        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
     }
 
     /**
-     * Ties the strengthened [RoutePointAcceptancePolicy] directly to persisted distance, using the
+     * Ties the strengthened [RoutePointAcceptancePolicy] directly to the stored points, using the
      * confirmed A55 field-defect's own implied/reported speed shape: a jump implying ~9 m/s (within
      * the defect's observed 8-11 m/s range) while Android itself reports ~1.5 m/s (within the
-     * defect's observed 1.3-1.8 m/s range) for that exact fix. Must never be accepted or persisted,
-     * and must never inflate the trip's stored distance - see [com.example.stepsplit.domain.trip.RouteSanitizerTest]
-     * for the equivalent proof at the pure route-cleaning layer.
+     * defect's observed 1.3-1.8 m/s range) for that exact fix. Must never be accepted or persisted -
+     * see [com.example.stepsplit.domain.trip.RouteSanitizerTest] for the equivalent proof at the pure
+     * route-cleaning layer.
      */
     @Test
-    fun `a jump matching the confirmed A55 defect pattern is rejected live and never inflates persisted distance`() = runTest {
+    fun `a jump matching the confirmed A55 defect pattern is rejected live and never stored`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.recordAcceptedBatch(
@@ -210,14 +174,7 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(2, points.size)
-
-        val expectedGoodDistance = RouteMath.haversineMeters(
-            32.0000,
-            34.0000,
-            32.0000 + Math.toDegrees(14.0 / EARTH_RADIUS_METERS),
-            34.0000,
-        )
-        assertEquals(expectedGoodDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+        assertTrue(points.none { it.latitude > 32.0000 + Math.toDegrees(20.0 / EARTH_RADIUS_METERS) })
     }
 
     // ---- After a gap: a new stretch (see RoutePointAcceptancePolicy's "After a gap" section) ----
@@ -239,8 +196,12 @@ class TripRepositoryTest {
     private fun pathMeters(points: List<com.example.stepsplit.domain.model.TripPoint>) =
         points.zipWithNext { a, b -> RouteMath.haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) }.sum()
 
+    /** The distance every screen shows for [tripId]: its points through `RouteSanitizer -> RouteSmoother`. */
+    private suspend fun displayedMeters(tripId: Long) =
+        RouteSmoother.smooth(RouteSanitizer.sanitize(repository.getTripPoints(tripId)).points).distanceMeters
+
     @Test
-    fun `a 20 km drive before a Resume, then a 5 km walk, is about 5 km - live and on every screen`() = runTest {
+    fun `a 20 km drive before a Resume, then a 5 km walk, is about 5 km on every screen`() = runTest {
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()
         val before = walk(0.0, t0 + 5, 6)
@@ -257,7 +218,6 @@ class TripRepositoryTest {
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size, points.size)
         val walked = 13.0 * 5 + 13.0 * 385
-        assertEquals("the drive is no distance", walked, repository.getTrip(tripId)!!.distanceMeters, 1.0)
         val sanitized = RouteSanitizer.sanitize(points)
         assertEquals("every screen shows them all", points.map { it.capturedAtEpochSecond }, sanitized.points.map { it.capturedAtEpochSecond })
         assertTrue(sanitized.points[before.size].startsStretch)
@@ -269,7 +229,7 @@ class TripRepositoryTest {
     }
 
     @Test
-    fun `a walking dropout of three minutes still counts its straight line, live and on screen`() = runTest {
+    fun `a walking dropout of three minutes keeps every fix and still counts its straight line on screen`() = runTest {
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()
         val before = walk(0.0, t0 + 5, 6)
@@ -279,13 +239,12 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size, points.size)
-        assertEquals(pathMeters(points), repository.getTrip(tripId)!!.distanceMeters, 1e-6)
         assertEquals(points, RouteSanitizer.sanitize(points).points)
         assertEquals(pathMeters(points), RouteSmoother.smooth(points).distanceMeters, 5.0)
     }
 
     @Test
-    fun `a tunnel after a red light, slow at both ends, counts as the drive it was - live and on screen`() = runTest {
+    fun `a tunnel after a red light, slow at both ends, counts as the drive it was on screen`() = runTest {
         // The code re-review's probe: 15 m/s, slowing to a stop, a 1.5 km tunnel (100 s), a queue at 1 m/s, 15 m/s again.
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()
@@ -306,14 +265,13 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         // About 900 m, 32 m of slowing, the 1.5 km tunnel, 30 m of queue, then 900 m.
-        assertEquals(3_362.0, repository.getTrip(tripId)!!.distanceMeters, 30.0)
         val displayed = RouteSmoother.smooth(RouteSanitizer.sanitize(points).points)
         assertTrue(displayed.points.none { it.startsStretch })
         assertEquals(3_362.0, displayed.distanceMeters, 30.0)
     }
 
     @Test
-    fun `a two-minute tunnel while driving still counts its straight line, live and on screen`() = runTest {
+    fun `a two-minute tunnel while driving keeps every fix and still counts its straight line on screen`() = runTest {
         val t0 = fixedNow.epochSecond
         val tripId = repository.startTrip()
         fun drive(fromMeters: Double, startAt: Long, count: Int) =
@@ -325,7 +283,6 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size, points.size)
-        assertEquals(200.0 * 10 + 2_400.0, repository.getTrip(tripId)!!.distanceMeters, 1.0)
         assertEquals(points, RouteSanitizer.sanitize(points).points)
         assertEquals(pathMeters(points), RouteSmoother.smooth(points).distanceMeters, 5.0)
     }
@@ -344,7 +301,7 @@ class TripRepositoryTest {
         deliver(tripId, walk(20_000.0, resumeAt, 90))
 
         assertEquals(91, repository.getTripPoints(tripId).size)
-        assertEquals("the jump is no distance", 13.0 * 89, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+        assertEquals("the jump is no distance", 13.0 * 89, displayedMeters(tripId), 20.0)
     }
 
     @Test
@@ -373,8 +330,7 @@ class TripRepositoryTest {
         deliver(tripId, (path + spikes).sortedBy { it.capturedAtEpochSecond })
 
         val points = repository.getTripPoints(tripId)
-        assertEquals(path.size, points.size)
-        assertEquals(13.0 * 11, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+        assertEquals(path.map { it.capturedAtEpochSecond }, points.map { it.capturedAtEpochSecond })
     }
 
     @Test
@@ -394,7 +350,6 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + walkOn.size, points.size)
-        assertEquals(pathMeters(points), repository.getTrip(tripId)!!.distanceMeters, 1e-6)
         assertTrue(points.none { it.latitude > 32.0 + degreesLatFor(1_000.0) || it.latitude < 32.0 })
     }
 
@@ -411,7 +366,7 @@ class TripRepositoryTest {
         val points = repository.getTripPoints(tripId)
         assertEquals(before.size + after.size - 1, points.size)
         assertEquals(points.map { it.capturedAtEpochSecond }, RouteSanitizer.sanitize(points).points.map { it.capturedAtEpochSecond })
-        assertEquals(13.0 * 5 + 13.0 * 8, repository.getTrip(tripId)!!.distanceMeters, 1.0)
+        assertEquals("the jump is no distance", 13.0 * 5 + 13.0 * 8, displayedMeters(tripId), 20.0)
     }
 
     /**
@@ -435,10 +390,6 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(fixes.size, points.size)
-        val expectedDistance = (1 until fixes.size).sumOf { i ->
-            RouteMath.haversineMeters(fixes[i - 1].latitude, fixes[i - 1].longitude, fixes[i].latitude, fixes[i].longitude)
-        }
-        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
         assertEquals(points, RouteSanitizer.sanitize(points).points)
     }
 
@@ -460,47 +411,38 @@ class TripRepositoryTest {
 
         val points = repository.getTripPoints(tripId)
         assertEquals(listOf(t0 + 10, t0 + 40, t0 + 70), points.map { it.capturedAtEpochSecond })
-
-        val expectedDistance =
-            RouteMath.haversineMeters(32.0000, 34.0000, 32.0010, 34.0000) +
-                RouteMath.haversineMeters(32.0010, 34.0000, 32.0020, 34.0000)
-        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
+        assertEquals(t0 + 70, repository.getTrip(tripId)!!.lastAcceptedPointEpochSecond)
     }
 
     @Test
-    fun `a stale callback delivered after finish never appends points or increases distance`() = runTest {
+    fun `a stale callback delivered after finish never appends points`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, t0 + 10)))
         repository.finishTrip(tripId, t0 + 10)
-        val distanceAfterFinish = repository.getTrip(tripId)!!.distanceMeters
         val pointCountAfterFinish = repository.getTripPoints(tripId).size
 
         // A late callback for a fix captured before Finish, delivered after it.
         repository.recordAcceptedBatch(tripId, listOf(sample(32.001, 34.0, t0 + 20)))
 
         assertEquals(pointCountAfterFinish, repository.getTripPoints(tripId).size)
-        assertEquals(distanceAfterFinish, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
+        assertEquals(t0 + 10, repository.getTrip(tripId)!!.lastAcceptedPointEpochSecond)
     }
 
     @Test
-    fun `distance and last-accepted-point columns always stay consistent with the stored points`() = runTest {
+    fun `the last-accepted-point column always stays consistent with the stored points`() = runTest {
         val tripId = repository.startTrip()
         val t0 = fixedNow.epochSecond
-        var expectedDistance = 0.0
-        var previous: RawLocationSample? = null
         // 30s spacing (not 10s): each ~55m segment implies ~1.9 m/s, safely under the plausibility
-        // ceiling with margin - this test is about distance/last-point bookkeeping staying
-        // consistent across repeated single-sample batches, not about speed.
+        // ceiling with margin - this test is about last-point bookkeeping staying consistent across
+        // repeated single-sample batches, not about speed.
         val samples = (0 until 5).map { sample(32.0 + it * 0.0005, 34.0, t0 + 10 + it * 30L) }
-        for (s in samples) {
+        for ((index, s) in samples.withIndex()) {
             repository.recordAcceptedBatch(tripId, listOf(s))
-            previous?.let { expectedDistance += RouteMath.haversineMeters(it.latitude, it.longitude, s.latitude, s.longitude) }
-            previous = s
 
             val trip = repository.getTrip(tripId)!!
             val storedPoints = repository.getTripPoints(tripId)
-            assertEquals(expectedDistance, trip.distanceMeters, 1e-6)
+            assertEquals(index + 1, storedPoints.size)
             assertEquals(storedPoints.last().capturedAtEpochSecond, trip.lastAcceptedPointEpochSecond)
         }
     }
@@ -950,7 +892,6 @@ class TripRepositoryTest {
         repository.recordAcceptedBatch(tripId, listOf(sample(32.0, 34.0, fixedNow.epochSecond - 1)))
 
         assertEquals(0, repository.getTripPoints(tripId).size)
-        assertEquals(0.0, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
         assertNull(repository.getTrip(tripId)!!.lastAcceptedPointEpochSecond)
     }
 
@@ -979,8 +920,6 @@ class TripRepositoryTest {
         val points = repository.getTripPoints(tripId)
         assertEquals(2, points.size)
         assertTrue(points.none { it.latitude == 40.0 })
-        val expectedDistance = RouteMath.haversineMeters(32.0000, 34.0000, 32.0001, 34.0000)
-        assertEquals(expectedDistance, repository.getTrip(tripId)!!.distanceMeters, 1e-6)
     }
 
     @Test

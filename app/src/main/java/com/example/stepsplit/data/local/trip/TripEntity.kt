@@ -12,8 +12,10 @@ import androidx.room.PrimaryKey
  * [state] is [com.example.stepsplit.domain.model.TripState.name] - stored as a string, matching
  * this codebase's existing convention for enum columns (see
  * [com.example.stepsplit.data.local.bout.WalkBoutEntity.autoClassification]).
- * [distanceMeters] and [lastAcceptedPointEpochSecond] are updated atomically together with each
- * newly accepted [TripPointEntity] insert - see [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch].
+ * [lastAcceptedPointEpochSecond] is updated atomically together with each newly accepted
+ * [TripPointEntity] insert - see [com.example.stepsplit.data.trip.TripRepository.recordAcceptedBatch].
+ * [distanceMeters] is no longer kept up (0 for a trip recorded since): every screen, the GPX file
+ * and Stats work the distance out from the points. The column stays for the schema.
  *
  * [name] and [typeOverride] are the owner's own edits (schema v9), null until they make one:
  * [name] is already normalized by [com.example.stepsplit.domain.trip.TripName], and

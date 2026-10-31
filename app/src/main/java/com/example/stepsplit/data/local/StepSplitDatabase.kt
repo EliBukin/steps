@@ -289,9 +289,9 @@ abstract class StepSplitDatabase : RoomDatabase() {
          *   it keeps its date as its title, and its type is the automatic suggestion from its route
          *   (which is never stored, so existing trips need no backfill - see [TripTypeRule]).
          * - `deleted_trip_totals` gets `type`. Its rows have no route left to classify, so each
-         *   existing row gets its type from its average speed, the same rule as
-         *   [TripTypeRule.fromAverageSpeed]: a drive at [TripTypeRule.DRIVE_AVERAGE_SPEED_KMH] or
-         *   faster, otherwise a walk.
+         *   existing row gets its type from its average speed: a drive at
+         *   [TripTypeRule.DRIVE_AVERAGE_SPEED_KMH] or faster, otherwise a walk (no time or no
+         *   distance is a walk).
          */
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {

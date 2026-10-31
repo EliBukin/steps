@@ -309,10 +309,10 @@ class TripRecordingCommandControllerTest {
         // interruption, not about speed, so the movement here is deliberately well under the
         // plausibility ceiling rather than coupled to it.
         locationClient.emit(listOf(RawLocationSample(32.0001, 34.0, 10f, fixedNow.epochSecond + 20)))
-        withTimeout(5_000) { repository.observeTrip(tripId).first { (it?.distanceMeters ?: 0.0) > 0.0 } }
+        withTimeout(5_000) { database.tripPointDao().observeForTrip(tripId).first { it.size == 2 } }
 
-        val distanceBeforeInterruption = repository.getTrip(tripId)!!.distanceMeters
-        val pointsBeforeInterruption = repository.getTripPoints(tripId).size
+        // The distance every screen shows is worked out from these points.
+        val routeBeforeInterruption = repository.getTripPoints(tripId)
 
         reconcileOnRelaunch()
         assertEquals(TripState.INTERRUPTED.name, repository.getTrip(tripId)!!.state)
@@ -322,8 +322,7 @@ class TripRecordingCommandControllerTest {
         awaitSubscriptionCount(1)
 
         assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
-        assertEquals(distanceBeforeInterruption, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
-        assertEquals(pointsBeforeInterruption, repository.getTripPoints(tripId).size)
+        assertEquals(routeBeforeInterruption, repository.getTripPoints(tripId))
     }
 
     // 6. Resume never creates a second trip.
@@ -972,8 +971,7 @@ class TripRecordingCommandControllerTest {
         val tripId = repository.getActiveTripId()!!
         locationClient.emit(listOf(RawLocationSample(32.0, 34.0, 10f, fixedNow.epochSecond + 10)))
         withTimeout(5_000) { repository.observeTripPoints(tripId).first { it.isNotEmpty() } }
-        val distanceBefore = repository.getTrip(tripId)!!.distanceMeters
-        val pointsBefore = repository.getTripPoints(tripId).size
+        val routeBefore = repository.getTripPoints(tripId)
 
         // The app relaunches while A's service is presumed dead - the trip is reconciled to
         // INTERRUPTED independently of A's own (not-yet-called) shutdown, exactly like a real process
@@ -1000,8 +998,7 @@ class TripRecordingCommandControllerTest {
         handoff.awaitCompleted()
 
         assertEquals(TripState.ACTIVE.name, repository.getTrip(tripId)!!.state)
-        assertEquals(distanceBefore, repository.getTrip(tripId)!!.distanceMeters, 1e-9)
-        assertEquals(pointsBefore, repository.getTripPoints(tripId).size)
+        assertEquals(routeBefore, repository.getTripPoints(tripId))
         assertEquals(1, locationClient.activeSubscriptionCount)
         assertTrue(stoppedStartIds.isEmpty())
     }

@@ -62,11 +62,10 @@ data class TripDetailUiState(
 /**
  * [uiState.points] and [uiState.trip]'s own `distanceMeters` are both derived from the *same*
  * `RouteSanitizer.sanitize().points -> RouteSmoother.smooth()` pipeline over the trip's raw stored
- * points - never the raw points list and never [TripSummary.distanceMeters] as persisted (which was
- * accumulated live, at accept-time, under whichever
- * [com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy] was active when each point was
- * originally recorded - see that class's own doc comment for why an already-stored trip can still
- * carry outlier-inflated distance from before this policy was hardened). [RouteSanitizer] removes
+ * points - never the raw points list and never [TripSummary.distanceMeters] as persisted (an old
+ * trip's was accumulated live, under whichever
+ * [com.example.stepsplit.domain.trip.RoutePointAcceptancePolicy] was active then, and can carry
+ * outlier-inflated distance; a trip recorded since keeps none). [RouteSanitizer] removes
  * points with concrete evidence against them; [RouteSmoother] then reduces the ordinary GPS wobble
  * that remains even among points the sanitizer had no reason to reject - see its own doc comment.
  * This two-stage pipeline is what guarantees the map polyline, camera bounds, start/finish markers,
