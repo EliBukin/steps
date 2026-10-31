@@ -100,8 +100,14 @@
     <string name="percent_of_goal_format">%1$d%% of goal</string>
     <string name="percent_format">%1$d%%</string>
 
-    <string name="cd_daily_progress">Daily goal progress, %1$d percent</string>
-    <string name="cd_weekly_progress">Weekly goal progress, %1$d percent</string>
+    <plurals name="cd_daily_progress">
+        <item quantity="one">Daily goal progress, %1$d percent</item>
+        <item quantity="other">Daily goal progress, %1$d percent</item>
+    </plurals>
+    <plurals name="cd_weekly_progress">
+        <item quantity="one">Weekly goal progress, %1$d percent</item>
+        <item quantity="other">Weekly goal progress, %1$d percent</item>
+    </plurals>
     <string name="cd_workout_segment">Workout steps: %1$s</string>
     <string name="cd_incidental_segment">Incidental steps: %1$s</string>
 
@@ -148,7 +154,10 @@
     <string name="trip_gps_status_searching">Searching</string>
     <string name="trip_gps_status_weak">Weak</string>
     <string name="trip_gps_status_good">Good</string>
-    <string name="trip_points_count_label">%1$d route points recorded</string>
+    <plurals name="trip_points_count_label">
+        <item quantity="one">%1$d route point recorded</item>
+        <item quantity="other">%1$d route points recorded</item>
+    </plurals>
     <string name="trip_screen_off_message">Recording continues when the screen is off or you switch to another app.</string>
     <string name="trip_finish_button">Finish trip</string>
     <string name="trip_finish_confirm_title">Finish this trip?</string>

@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -317,7 +318,7 @@ private fun ActiveRecordingCard(
                 }
             }
             Text(
-                text = stringResource(R.string.trip_points_count_label, uiState.acceptedPointCount),
+                text = pluralStringResource(R.plurals.trip_points_count_label, uiState.acceptedPointCount, uiState.acceptedPointCount),
                 style = MaterialTheme.typography.bodySmall,
             )
             if (uiState.spotCount > 0) {

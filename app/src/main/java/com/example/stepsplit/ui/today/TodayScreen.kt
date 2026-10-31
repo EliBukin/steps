@@ -26,6 +26,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -176,7 +177,7 @@ private fun DailyRing(totalSteps: Long, progress: GoalProgress) {
     val progressColor = MaterialTheme.colorScheme.primary
     val description = buildString {
         append(stringResource(R.string.cd_total_steps, formatCount(totalSteps)))
-        if (progress.isGoalValid) append(", ").append(stringResource(R.string.cd_daily_progress, percent))
+        if (progress.isGoalValid) append(", ").append(pluralStringResource(R.plurals.cd_daily_progress, percent, percent))
     }
     Box(
         modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = description },
@@ -251,7 +252,7 @@ private fun StepKindChip(color: Color, value: Long, label: String, modifier: Mod
 @Composable
 private fun WeekCard(weeklyTotal: Long, progress: GoalProgress) {
     val percent = progress.percent.roundToInt()
-    val progressDescription = stringResource(R.string.cd_weekly_progress, percent)
+    val progressDescription = pluralStringResource(R.plurals.cd_weekly_progress, percent, percent)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),

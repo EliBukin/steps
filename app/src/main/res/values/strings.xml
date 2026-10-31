@@ -100,8 +100,16 @@
     <string name="percent_of_goal_format">%1$d%% מהיעד</string>
     <string name="percent_format">%1$d%%</string>
 
-    <string name="cd_daily_progress">התקדמות יעד יומי, %1$d אחוז</string>
-    <string name="cd_weekly_progress">התקדמות יעד שבועי, %1$d אחוז</string>
+    <plurals name="cd_daily_progress">
+        <item quantity="one">התקדמות יעד יומי, אחוז אחד</item>
+        <item quantity="two">התקדמות יעד יומי, שני אחוזים</item>
+        <item quantity="other">התקדמות יעד יומי, %1$d אחוזים</item>
+    </plurals>
+    <plurals name="cd_weekly_progress">
+        <item quantity="one">התקדמות יעד שבועי, אחוז אחד</item>
+        <item quantity="two">התקדמות יעד שבועי, שני אחוזים</item>
+        <item quantity="other">התקדמות יעד שבועי, %1$d אחוזים</item>
+    </plurals>
     <string name="cd_workout_segment">צעדי אימון: %1$s</string>
     <string name="cd_incidental_segment">צעדים יומיומיים: %1$s</string>
 
@@ -148,7 +156,11 @@
     <string name="trip_gps_status_searching">מחפש</string>
     <string name="trip_gps_status_weak">חלש</string>
     <string name="trip_gps_status_good">טוב</string>
-    <string name="trip_points_count_label">%1$d נקודות מסלול נרשמו</string>
+    <plurals name="trip_points_count_label">
+        <item quantity="one">נקודת מסלול אחת נרשמה</item>
+        <item quantity="two">שתי נקודות מסלול נרשמו</item>
+        <item quantity="other">%1$d נקודות מסלול נרשמו</item>
+    </plurals>
     <string name="trip_screen_off_message">ההקלטה ממשיכה גם כשהמסך כבוי או כשעוברים לאפליקציה אחרת.</string>
     <string name="trip_finish_button">סיום טיול</string>
     <string name="trip_finish_confirm_title">לסיים את הטיול הזה?</string>
