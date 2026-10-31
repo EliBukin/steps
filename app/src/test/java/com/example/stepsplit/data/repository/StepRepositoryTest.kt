@@ -28,11 +28,13 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
@@ -43,6 +45,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -650,6 +653,24 @@ class StepRepositoryTest {
             awaitRoomQuiescence(harness.roomExecutor)
         }
         harness.scheduler.runCurrent()
+    }
+
+    /**
+     * [StepRepository.syncNow] right after a timer that fired: [settle] can return while that timer
+     * still holds the sync lock, because Room 2.8 hands a transaction to [TimerTestHarness.roomExecutor]
+     * only once the one before it is done, so [awaitRoomQuiescence]'s sentinel can overtake it. The
+     * timer then finishes on [TimerTestHarness.scheduler], which nothing else runs while this test
+     * waits for the lock - a hang until runTest's timeout. So the sync runs in its own coroutine, and
+     * this loop keeps that scheduler going until it is done.
+     */
+    private suspend fun TestScope.syncNowWhileTimerFinishes(harness: TimerTestHarness, repository: StepRepository): SyncResult {
+        val sync = async { repository.syncNow() }
+        while (!sync.isCompleted) {
+            harness.scheduler.runCurrent()
+            awaitRoomQuiescence(harness.roomExecutor)
+            yield()
+        }
+        return sync.await()
     }
 
     /** Like [settle], but stops as soon as a finalized bout actually shows up rather than always spending the full iteration budget. */
@@ -1826,7 +1847,7 @@ class StepRepositoryTest {
     }
 
     @Test
-    fun `a finalization timer whose recompute fails never escapes its scope, and the next sync still finalizes the bout`() = runTest {
+    fun `a finalization timer whose recompute fails never escapes its scope, and the next sync still finalizes the bout`() = runTest(timeout = 10.seconds) {
         TimerTestHarness().use { harness ->
             for (i in 0 until 20) fakeSource.addInterval(baseEpoch + i * 60L, baseEpoch + i * 60L + 60L, 80)
             val lastActiveMinuteEnd = baseEpoch + 20 * 60L
@@ -1848,7 +1869,8 @@ class StepRepositoryTest {
             assertTrue("a failed timer recompute must not escape: $uncaught", uncaught.isEmpty())
             assertTrue(currentAutoBouts(harness.database).isEmpty())
 
-            assertTrue(repo.syncNow() is SyncResult.Success)
+            assertTrue(syncNowWhileTimerFinishes(harness, repo) is SyncResult.Success)
+            assertTrue("a failed timer recompute must not escape: $uncaught", uncaught.isEmpty())
             val bout = currentAutoBouts(harness.database).single()
             assertEquals(BoutClassification.WORKOUT, BoutClassification.valueOf(bout.autoClassification))
         }

@@ -166,6 +166,10 @@ class TripRecordingCommandControllerTest {
         coordinator: TripRecordingCoordinator,
         locationClient: FakeTripLocationClient,
         reconciliationScope: CoroutineScope = coordinatorScope,
+        // The real flush cap: a test that cancels a Finish blocked in its flush needs it still blocked.
+        flushTimeoutMillis: Long = TripRecordingCommandController.FLUSH_TIMEOUT_MILLIS,
+        // Not the real 2 s: no test here delivers a fix during the grace, and four Finish tests wait it out.
+        finishGraceMillis: Long = 30,
     ) = TripRecordingCommandController(
         repository = repository,
         coordinator = coordinator,
@@ -173,6 +177,8 @@ class TripRecordingCommandControllerTest {
         clock = clock,
         onStopRequested = { startId -> stoppedStartIds.add(startId) },
         reconciliationScope = reconciliationScope,
+        flushTimeoutMillis = flushTimeoutMillis,
+        finishGraceMillis = finishGraceMillis,
     )
 
     private suspend fun awaitSubscriptionCount(client: FakeTripLocationClient, expected: Int, timeoutMs: Long = 2_000) {
@@ -481,7 +487,9 @@ class TripRecordingCommandControllerTest {
     fun `a blocking flush cannot prevent Finish beyond the configured bound`() = runBlocking {
         val blockingClient = FakeTripLocationClient(neverCompletingFlush = true)
         val blockingCoordinator = TripRecordingCoordinator(repository, blockingClient, coordinatorScope)
-        val blockingController = buildController(repository, blockingCoordinator, blockingClient)
+        val flushTimeoutMillis = 30L
+        val finishGraceMillis = 30L
+        val blockingController = buildController(repository, blockingCoordinator, blockingClient, flushTimeoutMillis = flushTimeoutMillis, finishGraceMillis = finishGraceMillis)
 
         val startGen = blockingController.beginCommand()
         blockingController.handleStart(startGen, startId = 1)
@@ -489,8 +497,7 @@ class TripRecordingCommandControllerTest {
         val tripId = repository.getActiveTripId()!!
 
         val finishGen = blockingController.beginCommand()
-        val boundMillis = TripRecordingCommandController.FLUSH_TIMEOUT_MILLIS +
-            TripRecordingCommandController.FINISH_GRACE_PERIOD_MILLIS + 2_000L
+        val boundMillis = flushTimeoutMillis + finishGraceMillis + 2_000L
         withTimeout(boundMillis) {
             blockingController.handleFinish(finishGen, startId = 1)
         }
@@ -626,7 +633,8 @@ class TripRecordingCommandControllerTest {
     fun `the persisted end time is the Finish request instant, not the later time the flush and grace period actually finished`() = runBlocking {
         val blockingClient = FakeTripLocationClient(neverCompletingFlush = true)
         val blockingCoordinator = TripRecordingCoordinator(repository, blockingClient, coordinatorScope)
-        val blockingController = buildController(repository, blockingCoordinator, blockingClient)
+        // Long enough for the clock to move on below while Finish is still waiting.
+        val blockingController = buildController(repository, blockingCoordinator, blockingClient, flushTimeoutMillis = 500)
 
         val startGen = blockingController.beginCommand()
         blockingController.handleStart(startGen, startId = 1)

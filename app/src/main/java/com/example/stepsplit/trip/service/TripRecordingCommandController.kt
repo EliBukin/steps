@@ -62,6 +62,9 @@ class TripRecordingCommandController(
     private val clock: Clock,
     private val onStopRequested: (startId: Int) -> Unit,
     private val reconciliationScope: CoroutineScope,
+    /** Finish's two bounded waits - see [handleFinish]; only tests pass shorter ones. */
+    private val flushTimeoutMillis: Long = FLUSH_TIMEOUT_MILLIS,
+    private val finishGraceMillis: Long = FINISH_GRACE_PERIOD_MILLIS,
 ) {
     private val gate = CommandGenerationGate()
 
@@ -175,7 +178,7 @@ class TripRecordingCommandController(
         val cutoffEpochSecond = clock.instant().epochSecond
         repository.beginFinish(tripId, generation, cutoffEpochSecond)
         try {
-            withTimeoutOrNull(FLUSH_TIMEOUT_MILLIS) {
+            withTimeoutOrNull(flushTimeoutMillis) {
                 try {
                     locationClient.flush()
                 } catch (e: CancellationException) {
@@ -184,7 +187,7 @@ class TripRecordingCommandController(
                     // Best-effort only, same contract as flush() itself - a flush failure must never block Finish.
                 }
             }
-            delay(FINISH_GRACE_PERIOD_MILLIS)
+            delay(finishGraceMillis)
             repository.finishTripIfOwner(tripId, cutoffEpochSecond, generation)
         } finally {
             // NonCancellable: this cleanup must run to completion even when this coroutine is being
