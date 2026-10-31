@@ -250,6 +250,7 @@
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
     <string name="stats_earth_percent_below_min">Less than 0.01%</string>
+    <string name="stats_earth_progress_context_format">%1$,.1f of %2$,.0f km around the Earth</string>
     <string name="stats_moon_progress_label">Progress to the Moon</string>
     <string name="stats_moon_percent_format">%1$.2f%%</string>
     <string name="stats_moon_percent_zero">0%</string>
@@ -257,6 +258,10 @@
     <string name="stats_moon_progress_context_format">%1$,.1f of %2$,.0f km to the Moon</string>
     <string name="stats_marathon_label">Marathon equivalents</string>
     <string name="stats_marathon_format">%1$,.1f</string>
+    <plurals name="stats_marathon_progress_context">
+        <item quantity="one">%1$,.1f of %2$,.1f km to your first marathon</item>
+        <item quantity="other">%1$,.1f of %2$,.1f km to %3$d marathons</item>
+    </plurals>
     <string name="stats_active_days_label">Active days</string>
     <string name="stats_average_label">Average steps per active day</string>
     <string name="stats_best_day_label">Best day</string>

@@ -250,6 +250,7 @@
     <string name="stats_earth_percent_format">%1$.2f%%</string>
     <string name="stats_earth_percent_zero">0%</string>
     <string name="stats_earth_percent_below_min">פחות מ-0.01%</string>
+    <string name="stats_earth_progress_context_format">%1$,.1f מתוך %2$,.0f ק״מ מסביב לכדור הארץ</string>
     <string name="stats_moon_progress_label">התקדמות אל הירח</string>
     <string name="stats_moon_percent_format">%1$.2f%%</string>
     <string name="stats_moon_percent_zero">0%</string>
@@ -257,6 +258,11 @@
     <string name="stats_moon_progress_context_format">%1$,.1f מתוך %2$,.0f ק״מ למרחק הירח</string>
     <string name="stats_marathon_label">מרתונים מקבילים</string>
     <string name="stats_marathon_format">%1$,.1f</string>
+    <plurals name="stats_marathon_progress_context">
+        <item quantity="one">%1$,.1f מתוך %2$,.1f ק״מ למרתון הראשון</item>
+        <item quantity="two">%1$,.1f מתוך %2$,.1f ק״מ לשני מרתונים</item>
+        <item quantity="other">%1$,.1f מתוך %2$,.1f ק״מ ל-%3$d מרתונים</item>
+    </plurals>
     <string name="stats_active_days_label">ימים פעילים</string>
     <string name="stats_average_label">ממוצע צעדים ביום פעיל</string>
     <string name="stats_best_day_label">היום הכי פעיל</string>

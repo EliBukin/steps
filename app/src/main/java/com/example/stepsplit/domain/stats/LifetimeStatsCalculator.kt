@@ -21,12 +21,17 @@ data class LifetimeWalkingStats(
     val bestDayDate: LocalDate?,
     val bestDaySteps: Long,
     val kilometersToNextMarathon: Double,
+    /** The marathon the walking is on its way to: 1 before the first is done, 2 once it is, and so on. */
+    val nextMarathonCount: Long,
     val workoutCount: Int,
     val workoutMinutes: Long,
     val estimatedKilocalories: Long,
     val burgersBurned: Long,
 ) {
     val hasData: Boolean get() = lifetimeSteps > 0
+
+    /** The distance [nextMarathonCount] marathons add up to. */
+    val nextMarathonKilometers: Double get() = nextMarathonCount * LifetimeStatsCalculator.MARATHON_KM
 }
 
 /**
@@ -76,6 +81,7 @@ object LifetimeStatsCalculator {
             bestDayDate = totals.bestDayDate,
             bestDaySteps = totals.bestDaySteps,
             kilometersToNextMarathon = kilometersToNextMarathon,
+            nextMarathonCount = nextMarathonCount,
             workoutCount = totals.workoutCount,
             workoutMinutes = totals.workoutMinutes,
             estimatedKilocalories = estimatedKilocalories.toLong(),

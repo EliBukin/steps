@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
 import com.example.stepsplit.domain.model.TripType
+import com.example.stepsplit.domain.stats.LifetimeStatsCalculator
 import com.example.stepsplit.domain.stats.LifetimeWalkingStats
 import com.example.stepsplit.domain.trip.TripTotals
 import com.example.stepsplit.domain.trip.TripTotalsByType
@@ -97,7 +98,21 @@ private fun StepsSection(stats: LifetimeWalkingStats) {
                     } ?: stringResource(R.string.stats_best_day_none),
                 )
             },
-            { StatRow(stringResource(R.string.stats_marathon_label), stringResource(R.string.stats_marathon_format, stats.marathonEquivalents)) },
+            {
+                // Plurals take an Int; no one walks two billion marathons.
+                val nextMarathon = stats.nextMarathonCount.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                StatRow(
+                    label = stringResource(R.string.stats_marathon_label),
+                    value = stringResource(R.string.stats_marathon_format, stats.marathonEquivalents),
+                    caption = pluralStringResource(
+                        R.plurals.stats_marathon_progress_context,
+                        nextMarathon,
+                        stats.estimatedKilometers,
+                        stats.nextMarathonKilometers,
+                        nextMarathon,
+                    ),
+                )
+            },
             {
                 StatRow(
                     stringResource(R.string.stats_next_marathon_label),
@@ -115,6 +130,11 @@ private fun StepsSection(stats: LifetimeWalkingStats) {
                     ),
                     icon = EARTH_ICON,
                     progress = (stats.earthProgressPercent / 100.0).toFloat(),
+                    caption = stringResource(
+                        R.string.stats_earth_progress_context_format,
+                        stats.estimatedKilometers,
+                        LifetimeStatsCalculator.EARTH_CIRCUMFERENCE_KM,
+                    ),
                 )
             },
             {

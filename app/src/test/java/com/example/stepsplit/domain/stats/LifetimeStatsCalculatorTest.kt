@@ -125,6 +125,25 @@ class LifetimeStatsCalculatorTest {
     }
 
     @Test
+    fun `the next marathon counts the one on the way, and its distance is that many marathons`() {
+        val none = LifetimeStatsCalculator.calculate(LifetimeStepTotals.EMPTY)
+        val partWay = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(lifetimeSteps = 200_000, activeDays = 1, bestDayDate = null, bestDaySteps = 0),
+        )
+        val exactlyOne = LifetimeStatsCalculator.calculate(
+            LifetimeStepTotals(lifetimeSteps = 56_260, activeDays = 1, bestDayDate = null, bestDaySteps = 0),
+        )
+
+        assertEquals(1L, none.nextMarathonCount)
+        assertEquals(42.195, none.nextMarathonKilometers, 1e-9)
+        // 150 km walked: three marathons done, on the way to the 4th at 168.78 km.
+        assertEquals(4L, partWay.nextMarathonCount)
+        assertEquals(168.78, partWay.nextMarathonKilometers, 1e-9)
+        assertEquals(partWay.nextMarathonKilometers - partWay.estimatedKilometers, partWay.kilometersToNextMarathon, 1e-9)
+        assertEquals(2L, exactlyOne.nextMarathonCount)
+    }
+
+    @Test
     fun `a very large lifetime step count produces finite, non-negative derived values`() {
         val stats = LifetimeStatsCalculator.calculate(
             LifetimeStepTotals(lifetimeSteps = Long.MAX_VALUE, activeDays = 1, bestDayDate = null, bestDaySteps = Long.MAX_VALUE),
