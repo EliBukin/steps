@@ -1,5 +1,6 @@
 package com.example.stepsplit.ui
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
@@ -11,7 +12,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -39,6 +40,10 @@ import com.example.stepsplit.di.AppContainer
 import com.example.stepsplit.di.ViewModelFactory
 import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
+import com.example.stepsplit.ui.map.ImportedRouteActions
+import com.example.stepsplit.ui.map.LocalMapPacks
+import com.example.stepsplit.ui.map.OpenMapScreen
+import com.example.stepsplit.ui.map.OpenMapViewModel
 import com.example.stepsplit.ui.navigation.Screen
 import com.example.stepsplit.ui.navigation.bottomNavScreens
 import com.example.stepsplit.ui.navigation.highlightedRoute
@@ -51,9 +56,6 @@ import com.example.stepsplit.ui.stats.StatsScreen
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayScreen
 import com.example.stepsplit.ui.today.TodayViewModel
-import com.example.stepsplit.ui.map.LocalMapPacks
-import com.example.stepsplit.ui.map.OpenMapScreen
-import com.example.stepsplit.ui.map.OpenMapViewModel
 import com.example.stepsplit.ui.trips.TripDetailScreen
 import com.example.stepsplit.ui.trips.TripDetailViewModel
 import com.example.stepsplit.ui.trips.TripsScreen
@@ -67,6 +69,9 @@ fun StepSplitApp(
     onOpenHealthConnectPermissions: (onReturn: () -> Unit) -> Unit,
     onRequestTripPermissions: (onResult: (Map<String, Boolean>) -> Unit) -> Unit,
     navigationEvent: TripNotificationNavigationEvent? = null,
+    /** A GPX file opened with the app or shared to it: the Map tab imports it, then [onRouteImportHandled] with its id. */
+    routeImportEvent: RouteImportEvent? = null,
+    onRouteImportHandled: (Long) -> Unit = {},
 ) {
     val navController = rememberNavController()
     val factory = remember(container) { ViewModelFactory(container) }
@@ -84,6 +89,10 @@ fun StepSplitApp(
     LaunchedEffect(navigationEvent?.id) {
         val route = navigationEvent?.route ?: return@LaunchedEffect
         navController.navigateToTab(route)
+    }
+    // A GPX file to import opens the Map tab, which imports it (below) and shows it.
+    LaunchedEffect(routeImportEvent?.id) {
+        if (routeImportEvent != null) navController.navigateToTab(Screen.OpenMap.route)
     }
 
     // The offline map packs on the phone, for every map in the app (see rememberMapBackground).
@@ -147,6 +156,16 @@ fun StepSplitApp(
                     // another tab or leaving the app stops the location request at once (see
                     // OpenMapViewModel.location).
                     val location by viewModel.location.collectAsStateWithLifecycle()
+                    // The same: only while the tab is on screen (see OpenMapViewModel.routeStrip).
+                    val routeStrip by viewModel.routeStrip.collectAsStateWithLifecycle()
+                    val importStatus by viewModel.importStatus.collectAsState()
+                    val zoomRequest by viewModel.zoomRequest.collectAsState()
+                    val currentOnRouteImportHandled by rememberUpdatedState(onRouteImportHandled)
+                    LaunchedEffect(routeImportEvent?.id) {
+                        val event = routeImportEvent ?: return@LaunchedEffect
+                        viewModel.importRoute(event.uri)
+                        currentOnRouteImportHandled(event.id)
+                    }
                     OpenMapScreen(
                         uiState = uiState,
                         location = location,
@@ -157,6 +176,20 @@ fun StepSplitApp(
                             container.mapPackRepository.answerOffer()
                             if (download) openSettings()
                         },
+                        routeStrip = routeStrip,
+                        importStatus = importStatus,
+                        onDismissImportStatus = viewModel::dismissImportStatus,
+                        onImportRoute = viewModel::importRoute,
+                        routeActions = remember(viewModel) {
+                            ImportedRouteActions(
+                                onShowChange = { route, shown -> viewModel.setRouteShown(route.id, shown) },
+                                onZoomTo = viewModel::zoomToRoute,
+                                onRename = { route, name -> viewModel.renameRoute(route.id, name) },
+                                onDelete = { route -> viewModel.deleteRoute(route.id) },
+                            )
+                        },
+                        zoomRequest = zoomRequest,
+                        onZoomRequestHandled = viewModel::onZoomRequestHandled,
                     )
                 }
                 composable(

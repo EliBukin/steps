@@ -45,7 +45,12 @@ class ViewModelFactory(private val container: AppContainer) : ViewModelProvider.
 
         OfflineMapsViewModel::class.java -> OfflineMapsViewModel(container.mapPackRepository)
 
-        OpenMapViewModel::class.java -> OpenMapViewModel(container.tripRepository, container.mapLocationClient)
+        OpenMapViewModel::class.java -> OpenMapViewModel(
+            container.tripRepository,
+            container.mapLocationClient,
+            container.importedRouteRepository,
+            container.routeFileReader,
+        )
 
         else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     } as T

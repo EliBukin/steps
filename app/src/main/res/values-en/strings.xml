@@ -323,4 +323,54 @@
     <string name="open_map_offline_map_offer">Get the offline map of Israel: trails, tracks and wadis, even with no signal.</string>
     <string name="open_map_offline_map_offer_action">Download</string>
     <string name="open_map_offline_map_offer_dismiss">Not now</string>
+    <!-- Routes imported from GPX files (the Map tab's Routes list and the route strip). -->
+    <string name="routes_action">Imported routes</string>
+    <string name="routes_title">Routes</string>
+    <string name="routes_import_action">Import GPX file</string>
+    <string name="routes_empty">Open a .gpx file from Files, WhatsApp, Gmail or Drive, or import one here, to see its route on the map.</string>
+    <string name="routes_note">Imported routes stay on this phone. They\'re not trips, and don\'t count in Stats.</string>
+    <string name="routes_unnamed">Imported route</string>
+    <string name="routes_climb_format">↑%1$d m</string>
+    <plurals name="routes_lines">
+        <item quantity="one">%1$d line</item>
+        <item quantity="other">%1$d lines</item>
+    </plurals>
+    <plurals name="routes_points">
+        <item quantity="one">%1$s point</item>
+        <item quantity="other">%1$s points</item>
+    </plurals>
+    <plurals name="routes_waypoints">
+        <item quantity="one">%1$d waypoint</item>
+        <item quantity="other">%1$d waypoints</item>
+    </plurals>
+    <string name="routes_separator">" · "</string>
+    <string name="routes_show_route">Show %1$s on the map</string>
+    <string name="routes_more">More for %1$s</string>
+    <string name="routes_zoom_action">Zoom to route</string>
+    <string name="routes_rename_action">Rename</string>
+    <string name="routes_delete_action">Delete</string>
+    <string name="routes_rename_title">Rename route</string>
+    <string name="routes_rename_label">Name</string>
+    <string name="routes_rename_save">Save</string>
+    <string name="routes_delete_title">Delete this route?</string>
+    <string name="routes_delete_message">This deletes \"%1$s\" from the app. The GPX file itself stays where it is.</string>
+    <string name="routes_delete_confirm">Delete</string>
+    <string name="routes_importing">Importing the route…</string>
+    <string name="routes_imported">Route imported: %1$s</string>
+    <string name="routes_imported_thinned">Route imported: %1$s. The file had more points than the app keeps, so the route was simplified a little.</string>
+    <string name="routes_imported_damaged">Route imported: %1$s. The file looks damaged, so only the part before the damage was imported.</string>
+    <string name="routes_already_imported">Already imported: %1$s</string>
+    <string name="routes_import_failed_not_gpx">This file isn\'t a GPX file the app can read.</string>
+    <string name="routes_import_failed_kml">KML files can\'t be imported yet, only GPX files.</string>
+    <string name="routes_import_failed_too_big">This file is too big to import (over 25 MB).</string>
+    <string name="routes_import_failed_nothing">This GPX file has no route, track or waypoints to show.</string>
+    <string name="routes_import_failed_damaged">This file looks damaged, and nothing in it could be read.</string>
+    <string name="routes_import_failed_cant_read">The file couldn\'t be read. Save it to the phone, then import it from Routes.</string>
+    <string name="routes_message_ok">OK</string>
+    <string name="route_strip_on_route">%1$s done · %2$s to the end</string>
+    <string name="route_strip_off_route">%1$s off the route · %2$s to the end</string>
+    <string name="route_strip_far">Start is %1$s away</string>
+    <string name="route_waypoint_unnamed">Waypoint</string>
+    <string name="route_waypoint_distance">%1$s from you</string>
+    <string name="route_waypoint_close">Close</string>
 </resources>

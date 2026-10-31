@@ -58,6 +58,70 @@
         </activity>
 
         <!--
+          Importing a GPX route (see MainActivity.routeImportUri and data.route.ImportedRouteRepository):
+          "Open with" and Share from another app (Files, a messaging app, email, cloud storage) open
+          the Map tab, which reads that one file through the content:// address it was given, with
+          the read access that came with it - no storage permission. Only content:// addresses:
+          nothing else could be read without one.
+          - Open with: the GPX types; and the types apps often give a .gpx they don't know
+            (octet-stream, XML, plain text), only when the address ends in .gpx - so the app isn't
+            offered for every file of those types. One pattern per number of dots in the path (up to
+            five), because Android's pathPattern ".*" stops at the first dot it can match. An address
+            without the file's name in it (the Files app's Downloads list, most messaging apps) can't
+            match: Share, or Import on the Map tab, gets those files in.
+          - Share: the GPX types, plus octet-stream and XML, since messaging and email apps often
+            share a .gpx as those (a share's address rarely has the file's name in it). So the app
+            also shows in the share sheet for other files of those types; a file that isn't GPX is
+            told apart by its content, and nothing is imported.
+          The import itself reads the file's content, never trusts the type: see GpxParser.
+        -->
+        <activity-alias
+            android:name=".ui.ImportRouteActivity"
+            android:exported="true"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/gpx+xml" />
+                <data android:mimeType="application/gpx" />
+                <data android:mimeType="application/x-gpx+xml" />
+                <data android:mimeType="application/x-gpx" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="text/xml" />
+                <data android:mimeType="text/plain" />
+                <data android:pathPattern=".*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\..*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.GPX" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/gpx+xml" />
+                <data android:mimeType="application/gpx" />
+                <data android:mimeType="application/x-gpx+xml" />
+                <data android:mimeType="application/x-gpx" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="text/xml" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
           Health Connect requires a screen explaining how this app uses health data, reachable
           from Health Connect's own "App permissions" -> app -> "view usage" flow - see
           PermissionsRationaleActivity's own doc comment. Without both declarations below, Health

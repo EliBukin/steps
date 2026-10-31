@@ -2,17 +2,19 @@ package com.example.stepsplit.ui
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.IntentCompat
 import androidx.health.connect.client.PermissionController
 import com.example.stepsplit.R
 import com.example.stepsplit.StepSplitApplication
@@ -30,6 +32,12 @@ import java.util.concurrent.atomic.AtomicLong
  * never fire.
  */
 data class TripNotificationNavigationEvent(val route: String, val id: Long)
+
+/**
+ * A GPX file to import, from "Open with" or Share in another app (see the manifest's
+ * `ImportRouteActivity`): the Map tab imports [uri] once per [id], like [TripNotificationNavigationEvent].
+ */
+data class RouteImportEvent(val uri: Uri, val id: Long)
 
 class MainActivity : ComponentActivity() {
 
@@ -71,6 +79,11 @@ class MainActivity : ComponentActivity() {
     @VisibleForTesting
     internal val navigationEventForTest: TripNotificationNavigationEvent? get() = navigationEvent
 
+    private var routeImportEvent by mutableStateOf<RouteImportEvent?>(null)
+
+    @VisibleForTesting
+    internal val routeImportEventForTest: RouteImportEvent? get() = routeImportEvent
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -78,6 +91,8 @@ class MainActivity : ComponentActivity() {
         // intent across a recreation (rotation, dark mode, language, process death), and the
         // restored back stack already shows wherever the owner went after that launch.
         navigationEvent = if (savedInstanceState == null) eventForIntent(intent) else null
+        // The same for a file to import: once, and not again when the activity is recreated.
+        routeImportEvent = if (savedInstanceState == null) importEventForIntent(intent) else null
 
         val container = (application as StepSplitApplication).container
 
@@ -89,6 +104,8 @@ class MainActivity : ComponentActivity() {
                     onOpenHealthConnectPermissions = ::openHealthConnectPermissions,
                     onRequestTripPermissions = ::requestTripPermissions,
                     navigationEvent = navigationEvent,
+                    routeImportEvent = routeImportEvent,
+                    onRouteImportHandled = { id -> if (routeImportEvent?.id == id) routeImportEvent = null },
                 )
             }
         }
@@ -118,6 +135,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         navigationEvent = eventForIntent(intent)
+        importEventForIntent(intent)?.let { routeImportEvent = it }
     }
 
     private fun eventForIntent(intent: Intent?): TripNotificationNavigationEvent? =
@@ -126,6 +144,9 @@ class MainActivity : ComponentActivity() {
         } else {
             null
         }
+
+    private fun importEventForIntent(intent: Intent?): RouteImportEvent? =
+        routeImportUri(intent)?.let { RouteImportEvent(it, navigationEventCounter.incrementAndGet()) }
 
     /**
      * [onResult] receives the actual grant/deny outcome so the caller (see [StepSplitApp]'s own
@@ -171,5 +192,20 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_OPEN_TRIPS = "com.example.stepsplit.action.OPEN_TRIPS"
+
+        /**
+         * The GPX file in an "Open with" ([Intent.ACTION_VIEW]: its data) or Share
+         * ([Intent.ACTION_SEND]: its stream) intent; null for any other intent, or a file that isn't
+         * a `content://` address (only those come with read access - see the manifest).
+         */
+        internal fun routeImportUri(intent: Intent?): Uri? {
+            val uri = when (intent?.action) {
+                Intent.ACTION_VIEW -> intent.data
+                Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+                else -> null
+            }
+            return uri?.takeIf { it.scheme == "content" }
+        }
     }
 }

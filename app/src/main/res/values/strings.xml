@@ -324,4 +324,57 @@
     <string name="open_map_offline_map_offer">מפת ישראל לשימוש אופליין: שבילים, דרכי עפר וואדיות, גם בלי קליטה.</string>
     <string name="open_map_offline_map_offer_action">להורדה</string>
     <string name="open_map_offline_map_offer_dismiss">לא עכשיו</string>
+    <!-- Routes imported from GPX files (the Map tab's Routes list and the route strip). -->
+    <string name="routes_action">מסלולים מיובאים</string>
+    <string name="routes_title">מסלולים</string>
+    <string name="routes_import_action">ייבוא קובץ GPX</string>
+    <string name="routes_empty">אפשר לפתוח קובץ ‎.gpx מהקבצים, מוואטסאפ, מג׳ימייל או מדרייב, או לייבא אחד כאן, כדי לראות את המסלול שלו על המפה.</string>
+    <string name="routes_note">מסלולים מיובאים נשמרים רק בטלפון הזה. הם לא טיולים, ולא נספרים בסטטיסטיקה.</string>
+    <string name="routes_unnamed">מסלול מיובא</string>
+    <string name="routes_climb_format">↑%1$d מ׳</string>
+    <plurals name="routes_lines">
+        <item quantity="one">קו אחד</item>
+        <item quantity="two">שני קווים</item>
+        <item quantity="other">%1$d קווים</item>
+    </plurals>
+    <plurals name="routes_points">
+        <item quantity="one">נקודה אחת</item>
+        <item quantity="two">שתי נקודות</item>
+        <item quantity="other">%1$s נקודות</item>
+    </plurals>
+    <plurals name="routes_waypoints">
+        <item quantity="one">נקודת ציון אחת</item>
+        <item quantity="two">שתי נקודות ציון</item>
+        <item quantity="other">%1$d נקודות ציון</item>
+    </plurals>
+    <string name="routes_separator">" · "</string>
+    <string name="routes_show_route">הצגת %1$s על המפה</string>
+    <string name="routes_more">עוד עבור %1$s</string>
+    <string name="routes_zoom_action">הצגת כל המסלול</string>
+    <string name="routes_rename_action">שינוי שם</string>
+    <string name="routes_delete_action">מחיקה</string>
+    <string name="routes_rename_title">שינוי שם המסלול</string>
+    <string name="routes_rename_label">שם</string>
+    <string name="routes_rename_save">שמירה</string>
+    <string name="routes_delete_title">למחוק את המסלול הזה?</string>
+    <string name="routes_delete_message">פעולה זו תמחק את \"%1$s\" מהאפליקציה. קובץ ה-GPX עצמו נשאר במקומו.</string>
+    <string name="routes_delete_confirm">מחיקה</string>
+    <string name="routes_importing">מייבאים את המסלול…</string>
+    <string name="routes_imported">המסלול יובא: %1$s</string>
+    <string name="routes_imported_thinned">המסלול יובא: %1$s. בקובץ היו יותר נקודות ממה שהאפליקציה שומרת, ולכן המסלול פושט מעט.</string>
+    <string name="routes_imported_damaged">המסלול יובא: %1$s. הקובץ נראה פגום, ולכן יובא רק החלק שלפני הפגם.</string>
+    <string name="routes_already_imported">כבר יובא: %1$s</string>
+    <string name="routes_import_failed_not_gpx">הקובץ הזה אינו קובץ GPX שהאפליקציה יכולה לקרוא.</string>
+    <string name="routes_import_failed_kml">עדיין אי אפשר לייבא קובצי KML, רק קובצי GPX.</string>
+    <string name="routes_import_failed_too_big">הקובץ גדול מדי לייבוא (יותר מ-25MB).</string>
+    <string name="routes_import_failed_nothing">אין בקובץ ה-GPX הזה מסלול, מקטע או נקודות ציון להצגה.</string>
+    <string name="routes_import_failed_damaged">הקובץ נראה פגום, ושום דבר בו לא נקרא.</string>
+    <string name="routes_import_failed_cant_read">לא ניתן היה לקרוא את הקובץ. אפשר לשמור אותו בטלפון ואז לייבא אותו ממסלולים.</string>
+    <string name="routes_message_ok">אישור</string>
+    <string name="route_strip_on_route">עברת %1$s · נותרו %2$s עד הסוף</string>
+    <string name="route_strip_off_route">%1$s מחוץ למסלול · נותרו %2$s עד הסוף</string>
+    <string name="route_strip_far">ההתחלה במרחק %1$s</string>
+    <string name="route_waypoint_unnamed">נקודת ציון</string>
+    <string name="route_waypoint_distance">במרחק %1$s ממך</string>
+    <string name="route_waypoint_close">סגירה</string>
 </resources>

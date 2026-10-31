@@ -7,24 +7,32 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
@@ -52,12 +60,19 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.stepsplit.R
+import com.example.stepsplit.data.route.RouteImportOutcome
+import com.example.stepsplit.data.route.RouteImportProblem
 import com.example.stepsplit.data.trip.MapFix
+import com.example.stepsplit.domain.model.TripPoint
+import com.example.stepsplit.domain.route.RouteBounds
+import com.example.stepsplit.domain.route.RouteFollower
+import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.ui.common.ScreenHeader
 import com.example.stepsplit.ui.trips.MetricScaleBar
 import com.example.stepsplit.ui.trips.RouteCameraBounds
@@ -130,6 +145,23 @@ private const val START_LAYER_ID = "recording-route-start"
 private const val HEADING_LAYER_ID = "you-are-here-heading"
 private const val LOCATION_LAYER_PREFIX = "you-are-here"
 
+/**
+ * What the Import button's file picker lists: the GPX types, and those a phone often gives a .gpx it
+ * doesn't know (see the manifest's ImportRouteActivity). The file's content decides, not its type.
+ */
+private val GPX_PICKER_TYPES = arrayOf(
+    "application/gpx+xml",
+    "application/gpx",
+    "application/x-gpx+xml",
+    "application/octet-stream",
+    "application/xml",
+    "text/xml",
+    "text/plain",
+)
+
+/** A plain "imported" message goes away by itself after this; one with something to read stays until OK. */
+private const val IMPORTED_MESSAGE_MILLIS = 6_000L
+
 /** Following the dot moves the map this smoothly to each new fix (they come about every 2 seconds). */
 private val FOLLOW_ANIMATION = 600.milliseconds
 
@@ -163,6 +195,10 @@ private val ROUTE_PADDING = PaddingValues(start = 40.dp, top = 40.dp, end = 72.d
  * - **Offline maps.** Inside a downloaded pack's area the map is drawn from the pack, with no
  *   internet at all (see [rememberMapBackground]); the "no internet" banner then doesn't show. With
  *   no pack, a phone in Israel gets a one-time offer of the Israel map ([offerOfflineMap]).
+ * - **Imported routes** (GPX files - see [ImportedRouteLayers]): the Routes button opens their list
+ *   ([RoutesSheet]) with Import; a file opened with the app or shared to it arrives the same way.
+ *   While a shown route is near, a strip under the map says how far along it the phone is
+ *   ([RouteStrip]); tapping a waypoint shows its name and note.
  *
  * Location is asked for only while this tab is on screen, with the app in the foreground - switching
  * to another tab or app stops it at once (see [OpenMapViewModel]); so does the compass. The map is
@@ -186,6 +222,17 @@ fun OpenMapScreen(
     offerOfflineMap: Boolean = false,
     /** The offer was answered: [download] opens Settings, where the Offline maps are. */
     onAnswerOfflineMapOffer: (download: Boolean) -> Unit = {},
+    /** Where the phone is along the closest shown imported route; null for none. */
+    routeStrip: RouteStrip? = null,
+    /** The latest import, until [onDismissImportStatus]. */
+    importStatus: RouteImportStatus? = null,
+    onDismissImportStatus: () -> Unit = {},
+    /** A GPX file picked with Import. */
+    onImportRoute: (Uri) -> Unit = {},
+    routeActions: ImportedRouteActions = ImportedRouteActions({ _, _ -> }, {}, { _, _ -> }, {}),
+    /** An imported route the map should show the whole of, once: [onZoomRequestHandled] with its id when done. */
+    zoomRequest: RouteZoomRequest? = null,
+    onZoomRequestHandled: (Long) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = LocalActivity.current
@@ -225,6 +272,22 @@ fun OpenMapScreen(
 
     val locationAvailable = hasPermission && locationOn
     LaunchedEffect(locationAvailable) { onLocationAvailableChange(locationAvailable) }
+
+    var routesOpen by rememberSaveable { mutableStateOf(false) }
+    val pickRouteFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportRoute(uri)
+    }
+    // A plain "Route imported" goes by itself; a warning or a failure waits for OK.
+    val currentOnDismissImportStatus by rememberUpdatedState(onDismissImportStatus)
+    LaunchedEffect(importStatus) {
+        val outcome = (importStatus as? RouteImportStatus.Finished)?.outcome
+        val plain = outcome is RouteImportOutcome.AlreadyImported ||
+            (outcome is RouteImportOutcome.Imported && !outcome.thinned && !outcome.damaged)
+        if (plain) {
+            delay(IMPORTED_MESSAGE_MILLIS)
+            currentOnDismissImportStatus()
+        }
+    }
 
     // Whether the newest fix is still where the phone is: turns false by itself once it gets old.
     var fixIsFresh by remember { mutableStateOf(false) }
@@ -299,6 +362,15 @@ fun OpenMapScreen(
                 onAction = { mapLoadFailed = false },
             )
         }
+        when (importStatus) {
+            RouteImportStatus.Importing -> StatusBanner(text = stringResource(R.string.routes_importing), showProgress = true)
+            is RouteImportStatus.Finished -> StatusBanner(
+                text = importMessage(importStatus.outcome),
+                actionLabel = stringResource(R.string.routes_message_ok),
+                onAction = onDismissImportStatus,
+            )
+            null -> {}
+        }
 
         Card(
             modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
@@ -315,9 +387,59 @@ fun OpenMapScreen(
                 offline = mapLoadFailed,
                 onLoadFailed = { mapLoadFailed = true },
                 onDrawingFromPackChange = { drawingFromPack = it },
+                routesOnMap = uiState.routesOnMap,
+                routeStrip = routeStrip,
+                onOpenRoutes = { routesOpen = true },
+                zoomRequest = zoomRequest,
+                onZoomRequestHandled = onZoomRequestHandled,
             )
         }
     }
+
+    if (routesOpen) {
+        RoutesSheet(
+            routes = uiState.importedRoutes,
+            // The list makes way, so the new route shows on the map once it's imported.
+            onImport = {
+                routesOpen = false
+                pickRouteFile.launch(GPX_PICKER_TYPES)
+            },
+            actions = ImportedRouteActions(
+                onShowChange = routeActions.onShowChange,
+                // The whole route on the map, so the list makes way.
+                onZoomTo = { route ->
+                    routesOpen = false
+                    routeActions.onZoomTo(route)
+                },
+                onRename = routeActions.onRename,
+                onDelete = routeActions.onDelete,
+            ),
+            onDismiss = { routesOpen = false },
+        )
+    }
+}
+
+@Composable
+private fun importMessage(outcome: RouteImportOutcome): String = when (outcome) {
+    is RouteImportOutcome.Imported -> {
+        val name = routeName(outcome.route)
+        when {
+            outcome.damaged -> stringResource(R.string.routes_imported_damaged, name)
+            outcome.thinned -> stringResource(R.string.routes_imported_thinned, name)
+            else -> stringResource(R.string.routes_imported, "$name (${formatDistance(outcome.route.distanceMeters)})")
+        }
+    }
+    is RouteImportOutcome.AlreadyImported -> stringResource(R.string.routes_already_imported, routeName(outcome.route))
+    is RouteImportOutcome.Failed -> stringResource(
+        when (outcome.problem) {
+            RouteImportProblem.CANT_READ -> R.string.routes_import_failed_cant_read
+            RouteImportProblem.TOO_BIG -> R.string.routes_import_failed_too_big
+            RouteImportProblem.NOT_GPX -> R.string.routes_import_failed_not_gpx
+            RouteImportProblem.KML -> R.string.routes_import_failed_kml
+            RouteImportProblem.NOTHING_TO_SHOW -> R.string.routes_import_failed_nothing
+            RouteImportProblem.DAMAGED -> R.string.routes_import_failed_damaged
+        },
+    )
 }
 
 /** One line above the map saying what's wrong, with the button that fixes it. */
@@ -371,6 +493,11 @@ private fun OpenMapView(
     offline: Boolean,
     onLoadFailed: () -> Unit,
     onDrawingFromPackChange: (Boolean) -> Unit,
+    routesOnMap: List<ImportedRouteOnMap>,
+    routeStrip: RouteStrip?,
+    onOpenRoutes: () -> Unit,
+    zoomRequest: RouteZoomRequest?,
+    onZoomRequestHandled: (Long) -> Unit,
 ) {
     val route = recording?.route.orEmpty()
     val cameraState = rememberCameraState(firstPosition = OpenMapCamera.initialPosition(location, route))
@@ -426,6 +553,20 @@ private fun OpenMapView(
         }
     }
 
+    // An imported route to show whole (just imported, or picked in the list): north up, not following.
+    val currentOnZoomRequestHandled by rememberUpdatedState(onZoomRequestHandled)
+    LaunchedEffect(zoomRequest?.id) {
+        val request = zoomRequest ?: return@LaunchedEffect
+        onRotateWithMeChange(false)
+        onFollowingChange(false)
+        cameraState.showWholeRoute(request.bounds.fit())
+        currentOnZoomRequestHandled(request.id)
+    }
+
+    // The waypoint tapped last, as (route id, index); its card shows until closed.
+    var openWaypoint by rememberSaveable { mutableStateOf<Pair<Long, Int>?>(null) }
+    val waypoint = openWaypoint?.let { (routeId, index) -> routesOnMap.firstOrNull { it.id == routeId }?.waypoints?.getOrNull(index) }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         MaplibreMap(
             modifier = Modifier.fillMaxSize().semantics { contentDescription = mapDescription },
@@ -440,6 +581,14 @@ private fun OpenMapView(
             ),
             onMapLoadFailed = { onLoadFailed() },
         ) {
+            // Imported routes first: under the trip being recorded and the dot. Names need the map's fonts, like spot numbers.
+            if (routesOnMap.isNotEmpty()) {
+                ImportedRouteLayers(
+                    routes = routesOnMap,
+                    showNames = !offline || background.fromPack,
+                    onWaypointClick = { routeId, index -> openWaypoint = routeId to index },
+                )
+            }
             val parts = recording?.parts
             if (route.size >= 2 && parts != null) {
                 val routeSource = rememberGeoJsonSource(data = remember(parts) { parts.stretchesGeoJson() })
@@ -506,11 +655,33 @@ private fun OpenMapView(
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
         )
 
+        // Under the map's buttons: the tapped waypoint, else where the phone is along a route.
+        Column(modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, end = 64.dp, bottom = 40.dp)) {
+            if (waypoint != null) {
+                WaypointCard(
+                    name = waypoint.name,
+                    note = waypoint.note,
+                    distanceMeters = location?.let { RouteMath.haversineMeters(it.latitude, it.longitude, waypoint.latitude, waypoint.longitude) },
+                    onClose = { openWaypoint = null },
+                )
+            } else if (routeStrip != null && fixIsFresh) {
+                RouteStripCard(routeStrip)
+            }
+        }
+
         // Bottom end, above MapLibre's attribution button, as on the trip screen.
         Column(
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            SmallFloatingActionButton(
+                onClick = onOpenRoutes,
+                containerColor = MaterialTheme.colorScheme.surface,
+                // Magenta while a route is on the map, like the route itself.
+                contentColor = if (routesOnMap.isNotEmpty()) ImportedRouteColors.Route else MaterialTheme.colorScheme.primary,
+            ) {
+                Icon(painterResource(R.drawable.ic_route_24), contentDescription = stringResource(R.string.routes_action))
+            }
             if (route.size >= 2) {
                 SmallFloatingActionButton(
                     onClick = {
@@ -584,6 +755,68 @@ private suspend fun CameraState.glideTo(bearing: Float?, target: Position?) {
         if (turned && nextTarget == target) return
     }
 }
+
+/** Where the phone is along the closest shown imported route: its name, then how far along it is. */
+@Composable
+private fun RouteStripCard(strip: RouteStrip) {
+    val text = when (val progress = strip.progress) {
+        is RouteFollower.Progress.OnRoute -> stringResource(R.string.route_strip_on_route, formatDistance(progress.doneMeters), formatDistance(progress.leftMeters))
+        is RouteFollower.Progress.OffRoute -> stringResource(R.string.route_strip_off_route, formatDistance(progress.offMeters), formatDistance(progress.leftMeters))
+        is RouteFollower.Progress.Far -> stringResource(R.string.route_strip_far, formatDistance(progress.toStartMeters))
+    }
+    OnMapCard {
+        Box(modifier = Modifier.width(4.dp).height(32.dp).background(ImportedRouteColors.Route, RoundedCornerShape(2.dp)))
+        Column(modifier = Modifier.padding(start = 10.dp)) {
+            Text(
+                text = strip.routeName ?: stringResource(R.string.routes_unnamed),
+                style = MaterialTheme.typography.labelMedium,
+                color = ImportedRouteColors.Label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(text = text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF212121))
+        }
+    }
+}
+
+/** A tapped waypoint: its name, its note, and how far it is from the phone. */
+@Composable
+private fun WaypointCard(name: String?, note: String?, distanceMeters: Double?, onClose: () -> Unit) {
+    OnMapCard {
+        Column(modifier = Modifier.weight(1f, fill = false)) {
+            Text(
+                text = name ?: stringResource(R.string.route_waypoint_unnamed),
+                style = MaterialTheme.typography.titleSmall,
+                color = ImportedRouteColors.Label,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = Color(0xFF212121), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (distanceMeters != null) {
+                Text(stringResource(R.string.route_waypoint_distance, formatDistance(distanceMeters)), style = MaterialTheme.typography.bodySmall, color = Color(0xFF5F5F5F))
+            }
+        }
+        IconButton(onClick = onClose) {
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.route_waypoint_close), tint = Color(0xFF5F5F5F))
+        }
+    }
+}
+
+/** A small white card on the map - the map stays light in dark mode, so the card does too (see [OnMapColors]). */
+@Composable
+private fun OnMapCard(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Surface(shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 2.dp) {
+        Row(modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+    }
+}
+
+/** The camera fit for an imported route's [RouteBounds], by the trip screen's rules ([RouteCameraBounds]). */
+private fun RouteBounds.fit(): RouteCameraBounds.Fit? = RouteCameraBounds.compute(
+    listOf(
+        TripPoint(0, minLatitude, minLongitude, 0f, null, null),
+        TripPoint(0, maxLatitude, maxLongitude, 0f, null, null),
+    ),
+)
 
 /** Closer than this, the glide just finishes the turn. */
 private const val ARRIVED_DEGREES = 0.2f
