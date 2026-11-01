@@ -34,10 +34,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
 import com.example.stepsplit.debug.DebugDataSeeder
 import com.example.stepsplit.di.AppContainer
 import com.example.stepsplit.di.ViewModelFactory
+import com.example.stepsplit.ui.ads.WithBannerAd
 import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.map.ImportedRouteActions
@@ -100,6 +102,8 @@ fun StepSplitApp(
     // The offline map packs on the phone, for every map in the app (see rememberMapBackground). With
     // the lifecycle, so a download in progress is asked about less often while the app isn't on screen.
     val mapPacks by container.mapPackRepository.state.collectAsStateWithLifecycle()
+    // Whether ads may be requested yet (see AdsManager). Only Stats, History and Trips show any.
+    val adsReady by container.ads.ready.collectAsStateWithLifecycle()
 
     CompositionLocalProvider(LocalMapPacks provides mapPacks.installed) {
         Scaffold(
@@ -137,12 +141,16 @@ fun StepSplitApp(
                 composable(Screen.History.route) {
                     val viewModel: HistoryViewModel = viewModel(factory = factory)
                     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                    HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
+                    WithBannerAd(adsReady = adsReady, adUnitId = BuildConfig.ADMOB_BANNER_UNIT_ID) { modifier ->
+                        HistoryScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings, modifier = modifier)
+                    }
                 }
                 composable(Screen.Stats.route) {
                     val viewModel: StatsViewModel = viewModel(factory = factory)
                     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                    StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings)
+                    WithBannerAd(adsReady = adsReady, adUnitId = BuildConfig.ADMOB_BANNER_UNIT_ID) { modifier ->
+                        StatsScreen(uiState = uiState, onRefresh = viewModel::refresh, onOpenSettings = openSettings, modifier = modifier)
+                    }
                 }
                 composable(Screen.Trips.route) {
                     val viewModel: TripsViewModel = viewModel(factory = factory)
