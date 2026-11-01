@@ -96,6 +96,9 @@ class MainActivity : ComponentActivity() {
 
         val container = (application as StepSplitApplication).container
         container.reconcileTripOnce()
+        // Google's consent form when one is needed, then ads (see AdsManager): at every start of
+        // this screen, as Google asks, including a recreation that closed a form still open.
+        container.ads.gatherConsent(this)
 
         setContent {
             StepSplitTheme {
@@ -107,6 +110,7 @@ class MainActivity : ComponentActivity() {
                     navigationEvent = navigationEvent,
                     routeImportEvent = routeImportEvent,
                     onRouteImportHandled = { id -> if (routeImportEvent?.id == id) routeImportEvent = null },
+                    onShowAdPrivacyOptions = { container.ads.showPrivacyOptionsForm(this) },
                 )
             }
         }

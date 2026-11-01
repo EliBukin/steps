@@ -32,7 +32,8 @@
       and tiles only. Never used for background loading - see README's "Map" and "The Map screen"
       sections. The one other request is the Offline maps settings reading the list of map packs
       from the app's GitHub release when they open (data/mappack); the packs themselves download
-      through Android's download manager.
+      through Android's download manager. Ads (see ads/AdsManager) also use the network: Google's
+      consent form and the Mobile Ads SDK, which add their own permissions (the advertising ID).
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -47,6 +48,15 @@
         android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.StepSplit">
+
+        <!--
+          AdMob's app ID (see ads/AdsManager), from the build: Google's test ID in debug builds, the
+          real one from admob.properties in release builds. A release without that file has no ads
+          and leaves this out (src/adsOff). See app/build.gradle.kts.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
 
         <activity
             android:name=".ui.MainActivity"

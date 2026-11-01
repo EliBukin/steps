@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -7,6 +8,43 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+/**
+ * AdMob's app ID and the two ad units (the Stats/History banner and the Trips native card). Never
+ * in the code: debug builds use Google's published test IDs ([AdMobIds.TEST]), and release builds
+ * read the real ones from `admob.properties` at the repository root, which Git ignores. Without
+ * that file a release build has no ads at all, so it can never ship the test IDs. See
+ * docs/RELEASING.md, "Ads (AdMob IDs)".
+ */
+data class AdMobIds(val appId: String, val bannerUnitId: String, val nativeUnitId: String) {
+    companion object {
+        /** https://developers.google.com/admob/android/test-ads: the sample app ID, adaptive banner and native ad units. */
+        val TEST = AdMobIds(
+            appId = "ca-app-pub-3940256099942544~3347511713",
+            bannerUnitId = "ca-app-pub-3940256099942544/9214589741",
+            nativeUnitId = "ca-app-pub-3940256099942544/2247696110",
+        )
+        private const val TEST_PUBLISHER = "3940256099942544"
+        // The forms the Mobile Ads SDK accepts: it stops the app at launch with an app ID in any other form.
+        private val APP_ID = Regex("ca-app-pub-[0-9]{16}~[0-9]{10}")
+        private val UNIT_ID = Regex("ca-app-pub-[0-9]{16}/[0-9]{10}")
+
+        /** The release IDs from [file], or null when there is no such file. A file that is there but wrong fails the build. */
+        fun release(file: File): AdMobIds? {
+            if (!file.isFile) return null
+            val properties = Properties().apply { file.inputStream().use(::load) }
+            fun id(key: String, format: Regex): String {
+                val value = properties.getProperty(key)?.trim().orEmpty()
+                if (!format.matches(value)) throw GradleException("${file.name}: $key must look like ${format.pattern}, not \"$value\"")
+                if (TEST_PUBLISHER in value) throw GradleException("${file.name}: $key is one of Google's test IDs; a release must never use them")
+                return value
+            }
+            return AdMobIds(id("appId", APP_ID), id("bannerUnitId", UNIT_ID), id("nativeUnitId", UNIT_ID))
+        }
+    }
+}
+
+val releaseAdMobIds: AdMobIds? = AdMobIds.release(rootProject.file("admob.properties"))
 
 android {
     // The Kotlin package and R class stay com.example.stepsplit; only applicationId is the app's
@@ -25,6 +63,9 @@ android {
         // Offline map packs: the list of maps (maps.json) next to their files, in the repo's "maps"
         // GitHub release. See scripts/offline-maps/README.md.
         buildConfigField("String", "MAPS_MANIFEST_URL", "\"https://github.com/EliBukin/steps/releases/download/maps/maps.json\"")
+        // Debug builds only (see the debug build type): a region to test Google's consent form in.
+        buildConfigField("String", "UMP_DEBUG_GEOGRAPHY", "\"\"")
+        buildConfigField("String", "UMP_TEST_DEVICE_HASHED_ID", "\"\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -37,11 +78,23 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            adMobIds(releaseAdMobIds)
         }
         debug {
             applicationIdSuffix = ".debug"
             isMinifyEnabled = false
+            adMobIds(AdMobIds.TEST)
+            // To see the consent form outside Europe: ./gradlew installDebug -Pstepsplit.umpDebugGeography=EEA
+            // -Pstepsplit.umpTestDeviceHashedId=<the ID the UMP SDK logs on the phone>. Emulators need no ID.
+            buildConfigField("String", "UMP_DEBUG_GEOGRAPHY", "\"${providers.gradleProperty("stepsplit.umpDebugGeography").getOrElse("")}\"")
+            buildConfigField("String", "UMP_TEST_DEVICE_HASHED_ID", "\"${providers.gradleProperty("stepsplit.umpTestDeviceHashedId").getOrElse("")}\"")
         }
+    }
+
+    // A release without admob.properties has no ads: no app ID, and without one the Mobile Ads
+    // SDK's start-up provider would stop the app at launch, so that build leaves it out.
+    if (releaseAdMobIds == null) {
+        sourceSets.getByName("release").manifest.srcFile("src/adsOff/AndroidManifest.xml")
     }
 
     compileOptions {
@@ -83,6 +136,14 @@ android {
             isReturnDefaultValues = true
         }
     }
+}
+
+/** [ids] null: no ads in this build type. */
+fun com.android.build.api.dsl.ApplicationBuildType.adMobIds(ids: AdMobIds?) {
+    manifestPlaceholders["admobAppId"] = ids?.appId.orEmpty()
+    buildConfigField("boolean", "ADS_ENABLED", (ids != null).toString())
+    buildConfigField("String", "ADMOB_BANNER_UNIT_ID", "\"${ids?.bannerUnitId.orEmpty()}\"")
+    buildConfigField("String", "ADMOB_NATIVE_UNIT_ID", "\"${ids?.nativeUnitId.orEmpty()}\"")
 }
 
 /**
@@ -161,6 +222,9 @@ dependencies {
 
     implementation(libs.play.services.location)
     implementation(libs.androidx.health.connect.client)
+
+    implementation(libs.play.services.ads)
+    implementation(libs.user.messaging.platform)
 
     // Completed-trip detail map only (ui/trips/TripRouteMap.kt) - official MapLibre Compose,
     // consumed directly as a plain Android AAR (no Kotlin Multiplatform plugin needed; its

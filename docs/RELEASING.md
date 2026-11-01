@@ -165,6 +165,58 @@ Two release settings matter for Play:
   the installed app and 70 KB to the download (measured with bundletool).
   ABI and screen-density splits stay on.
 
+## Ads (AdMob IDs)
+
+The app shows Google AdMob ads in three places only: a banner at the bottom
+of the Stats and History tabs, and an ad card in the Trips list. Their IDs
+are never in the code:
+
+| Build | AdMob app ID and ad units |
+|---|---|
+| Debug | Google's published test IDs, always. Only test ads. |
+| Release, with `admob.properties` | The real IDs from that file. |
+| Release, without it | None: no ads, no consent form, and the Mobile Ads SDK never starts. |
+
+The IDs aren't secret: every installed copy of the app carries them. Keeping
+them out of the code means a debug build can never show real ads (clicking
+your own real ads can get the AdMob account suspended), and a release can
+never show test ads.
+
+**Where the real IDs go.** A file named `admob.properties` at the repository
+root, next to `app/`. Git ignores it. Create it once AdMob has the app and
+its two ad units:
+
+```properties
+# AdMob -> Apps -> Steps GPS Route -> App settings: the App ID (with "~").
+appId=ca-app-pub-0000000000000000~0000000000
+# AdMob -> Apps -> Steps GPS Route -> Ad units: the Banner unit (with "/").
+bannerUnitId=ca-app-pub-0000000000000000/0000000000
+# The Native advanced unit.
+nativeUnitId=ca-app-pub-0000000000000000/0000000000
+```
+
+- The build checks the file. Each ID must have AdMob's form, and none may be
+  one of Google's test IDs. Otherwise the release build stops with a message
+  naming the wrong line.
+- `scripts/release.sh build` copies the file into its clean checkout and
+  writes in the build record whether that release has ads.
+- Before testing real ads on a phone, add it as a test device in AdMob
+  (Settings -> Test devices), so its taps never count.
+
+**Testing Google's consent form.** The form only shows where the consent
+rules apply (the EEA, the UK and Switzerland). A debug build can pretend to
+be there:
+
+```bash
+./gradlew assembleDebug -Pstepsplit.umpDebugGeography=EEA -Pstepsplit.umpTestDeviceHashedId=<id>
+```
+
+then install it with `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`.
+A phone's `<id>` is printed by the consent SDK in logcat ("Use new
+ConsentDebugSettings.Builder().addTestDeviceHashedId(...)"). Emulators need
+none. The answer is remembered: clear the app's data to see the form again.
+Settings shows "Privacy options for ads" wherever the form applies.
+
 ## Version codes
 
 - `versionCode` (in `app/build.gradle.kts`) must increase with **every**

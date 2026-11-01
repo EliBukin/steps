@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Release builds without admob.properties only (see app/build.gradle.kts): no ads, so no AdMob app
+  ID, and without the Mobile Ads SDK's start-up provider, which stops the app at launch when the ID
+  is missing. The SDK's code stays in the app, unused: AdsManager never starts it in this build.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            tools:node="remove" />
+        <provider
+            android:name="com.google.android.gms.ads.MobileAdsInitProvider"
+            android:authorities="${applicationId}.mobileadsinitprovider"
+            tools:node="remove" />
+    </application>
+</manifest>

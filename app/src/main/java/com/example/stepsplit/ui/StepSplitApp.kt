@@ -72,6 +72,8 @@ fun StepSplitApp(
     /** A GPX file opened with the app or shared to it: the Map tab imports it, then [onRouteImportHandled] with its id. */
     routeImportEvent: RouteImportEvent? = null,
     onRouteImportHandled: (Long) -> Unit = {},
+    /** Google's form for changing ad consent (see AdsManager.showPrivacyOptionsForm), from Settings. */
+    onShowAdPrivacyOptions: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val factory = remember(container) { ViewModelFactory(container) }
@@ -220,6 +222,7 @@ fun StepSplitApp(
                     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                     val offlineMaps: OfflineMapsViewModel = viewModel(factory = factory)
                     val offlineMapsState by offlineMaps.state.collectAsStateWithLifecycle()
+                    val adPrivacyOptionsRequired by container.ads.privacyOptionsRequired.collectAsStateWithLifecycle()
                     SettingsScreen(
                         uiState = uiState,
                         onSetDailyGoal = viewModel::setDailyGoal,
@@ -232,6 +235,8 @@ fun StepSplitApp(
                         onRunStepSourceCheck = viewModel::runStepSourceCheck,
                         onOpenHealthConnect = { onOpenHealthConnectPermissions(viewModel::refreshAvailability) },
                         onBack = { navController.popBackStack() },
+                        // Only where Google's consent rules apply (see AdsManager.privacyOptionsRequired).
+                        onOpenAdPrivacyOptions = onShowAdPrivacyOptions.takeIf { adPrivacyOptionsRequired },
                         offlineMaps = offlineMapsState,
                         offlineMapsActions = remember(offlineMaps) {
                             OfflineMapsActions(

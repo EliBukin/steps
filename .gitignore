@@ -24,3 +24,6 @@ keystore.properties
 signing.properties
 upload*.properties
 /dist/
+
+# AdMob: the real app and ad unit IDs, read by release builds only (see docs/RELEASING.md).
+admob.properties

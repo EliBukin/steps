@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,6 +64,8 @@ fun SettingsScreen(
     /** Settings opens from a tab's gear icon, over that tab; the back arrow returns to it. */
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens Google's ad privacy options form; null leaves the row out (it is offered only where the consent rules apply). */
+    onOpenAdPrivacyOptions: (() -> Unit)? = null,
     /** The Offline maps card; null leaves it out (previews and tests of the other sections). */
     offlineMaps: MapPacksState? = null,
     offlineMapsActions: OfflineMapsActions? = null,
@@ -84,7 +87,7 @@ fun SettingsScreen(
                 SettingsSection.Trips -> TripsSection(uiState.keepDeletedTripsInStats, onSetKeepDeletedTripsInStats)
                 SettingsSection.OfflineMaps -> if (offlineMaps != null && offlineMapsActions != null) OfflineMapsSection(offlineMaps, offlineMapsActions)
                 SettingsSection.Status -> StatusSection(uiState, onOpenHealthConnect)
-                SettingsSection.Privacy -> PrivacySection()
+                SettingsSection.Privacy -> PrivacySection(onOpenAdPrivacyOptions)
                 SettingsSection.Debug -> if (BuildConfig.DEBUG) DebugSection(uiState, onGenerateSampleData, onRunStepSourceCheck)
             }
         }
@@ -270,25 +273,40 @@ private fun StatusSection(uiState: SettingsUiState, onOpenHealthConnect: () -> U
     }
 }
 
-/** Opens the privacy policy: the same screen Health Connect opens from its own privacy-policy link. */
+/**
+ * Opens the privacy policy: the same screen Health Connect opens from its own privacy-policy link.
+ * Where Google's consent rules apply (the EEA, the UK, Switzerland), also Google's privacy options
+ * form, where the owner changes the consent they gave for ads.
+ */
 @Composable
-private fun PrivacySection() {
+private fun PrivacySection(onOpenAdPrivacyOptions: (() -> Unit)?) {
     val context = LocalContext.current
     Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(role = Role.Button) { context.startActivity(PermissionsRationaleActivity.intent(context)) }
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                stringResource(R.string.settings_privacy_policy_label),
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+        Column {
+            PrivacyRow(R.string.settings_privacy_policy_label) { context.startActivity(PermissionsRationaleActivity.intent(context)) }
+            if (onOpenAdPrivacyOptions != null) {
+                HorizontalDivider()
+                PrivacyRow(R.string.settings_ad_privacy_options_label, onOpenAdPrivacyOptions)
+            }
         }
+    }
+}
+
+@Composable
+private fun PrivacyRow(@StringRes labelRes: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(labelRes),
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
     }
 }
 

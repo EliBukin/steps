@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.stepsplit.BuildConfig
 import com.example.stepsplit.R
+import com.example.stepsplit.ads.AdsManager
 import com.example.stepsplit.data.local.StepSplitDatabase
 import com.example.stepsplit.data.mappack.HttpMapPackManifestSource
 import com.example.stepsplit.data.mappack.MapPackRepository
@@ -91,6 +92,12 @@ class AppContainer(
         io = Dispatchers.IO,
         freeBytes = { dir -> allocatableBytes(context, dir) },
     )
+
+    // ---- Ads (see ads.AdsManager): Google's consent form, then the Mobile Ads SDK. Built on first
+    // use, from the app's screen, so nothing of it runs while only the recording service is alive.
+    // The ad SDK gets none of the data below: no steps, trips or location. ----
+
+    val ads: AdsManager by lazy { AdsManager(context, processScope("adsScope")) }
 
     // ---- Routes imported from GPX files (see data.route.ImportedRouteRepository) - planned hikes
     // and drives for the Map tab, in their own tables; never trips, and nothing here touches steps. ----

@@ -44,14 +44,22 @@ EXPECTED_PERMISSIONS=(
   android.permission.FOREGROUND_SERVICE_LOCATION
   android.permission.POST_NOTIFICATIONS
   android.permission.INTERNET
-  # Added by libraries: MapLibre (network and Wi-Fi state), WorkManager (wake lock, boot), and
-  # androidx.core (its own signature permission for non-exported dynamic receivers).
+  # Added by libraries: MapLibre (network and Wi-Fi state), WorkManager (wake lock), and
+  # androidx.core (its own signature permission for non-exported dynamic receivers). WorkManager's
+  # RECEIVE_BOOT_COMPLETED is removed by the Mobile Ads SDK's manifest; the app schedules no work.
   android.permission.ACCESS_NETWORK_STATE
   android.permission.ACCESS_WIFI_STATE
   android.permission.WAKE_LOCK
-  android.permission.RECEIVE_BOOT_COMPLETED
   bukin.stepsgpsroute.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+  # Added by the Google Mobile Ads SDK, with or without ads in the build: the advertising ID, and
+  # Android's Privacy Sandbox ad APIs. Play Console's advertising ID declaration must say so.
+  com.google.android.gms.permission.AD_ID
+  android.permission.ACCESS_ADSERVICES_AD_ID
+  android.permission.ACCESS_ADSERVICES_ATTRIBUTION
+  android.permission.ACCESS_ADSERVICES_TOPICS
 )
+# Google's sample AdMob publisher: its IDs are test IDs, which a release must never carry.
+ADMOB_TEST_PUBLISHER=3940256099942544
 # Debug builds' Settings section and sample data live in this package; R8 must drop all of it.
 DEBUG_TOOLS_PACKAGE=com.example.stepsplit.debug
 # Activities that the debugImplementation libraries (Compose tooling, ui-test-manifest) declare.
@@ -150,6 +158,29 @@ $survivors"
   done
 }
 
+# Fails unless the APK-like file $1 has ads as the build meant ($2: "on" or "off"): with ads, an
+# AdMob app ID that isn't Google's test one; without, no app ID and no Mobile Ads start-up provider
+# (see app/src/adsOff). Prints the app ID, or "none".
+check_ads() {
+  local apk=$1 expected=$2 manifest app_id
+  manifest=$("$aapt2" dump xmltree --file AndroidManifest.xml "$apk")
+  [ -n "$manifest" ] || fail "could not read the manifest of $apk"
+  app_id=$(grep -A1 'android:name(0x01010003)="com.google.android.gms.ads.APPLICATION_ID"' <<<"$manifest" |
+    sed -nE 's/.*android:value\(0x01010024\)="([^"]*)".*/\1/p' | sed -n 1p || true)
+  case "$expected" in
+    on)
+      [ -n "$app_id" ] || fail "$apk has no AdMob app ID, though admob.properties was there"
+      case "$app_id" in *"$ADMOB_TEST_PUBLISHER"*) fail "$apk carries Google's test AdMob app ID" ;; esac
+      echo "$app_id" ;;
+    off)
+      [ -z "$app_id" ] || fail "$apk has an AdMob app ID ($app_id), though there was no admob.properties"
+      if grep -qF '"com.google.android.gms.ads.MobileAdsInitProvider"' <<<"$manifest"; then
+        fail "$apk declares the Mobile Ads start-up provider without an app ID; it would stop the app at launch"
+      fi
+      echo "none" ;;
+  esac
+}
+
 # Prints a summary of the bundle's native libraries; fails if one for a 64-bit ABI has a LOAD
 # segment aligned to less than 16 KB.
 native_libraries() {
@@ -245,6 +276,14 @@ cmd_build() {
   mkdir -p "$src"
   # Exactly the committed tree: nothing from the working tree, untracked files or earlier builds.
   git -C "$repo" archive --format=tar "$commit" | tar -xf - -C "$src"
+  # The one exception: the real AdMob IDs, which Git ignores (see docs/RELEASING.md, "Ads"). Without
+  # them the release has no ads.
+  local ads=off
+  if [ -f "$repo/admob.properties" ]; then
+    cp "$repo/admob.properties" "$src/admob.properties"
+    ads=on
+  fi
+  echo "Ads: $ads ($([ "$ads" = on ] && echo "IDs from admob.properties" || echo "no admob.properties"))"
 
   echo "Building $commit in $src"
   echo "Gates: ./gradlew --no-daemon --continue ${GATES[*]} (about 15 minutes; log: $log)"
@@ -280,6 +319,10 @@ cmd_build() {
   check_privacy_policy "$apk" assets/privacy-policy.html "$policy" "$work"
   check_no_debug_tools "$mapping" "$work/manifest/base-proto.apk"
   check_no_debug_tools "$mapping" "$apk"
+  local ads_app_id bundle_ads_app_id
+  ads_app_id=$(check_ads "$apk" "$ads")
+  bundle_ads_app_id=$(check_ads "$work/manifest/base-proto.apk" "$ads")
+  [ "$bundle_ads_app_id" = "$ads_app_id" ] || fail "the release APK and the bundle have different AdMob app IDs"
   local libraries
   libraries=$(native_libraries "$bundle" "$work")
 
@@ -330,6 +373,11 @@ cmd_build() {
     echo "native libraries:        $libraries"
     echo "privacy policy asset:    identical to docs/privacy-policy.html, SHA-256 $(sha256 "$policy")"
     echo "debug tools:             none (no $DEBUG_TOOLS_PACKAGE class after R8, no ${DEBUG_ONLY_COMPONENTS[*]})"
+    if [ "$ads" = on ]; then
+      echo "ads:                     on, AdMob app ID $ads_app_id (admob.properties SHA-256 $(sha256 "$src/admob.properties"))"
+    else
+      echo "ads:                     off (no admob.properties)"
+    fi
     echo "Gradle:                  $gradle_version"
     echo "Android Gradle plugin:   ${agp_version:-unknown}"
     echo "Kotlin Gradle plugin:    ${kotlin_version:-unknown}"
