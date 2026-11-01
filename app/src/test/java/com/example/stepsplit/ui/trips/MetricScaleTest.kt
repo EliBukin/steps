@@ -87,4 +87,17 @@ class MetricScaleTest {
     fun `label numbers follow the locale's decimal separator`() {
         assertEquals(ScaleLabel("2,5", ScaleUnit.KILOMETERS), MetricScale.label(2_500.0, Locale.GERMANY))
     }
+
+    @Test
+    fun `a step's width in whole pixels changes only when the bar would draw a pixel wider or narrower`() {
+        // The map's scale at a fix and at one 2 m north of it: the bar draws the same, so nothing recomposes.
+        val here = MetricScale.choose(metersPerDp = 1.01300, maxWidthDp = 180f)!!.inWholePixels(2.625f)
+        val twoMetersOn = MetricScale.choose(metersPerDp = 1.01300 * (1 - 2e-7), maxWidthDp = 180f)!!.inWholePixels(2.625f)
+
+        assertEquals(here, twoMetersOn)
+        assertEquals(100, here.meters)
+        assertEquals(259f, here.widthDp * 2.625f, 1e-3f)
+        // Zooming changes it.
+        assertTrue(here != MetricScale.choose(metersPerDp = 1.02, maxWidthDp = 180f)!!.inWholePixels(2.625f))
+    }
 }

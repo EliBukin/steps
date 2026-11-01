@@ -146,6 +146,31 @@ class OpenMapCameraTest {
         assertTrue(OpenMapCamera.hasArrived(camera, null, null))
     }
 
+    @Test
+    fun `following skips a move or turn too small to see, but not walking, driving or a real turn`() {
+        val camera = CameraPosition(target = Position(longitude = 35.21, latitude = 31.77), zoom = OpenMapCamera.FOLLOW_ZOOM, bearing = 0.0)
+        val atFollowZoom = metersPerDp(31.77, OpenMapCamera.FOLLOW_ZOOM) // about 1 m per dp
+        fun north(meters: Double) = Position(longitude = 35.21, latitude = 31.77 + meters / 111_195.0)
+
+        // A still phone's jitter: under 2 dp.
+        assertTrue(OpenMapCamera.isUnseenMove(camera, 0f, north(1.5), atFollowZoom))
+        assertTrue(OpenMapCamera.isUnseenMove(camera, null, north(0.3), atFollowZoom))
+        // Walking a second or two (1.4 m/s), or driving one: seen, so the map glides.
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 0f, north(2.8), atFollowZoom))
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 0f, north(14.0), atFollowZoom))
+        // The same 1.5 m zoomed in three levels further is 12 dp: seen.
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 0f, north(1.5), metersPerDp(31.77, OpenMapCamera.FOLLOW_ZOOM + 3)))
+        // Turns: under a degree isn't seen, across north too; more is.
+        assertTrue(OpenMapCamera.isUnseenMove(camera, 0.6f, null, atFollowZoom))
+        assertTrue(OpenMapCamera.isUnseenMove(camera.copy(bearing = 359.7), 0.2f, north(1.0), atFollowZoom))
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 1.5f, null, atFollowZoom))
+        assertFalse(OpenMapCamera.isUnseenMove(camera.copy(bearing = 359.0), 0.5f, null, atFollowZoom))
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 3f, north(0.5), atFollowZoom))
+        // No scale from the map yet: always glide.
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 0f, north(0.5), 0.0))
+        assertFalse(OpenMapCamera.isUnseenMove(camera, 0f, north(0.5), Double.NaN))
+    }
+
     private fun metersPerDp(latitude: Double, zoom: Double) = 40_075_016.686 * Math.cos(Math.toRadians(latitude)) / (512.0 * Math.pow(2.0, zoom))
 
     private fun point(latitude: Double, longitude: Double) =

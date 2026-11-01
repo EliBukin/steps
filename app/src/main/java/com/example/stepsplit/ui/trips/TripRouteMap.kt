@@ -247,7 +247,7 @@ private fun LiveMap(
         }
 
         MetricScaleBar(
-            metersPerDp = cameraState.metersPerDpAtTarget,
+            metersPerDp = { cameraState.metersPerDpAtTarget },
             // Same maximum width (half the map), corner and margin as MapLibre's own scale bar; the
             // compass takes the opposite corner.
             maxWidth = maxWidth * 0.5f,

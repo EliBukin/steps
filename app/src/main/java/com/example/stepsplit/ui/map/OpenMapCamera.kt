@@ -2,6 +2,7 @@ package com.example.stepsplit.ui.map
 
 import com.example.stepsplit.data.trip.MapFix
 import com.example.stepsplit.domain.model.TripPoint
+import com.example.stepsplit.domain.trip.RouteMath
 import com.example.stepsplit.ui.trips.RouteCameraBounds
 import kotlin.math.abs
 import kotlin.math.cos
@@ -114,6 +115,27 @@ internal object OpenMapCamera {
     /** Whether a glide ([glideFrame]) toward [bearing] and [target] has got there. */
     fun hasArrived(position: CameraPosition, bearing: Float?, target: Position?): Boolean =
         (bearing == null || position.bearing == bearing.toDouble()) && (target == null || position.target == target)
+
+    /** A move of the map's center shorter than this on screen can't be seen. */
+    const val MIN_SEEN_MOVE_DP = 2.0
+
+    /** Nor a turn of the map smaller than this. */
+    const val MIN_SEEN_TURN_DEGREES = 1f
+
+    /**
+     * Whether gliding from [current] toward [bearing] (null: no turn) and [target] (null: no move)
+     * would show nothing: the center moves less than [MIN_SEEN_MOVE_DP] at the map's [metersPerDp], and
+     * the map turns less than [MIN_SEEN_TURN_DEGREES]. Then there's no glide, and none of the frames
+     * MapLibre would draw for it: GPS jitter while the phone stands still started one at every fix.
+     * Walking or driving moves further than that between fixes; until it does, the map is at most
+     * that far behind. An unknown scale (none yet, 0 or not finite) always glides.
+     */
+    fun isUnseenMove(current: CameraPosition, bearing: Float?, target: Position?, metersPerDp: Double): Boolean {
+        if (!metersPerDp.isFinite() || metersPerDp <= 0.0) return false
+        val turn = bearing?.let { abs(HeadingMath.shortestTurn(current.bearing.toFloat(), it)) } ?: 0f
+        val moveMeters = target?.let { RouteMath.haversineMeters(current.target.latitude, current.target.longitude, it.latitude, it.longitude) } ?: 0.0
+        return turn < MIN_SEEN_TURN_DEGREES && moveMeters / metersPerDp < MIN_SEEN_MOVE_DP
+    }
 
     /** "Show whole route": the route recorded so far, and where the phone is now. */
     fun wholeRouteFit(route: List<TripPoint>, fix: MapFix?): RouteCameraBounds.Fit? {

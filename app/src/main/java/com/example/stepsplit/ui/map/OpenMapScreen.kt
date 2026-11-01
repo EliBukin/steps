@@ -523,10 +523,13 @@ private fun OpenMapView(
         if (!following || location == null || rotateWithMe) return@LaunchedEffect
         val current = cameraState.position
         val here = Position(longitude = location.longitude, latitude = location.latitude)
-        if (OpenMapCamera.isFarOut(current.zoom, location)) {
-            cameraState.position = CameraPosition(target = here, zoom = OpenMapCamera.followZoom(current.zoom, location), bearing = followBearing)
-        } else {
-            cameraState.glideTo(bearing = followBearing.toFloat(), target = here)
+        when {
+            OpenMapCamera.isFarOut(current.zoom, location) ->
+                cameraState.position = CameraPosition(target = here, zoom = OpenMapCamera.followZoom(current.zoom, location), bearing = followBearing)
+            // No glide for a move too small to see ([OpenMapCamera.isUnseenMove]): GPS jitter while
+            // standing still. MapLibre's compass, too, counts under a degree from north as north.
+            OpenMapCamera.isUnseenMove(current, followBearing.toFloat(), here, cameraState.metersPerDpAtTarget) -> Unit
+            else -> cameraState.glideTo(bearing = followBearing.toFloat(), target = here)
         }
     }
     // Map turns with me: whenever the heading or the fix changes, the map glides toward the new turn
@@ -548,6 +551,9 @@ private fun OpenMapView(
                 )
                 return@collectLatest
             }
+            // No glide for a turn or move too small to see ([OpenMapCamera.isUnseenMove]): the compass's
+            // and the fix's jitter started one at every reading.
+            if (OpenMapCamera.isUnseenMove(cameraState.position, choice.bearing, goal, cameraState.metersPerDpAtTarget)) return@collectLatest
             cameraState.glideTo(bearing = choice.bearing, target = goal)
         }
     }
@@ -649,7 +655,7 @@ private fun OpenMapView(
         }
 
         MetricScaleBar(
-            metersPerDp = cameraState.metersPerDpAtTarget,
+            metersPerDp = { cameraState.metersPerDpAtTarget },
             maxWidth = maxWidth * 0.5f,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
         )

@@ -3,6 +3,9 @@ package com.example.stepsplit.ui.trips
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -22,9 +25,13 @@ import com.example.stepsplit.R
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /** One state of the map's scale bar: a round distance and the width that distance draws at. */
-internal data class MetricScaleStep(val meters: Int, val widthDp: Float)
+internal data class MetricScaleStep(val meters: Int, val widthDp: Float) {
+    /** The same step with its width rounded to whole pixels at [pixelsPerDp]: all the screen can show of it. */
+    fun inWholePixels(pixelsPerDp: Float): MetricScaleStep = copy(widthDp = (widthDp * pixelsPerDp).roundToInt() / pixelsPerDp)
+}
 
 internal enum class ScaleUnit { METERS, KILOMETERS }
 
@@ -77,10 +84,19 @@ private val BarBorderWidth = 0.75.dp
  * black and a white half inside a thin black outline, with "0", the midpoint and the full distance
  * above it in black text with a white halo. At most [maxWidth] wide; draws nothing while
  * [MetricScale.choose] has no step to show. Always drawn left to right, as MapLibre's is.
+ *
+ * [metersPerDp] is read here, not by the caller: the map's scale changes with every camera frame -
+ * even a glide along a street at the same zoom, since it depends on the latitude - and read by the
+ * caller it recomposed the whole map screen at each frame. Here only a bar that draws differently,
+ * another round distance or a whole pixel wider or narrower, recomposes it.
  */
 @Composable
-internal fun MetricScaleBar(metersPerDp: Double, maxWidth: Dp, modifier: Modifier = Modifier) {
-    val step = MetricScale.choose(metersPerDp, maxWidth.value) ?: return
+internal fun MetricScaleBar(metersPerDp: () -> Double, maxWidth: Dp, modifier: Modifier = Modifier) {
+    val density = LocalDensity.current
+    val chosen by remember(metersPerDp, maxWidth, density) {
+        derivedStateOf { MetricScale.choose(metersPerDp(), maxWidth.value)?.inWholePixels(density.density) }
+    }
+    val step = chosen ?: return
     val locale = LocalConfiguration.current.locales[0]
     val labels = listOf(
         "0",
@@ -90,7 +106,6 @@ internal fun MetricScaleBar(metersPerDp: Double, maxWidth: Dp, modifier: Modifie
     val textMeasurer = rememberTextMeasurer()
     val layouts = labels.map { textMeasurer.measure(it, LabelStyle) }
 
-    val density = LocalDensity.current
     val barWidthPx = with(density) { step.widthDp.dp.toPx() }
     val haloPx = with(density) { LabelHaloWidth.toPx() }
     // The bar sits just under the labels' baseline, as in MapLibre's bar - not under the bottom of
