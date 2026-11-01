@@ -5,6 +5,7 @@ data class RawLocationSample(
     val latitude: Double,
     val longitude: Double,
     val accuracyMeters: Float,
+    /** When the fix was taken, on the phone's clock (see `FusedTripLocationClient`'s `toRawLocationSample`). */
     val capturedAtEpochSecond: Long,
     val altitudeMeters: Double? = null,
     val speedMetersPerSecond: Float? = null,

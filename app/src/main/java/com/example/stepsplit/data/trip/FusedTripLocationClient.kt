@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
 import android.os.Looper
+import android.os.SystemClock
 import com.example.stepsplit.domain.trip.RawLocationSample
 import com.example.stepsplit.domain.trip.SpotFixRule
+import java.time.Clock
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -64,7 +66,13 @@ import kotlinx.coroutines.flow.callbackFlow
  * becomes available again. A more elaborate *sustained*-unavailability policy (e.g. auto-interrupting
  * after some longer bound with no fixes at all) is deliberately out of scope for this MVP.
  */
-class FusedTripLocationClient(private val context: Context) : TripLocationClient {
+class FusedTripLocationClient(
+    private val context: Context,
+    /** The phone's clock, which trips start and finish by; fixes are stamped on it ([toRawLocationSample]). */
+    private val clock: Clock = Clock.systemUTC(),
+    /** The monotonic clock a fix's age is told by ([Location.getElapsedRealtimeNanos]). */
+    private val elapsedRealtimeNanos: () -> Long = SystemClock::elapsedRealtimeNanos,
+) : TripLocationClient {
 
     // Shared (not one per locationUpdates() collection) so flush() below always targets the same
     // underlying client the active subscription, if any, is registered against.
@@ -80,7 +88,9 @@ class FusedTripLocationClient(private val context: Context) : TripLocationClient
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                trySend(result.locations.map { it.toRawLocationSample() })
+                val nowEpochMillis = clock.millis()
+                val nowElapsedRealtimeNanos = elapsedRealtimeNanos()
+                trySend(result.locations.map { it.toRawLocationSample(nowEpochMillis, nowElapsedRealtimeNanos) })
             }
         }
 
@@ -122,7 +132,7 @@ class FusedTripLocationClient(private val context: Context) : TripLocationClient
             .build()
         val cancellation = CancellationTokenSource()
         return try {
-            client.getCurrentLocation(request, cancellation.token).await()?.toRawLocationSample()
+            client.getCurrentLocation(request, cancellation.token).await()?.toRawLocationSample(clock.millis(), elapsedRealtimeNanos())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -141,11 +151,27 @@ class FusedTripLocationClient(private val context: Context) : TripLocationClient
     }
 }
 
-private fun Location.toRawLocationSample() = RawLocationSample(
+/**
+ * This fix as a [RawLocationSample], stamped on the phone's clock: [nowEpochMillis] less the fix's age
+ * on the monotonic clock ([Location.getElapsedRealtimeNanos] against [nowElapsedRealtimeNanos]).
+ *
+ * Not [Location.getTime]: a fix may carry GNSS time, while a trip's start, its Finish and "now" are
+ * on the phone's clock. With automatic time off and the clock a few minutes out, every fix would
+ * then look stale, or ahead of now, or before the start, and none would be kept (review 2, H1). On
+ * one clock, every check agrees whatever the phone's clock says; a fix's age is its age. When the
+ * two clocks agree, the stamp is the same. A fix with no monotonic time (mock providers may leave
+ * it 0) keeps [Location.getTime].
+ */
+internal fun Location.toRawLocationSample(nowEpochMillis: Long, nowElapsedRealtimeNanos: Long) = RawLocationSample(
     latitude = latitude,
     longitude = longitude,
     accuracyMeters = if (hasAccuracy()) accuracy else Float.MAX_VALUE,
-    capturedAtEpochSecond = time / 1000L,
+    capturedAtEpochSecond = if (elapsedRealtimeNanos > 0L) {
+        val ageMillis = ((nowElapsedRealtimeNanos - elapsedRealtimeNanos) / 1_000_000L).coerceAtLeast(0L)
+        Math.floorDiv(nowEpochMillis - ageMillis, 1000L)
+    } else {
+        time / 1000L
+    },
     altitudeMeters = if (hasAltitude()) altitude else null,
     speedMetersPerSecond = if (hasSpeed()) speed else null,
 )
