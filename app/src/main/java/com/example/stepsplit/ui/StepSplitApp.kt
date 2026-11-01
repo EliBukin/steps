@@ -39,7 +39,9 @@ import com.example.stepsplit.R
 import com.example.stepsplit.debug.DebugDataSeeder
 import com.example.stepsplit.di.AppContainer
 import com.example.stepsplit.di.ViewModelFactory
+import com.example.stepsplit.ui.ads.NativeAdCard
 import com.example.stepsplit.ui.ads.WithBannerAd
+import com.example.stepsplit.ui.ads.rememberTripsNativeAd
 import com.example.stepsplit.ui.history.HistoryScreen
 import com.example.stepsplit.ui.history.HistoryViewModel
 import com.example.stepsplit.ui.map.ImportedRouteActions
@@ -58,6 +60,7 @@ import com.example.stepsplit.ui.stats.StatsScreen
 import com.example.stepsplit.ui.stats.StatsViewModel
 import com.example.stepsplit.ui.today.TodayScreen
 import com.example.stepsplit.ui.today.TodayViewModel
+import com.example.stepsplit.ui.trips.FIRST_AD_AFTER_TRIPS
 import com.example.stepsplit.ui.trips.TripDetailScreen
 import com.example.stepsplit.ui.trips.TripDetailViewModel
 import com.example.stepsplit.ui.trips.TripsScreen
@@ -155,6 +158,12 @@ fun StepSplitApp(
                 composable(Screen.Trips.route) {
                     val viewModel: TripsViewModel = viewModel(factory = factory)
                     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                    // The list's one ad (see rememberTripsNativeAd), asked for only once it can show:
+                    // ads allowed, no trip recording, and trips enough for its first place.
+                    val nativeAd = rememberTripsNativeAd(
+                        adUnitId = BuildConfig.ADMOB_NATIVE_UNIT_ID,
+                        load = adsReady && uiState.activeTrip == null && uiState.history.size >= FIRST_AD_AFTER_TRIPS,
+                    )
                     TripsScreen(
                         uiState = uiState,
                         onOpenTrip = { tripId -> navController.navigate(Screen.TripDetail.createRoute(tripId)) },
@@ -163,6 +172,7 @@ fun StepSplitApp(
                         onMarkSpot = viewModel::markSpot,
                         spotMarkResults = viewModel.spotMarkResults,
                         onOpenSettings = openSettings,
+                        adCard = nativeAd?.let { ad -> { NativeAdCard(ad) } },
                     )
                 }
                 composable(Screen.OpenMap.route) {

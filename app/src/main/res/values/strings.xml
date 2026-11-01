@@ -74,6 +74,8 @@
     <string name="settings_permission_status_title">סטטוס הרשאה</string>
     <string name="settings_data_collection_status_title">סטטוס איסוף נתונים</string>
     <string name="settings_privacy_policy_label">מדיניות פרטיות</string>
+    <!-- The label on the Trips list's ad card (Google requires one). -->
+    <string name="ad_label">מודעה</string>
     <string name="settings_ad_privacy_options_label">אפשרויות פרטיות למודעות</string>
     <string name="settings_debug_section_title">כלי פיתוח (Debug בלבד)</string>
     <string name="settings_debug_seed_action">יצירת נתוני דוגמה</string>

@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -101,6 +100,8 @@ fun TripsScreen(
     /** The gear icon in the header: opens Settings. */
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The ad card shown among the finished trips (see [adSlotsAfterTrips]); null for none. Never while a trip records. */
+    adCard: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -189,8 +190,14 @@ fun TripsScreen(
             if (uiState.history.isEmpty()) {
                 item { Text(text = stringResource(R.string.trips_history_empty), style = MaterialTheme.typography.bodyMedium) }
             } else {
-                items(uiState.history, key = { it.summary.id }) { trip ->
-                    TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
+                val adSlots = if (adCard != null && uiState.activeTrip == null) adSlotsAfterTrips(uiState.history.size) else emptySet()
+                uiState.history.forEachIndexed { index, trip ->
+                    item(key = trip.summary.id) {
+                        TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
+                    }
+                    if (adCard != null && index in adSlots) {
+                        item(key = "ad-after-$index", contentType = "ad") { adCard() }
+                    }
                 }
             }
         }

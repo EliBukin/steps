@@ -74,6 +74,8 @@
     <string name="settings_permission_status_title">Permission status</string>
     <string name="settings_data_collection_status_title">Data collection status</string>
     <string name="settings_privacy_policy_label">Privacy policy</string>
+    <!-- The label on the Trips list's ad card (Google requires one). -->
+    <string name="ad_label">Ad</string>
     <string name="settings_ad_privacy_options_label">Privacy options for ads</string>
     <string name="settings_debug_section_title">Debug tools (debug builds only)</string>
     <string name="settings_debug_seed_action">Generate sample data</string>
