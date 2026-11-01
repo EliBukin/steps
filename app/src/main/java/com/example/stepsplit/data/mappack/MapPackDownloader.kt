@@ -16,9 +16,12 @@ interface MapPackDownloader {
     /** Stops the downloads and deletes what they had written. */
     fun cancel(ids: List<Long>)
 
-    /** This app's downloads still on their way (not done or failed) whose file goes into [dir] or a folder in it. */
-    fun unfinishedInto(dir: File): List<Long>
+    /** This app's downloads still on their way (not done or failed). */
+    fun unfinished(): List<UnfinishedDownload>
 }
+
+/** A download still on its way, and the file it writes to: null while it waits in the queue. */
+data class UnfinishedDownload(val id: Long, val file: File?)
 
 data class MapPackDownloadStatus(val id: Long, val state: State, val downloadedBytes: Long, val totalBytes: Long) {
     enum class State { QUEUED, RUNNING, WAITING_FOR_NETWORK, WAITING_FOR_WIFI, DONE, FAILED, GONE }
@@ -79,17 +82,16 @@ class SystemMapPackDownloader(context: Context) : MapPackDownloader {
         if (ids.isNotEmpty()) downloads.remove(*ids.toLongArray())
     }
 
-    override fun unfinishedInto(dir: File): List<Long> {
+    override fun unfinished(): List<UnfinishedDownload> {
         val unfinished = DownloadManager.STATUS_PENDING or DownloadManager.STATUS_RUNNING or DownloadManager.STATUS_PAUSED
-        val prefix = dir.canonicalPath + File.separator
-        val found = mutableListOf<Long>()
+        val found = mutableListOf<UnfinishedDownload>()
         downloads.query(DownloadManager.Query().setFilterByStatus(unfinished))?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID)
             val localUriColumn = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI)
             while (cursor.moveToNext()) {
-                // The file this download writes to; a download that doesn't say isn't touched.
-                val path = cursor.getString(localUriColumn)?.toUri()?.path ?: continue
-                if (File(path).canonicalPath.startsWith(prefix)) found += cursor.getLong(idColumn)
+                // No local file yet while the download manager hasn't started it.
+                val file = cursor.getString(localUriColumn)?.toUri()?.path?.let(::File)
+                found += UnfinishedDownload(cursor.getLong(idColumn), file)
             }
         }
         return found

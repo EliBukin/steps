@@ -75,11 +75,14 @@ internal class FakeMapPackDownloader(
         ids.forEach { downloads.remove(it)?.destination?.delete() }
     }
 
-    override fun unfinishedInto(dir: File): List<Long> = downloads.filterValues { download ->
-        val state = if (download.step < 0) MapPackDownloadStatus.State.QUEUED else script[download.step]
-        state != MapPackDownloadStatus.State.DONE && state != MapPackDownloadStatus.State.FAILED &&
-            download.destination.canonicalPath.startsWith(dir.canonicalPath + File.separator)
-    }.keys.toList()
+    // Like Android's: a download still in the queue has no local file yet.
+    override fun unfinished(): List<UnfinishedDownload> = downloads.mapNotNull { (id, download) ->
+        when (if (download.step < 0) MapPackDownloadStatus.State.QUEUED else script[download.step]) {
+            MapPackDownloadStatus.State.DONE, MapPackDownloadStatus.State.FAILED -> null
+            MapPackDownloadStatus.State.QUEUED -> UnfinishedDownload(id, file = null)
+            else -> UnfinishedDownload(id, download.destination)
+        }
+    }
 }
 
 internal class InMemoryMapPackPreferences(override var wifiOnly: Boolean = true, override var offerAnswered: Boolean = false) : MapPackPreferences

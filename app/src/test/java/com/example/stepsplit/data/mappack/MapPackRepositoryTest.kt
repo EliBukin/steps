@@ -495,8 +495,34 @@ class MapPackRepositoryTest {
         assertNull(store.readPendingDownload())
         // Kill point 3 (review 2, D4): the second file's download, which the record doesn't know, is removed as well.
         assertEquals(setOf(100L, 101L), fake.cancelled.toSet())
-        assertTrue(fake.unfinishedInto(root).isEmpty())
+        assertTrue(fake.unfinished().isEmpty())
         assertFalse(File(root, "israel/download-2026-10-29").exists())
+    }
+
+    @Test
+    fun `a download the app ended in the middle of handing over is removed on the next start even while it is still queued`() = runTest {
+        // The download manager hasn't started either file: a queued download has no local file yet.
+        val fake = FakeMapPackDownloader(script = listOf(MapPackDownloadStatus.State.QUEUED))
+        val firstProcess = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        repository(fake, scope = firstProcess).apply {
+            refreshManifest()
+            advanceUntilIdle()
+            download("israel")
+        }
+        advanceTimeBy(1)
+        firstProcess.cancel()
+        // The app ended after handing over the second file, before recording its id.
+        val store = MapPackStore(root)
+        store.writePendingDownload(store.readPendingDownload()!!.copy(downloadIds = listOf(100L)))
+        assertEquals(listOf(null, null), fake.unfinished().map { it.file })
+
+        val restarted = repository(fake)
+        advanceUntilIdle()
+        // Left queued, it would later land in a pack folder made again.
+        assertEquals(emptyList<UnfinishedDownload>(), fake.unfinished())
+        assertEquals(setOf(100L, 101L), fake.cancelled.toSet())
+        assertNull(restarted.state.value.download)
+        assertNull(store.readPendingDownload())
     }
 
     @Test

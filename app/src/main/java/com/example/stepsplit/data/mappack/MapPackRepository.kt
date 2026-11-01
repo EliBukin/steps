@@ -336,15 +336,23 @@ class MapPackRepository(
 
     /**
      * At startup: what a download or an install the app ended in the middle of left behind. First the
-     * download manager's downloads into the packs' folder that the pending record doesn't know (the
-     * app ended between handing a file over and recording its id), so nothing writes there any more;
-     * then the folders no version or download needs (see [MapPackStore.removeLeftovers]). Each step on
-     * its own, so one that fails doesn't stop the other.
+     * download manager's downloads still on their way that the pending record doesn't know (the app
+     * ended between handing a file over and recording its id) - into the packs' folder, or still
+     * queued with no file yet, which would later land in a pack folder made again - so nothing writes
+     * there any more; then the folders no version or download needs (see
+     * [MapPackStore.removeLeftovers]). Each step on its own, so one that fails doesn't stop the other.
      */
     private fun removeLeftovers() {
         val store = store ?: return
         val pending = store.readPendingDownload()
-        runCatching { downloader.cancel(downloader.unfinishedInto(store.root) - pending?.downloadIds.orEmpty().toSet()) }
+        val tracked = pending?.downloadIds.orEmpty().toSet()
+        runCatching {
+            val root = store.root.canonicalPath + File.separator
+            val untracked = downloader.unfinished().filter { download ->
+                download.id !in tracked && (download.file == null || download.file.canonicalPath.startsWith(root))
+            }
+            downloader.cancel(untracked.map { it.id })
+        }
         runCatching { store.removeLeftovers(pending) }
     }
 
