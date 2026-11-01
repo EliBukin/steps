@@ -74,7 +74,9 @@ class SharedPreferencesMapPackPreferences(context: Context) : MapPackPreferences
  * open ([refreshManifest]), and files download only when the user taps Download. A download keeps
  * going in Android's download manager if the app closes; the next time the app starts, the
  * finished files are checked and installed (or the progress picked up again), and whatever a
- * download or an install the app ended in the middle of left behind is deleted. While a download
+ * download or an install the app ended in the middle of left behind is deleted. A pack version that
+ * is replaced or deleted leaves [state] first, so the maps switch away from it, and its files go
+ * [OLD_FILES_GRACE_MILLIS] later ([removeOldFilesSoon]). While a download
  * runs, the download manager is asked how it goes every [pollMillis] while a screen shows [state],
  * and only every [backgroundPollMillis] while none does (the app in the background).
  *
@@ -216,14 +218,16 @@ class MapPackRepository(
 
     fun delete(regionId: String) {
         scope.launch {
-            mutex.withLock {
-                if (_state.value.download?.regionId == regionId) return@withLock
+            val deleted = mutex.withLock {
+                if (_state.value.download?.regionId == regionId) return@withLock false
                 val installed = withContext(io) {
-                    runCatching { store?.delete(regionId) }
+                    runCatching { store?.forget(regionId) }
                     store?.installed().orEmpty()
                 }
                 _state.update { it.copy(installed = installed) }
+                true
             }
+            if (deleted) removeOldFilesSoon()
         }
     }
 
@@ -318,6 +322,7 @@ class MapPackRepository(
                     offerAnswered = it.offerAnswered || installed != null,
                 )
             }
+            if (installed != null) removeOldFilesSoon()
             return true
         }
         val waiting = when {
@@ -333,6 +338,19 @@ class MapPackRepository(
     }
 
     private fun currentManifestText(): CachedManifest? = store?.readCachedManifest()
+
+    /**
+     * Deletes the files of a pack version [state] no longer lists - replaced by an update, or deleted -
+     * [OLD_FILES_GRACE_MILLIS] from now ([MapPackStore.removeLeftovers]): a map on screen draws from
+     * them until it has switched away, and MapLibre may read a pack's file again for each tile. If the
+     * app ends first, the next start deletes them.
+     */
+    private fun removeOldFilesSoon() {
+        scope.launch {
+            delay(OLD_FILES_GRACE_MILLIS)
+            mutex.withLock { withContext(io) { runCatching { store?.removeLeftovers(store.readPendingDownload()) } } }
+        }
+    }
 
     /**
      * At startup: what a download or an install the app ended in the middle of left behind. First the
@@ -369,9 +387,12 @@ class MapPackRepository(
     /** The regions this app can draw: complete ones, in a manifest layout it knows. */
     private fun MapPackManifest.usableRegions() = if (schema > MapPackManifest.SCHEMA) emptyList() else regions.filter { it.isComplete }
 
-    private companion object {
+    internal companion object {
         /** Room left over after a download, so the phone doesn't fill up to the last byte. */
-        const val SPARE_BYTES = 50L * 1024 * 1024
+        private const val SPARE_BYTES = 50L * 1024 * 1024
+
+        /** Time for the maps to switch away from a pack version before its files go ([removeOldFilesSoon]). */
+        const val OLD_FILES_GRACE_MILLIS = 10_000L
     }
 }
 

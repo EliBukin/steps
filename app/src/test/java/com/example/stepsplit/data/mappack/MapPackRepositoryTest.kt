@@ -335,6 +335,89 @@ class MapPackRepositoryTest {
         assertEquals(setOf(new), regionFolders())
     }
 
+    // ---- Review 2, H3: a pack version replaced or deleted leaves the maps before its files go. ----
+
+    /** Whether [file] was there each time [repository]'s state met [condition], from now on. */
+    private fun TestScope.filesWhen(repository: MapPackRepository, file: File, condition: (MapPacksState) -> Boolean): List<Boolean> {
+        val seen = mutableListOf<Boolean>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            repository.state.collect { if (condition(it)) seen += file.exists() }
+        }
+        return seen
+    }
+
+    @Test
+    fun `an update switches the maps to the new version before the old one's files go`() = runTest {
+        installOldThenOfferNew()
+        val oldVector = File(root, "israel/$old/israel-$old-vector.pmtiles")
+        val repository = repository()
+        val oldFilesAtSwitch = filesWhen(repository, oldVector) { it.installed.singleOrNull()?.version == new }
+
+        repository.download("israel")
+        advanceUntilIdle()
+        assertEquals("the old files were there when the maps switched", true, oldFilesAtSwitch.firstOrNull())
+        assertFalse("and are gone a little later", oldVector.exists())
+        assertEquals(setOf(new), regionFolders())
+    }
+
+    @Test
+    fun `delete takes the pack off the maps before its files go`() = runTest {
+        val repository = repository()
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+        val vector = repository.state.value.installed.single().vectorFile
+        val filesAtSwitch = filesWhen(repository, vector) { it.installed.isEmpty() }
+
+        repository.delete("israel")
+        advanceTimeBy(MapPackRepository.OLD_FILES_GRACE_MILLIS - 1)
+        assertEquals("the files were there when the maps switched", true, filesAtSwitch.firstOrNull())
+        assertTrue("and still are, for a moment", vector.exists())
+        advanceUntilIdle()
+        assertFalse(File(root, "israel").exists())
+    }
+
+    @Test
+    fun `kill point 5 - an update installed, the app ended before the old version's files went - they go on the next start`() = runTest {
+        installOldThenOfferNew()
+        val firstProcess = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        val repository = repository(scope = firstProcess)
+        repository.download("israel")
+        // Until the new version is installed (three looks at the download, a minute apart with no
+        // screen on), and not the seconds after.
+        repeat(5_000) { if (repository.state.value.installed.singleOrNull()?.version != new) advanceTimeBy(100) }
+        assertEquals(new, repository.state.value.installed.single().version)
+        assertEquals(setOf(old, new), regionFolders())
+        firstProcess.cancel()
+
+        val restarted = repository()
+        advanceUntilIdle()
+        assertNull(restarted.state.value.problem)
+        assertEquals(new, restarted.state.value.installed.single().version)
+        assertEquals(setOf(new), regionFolders())
+    }
+
+    @Test
+    fun `kill point 6 - a pack deleted, the app ended before its files went - they go on the next start`() = runTest {
+        val firstProcess = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
+        val repository = repository(scope = firstProcess)
+        repository.refreshManifest()
+        advanceUntilIdle()
+        repository.download("israel")
+        advanceUntilIdle()
+        repository.delete("israel")
+        advanceTimeBy(1)
+        assertTrue(repository.state.value.installed.isEmpty())
+        assertEquals(setOf(old), regionFolders())
+        firstProcess.cancel()
+
+        val restarted = repository()
+        advanceUntilIdle()
+        assertTrue(restarted.state.value.installed.isEmpty())
+        assertFalse(File(root, "israel").exists())
+    }
+
     @Test
     fun `at startup only the installed version and the download on its way keep their folders`() = runTest {
         installOldThenOfferNew()
