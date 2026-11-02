@@ -35,18 +35,18 @@
 <h2>Summary</h2>
 <ul>
 <li>The app reads only your step count from Health Connect, and uses your location only while a trip you started is recording or while you have its map open.</li>
-<li>Your steps, trips, the routes you import and your settings are stored only on your device. The app has no account, no analytics and no crash reporting, and it does not send your information to the developer. It shows ads from Google AdMob on its Stats, History and Trips screens; Google's ad software gets none of your steps, trips, routes or GPS location (see Ads below).</li>
+<li>Your steps, trips, the routes you import and your settings are stored on your device. If your phone's backup is on, Android also backs up your trips, imported routes and settings to your own Google account, encrypted; your steps are never part of that backup (see Backups below). The app has no account, no analytics and no crash reporting, and it does not send your information to the developer. It shows ads from Google AdMob on its Stats, History and Trips screens; Google's ad software gets none of your steps, trips, routes or GPS location (see Ads below).</li>
 <li>The app's internet traffic is loading the map when you open a trip's screen or the app's map (the map from OpenFreeMap and its hill shading from Mapterhorn), downloading an offline map from GitHub if you ask for one, and Google's ads (see Ads below). Your GPS points are not sent.</li>
 <li>A trip leaves your device only when you save or share its GPX file yourself. A GPX file you import is read on your device, with no internet.</li>
 </ul>
 
 <h2>Step data from Health Connect</h2>
-<p>If you allow it, the app reads your step count from Health Connect, Android's on-device store for activity data. It asks only for permission to <strong>read steps</strong> and does not read any other kind of data.</p>
+<p>If you allow it, the app reads your step count from Health Connect, Android's on-device store for activity data. It asks for permission to <strong>read steps</strong> and, where Health Connect offers it, to <strong>access past data</strong>, so it can also read steps from before you installed the app. It does not read any other kind of data.</p>
 <ul>
-<li><strong>What is read.</strong> The number of steps in each minute. Health Connect combines the steps counted by your phone with steps from any other app or device you've connected to Health Connect. The app reads only this combined total, not which app or device recorded the steps. On first use, or after a long break, it reads up to the last 30 days.</li>
+<li><strong>What is read.</strong> The number of steps in each minute. Health Connect combines the steps counted by your phone with steps from any other app or device you've connected to Health Connect. The app reads only this combined total, not which app or device recorded the steps. If you allow access to past data, it reads all the steps Health Connect holds, a few months at a time while the app is open. Without it, Health Connect lets the app read your steps from 30 days before you first allowed Steps, and everything since.</li>
 <li><strong>When.</strong> Only while the app is open. It never reads steps in the background.</li>
 <li><strong>What it's used for.</strong> Showing your daily and weekly steps, your progress toward your step goal, your step history, lifetime stats, and the split into workout and incidental steps.</li>
-<li><strong>What happens to it.</strong> A copy of the step counts is stored in the app's private storage on your device. The app never writes anything to Health Connect, never sends step data off your device, and never sells or shares it, uses it for advertising, or uses it for any purpose other than the features above. It is never passed to the app's ad software.</li>
+<li><strong>What happens to it.</strong> A copy of the step counts is stored in the app's private storage on your device. The app never writes anything to Health Connect, never sends step data off your device, and never sells or shares it, uses it for advertising, or uses it for any purpose other than the features above. It is never passed to the app's ad software, and it is left out of Android's backup of the app.</li>
 </ul>
 <p>The use of information received from Health Connect adheres to the Health Connect Permissions policy, including the Limited Use requirements.</p>
 <p>You can withdraw the permission at any time in Health Connect's settings. The app then stops reading steps; steps it already copied stay in the app until you uninstall it.</p>
@@ -124,11 +124,13 @@
 <li><strong>Trips and their spots</strong> are kept until you delete them in the app. Deleting a trip removes its name, route, GPS points and spots. You can also delete a single spot.</li>
 <li><strong>Imported routes</strong> are kept until you delete them in the app's list of routes. Deleting a route removes its points and waypoints; the GPX file it came from stays wherever it was.</li>
 <li><strong>Step counts and settings</strong> are kept until you uninstall the app or clear its storage in Android's settings, which also deletes your trips and imported routes.</li>
-<li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, or GPX files you saved, shared or imported from.</li>
+<li><strong>Uninstalling the app</strong> deletes everything it stored on your device. It does not delete step data in Health Connect, which Health Connect manages, GPX files you saved, shared or imported from, or a backup in your Google account (see below).</li>
 </ul>
 
 <h2>Backups and moving to a new phone</h2>
-<p>Android's cloud backup is turned off for this app, so nothing is backed up to your Google account. When you move to a new phone, Android's phone-to-phone transfer may still copy the app's data to the new phone.</p>
+<p>If backup is on in your phone's settings, Android backs up the app's trips (with their GPS points and spots), the routes you imported and your settings to your own Google account, as part of your phone's backup. On Android 9 and newer the app is backed up only when Android encrypts the backup with your phone's screen lock (PIN, pattern or password), so no one can read it without that lock, not even Google; on Android 8, Google encrypts it on its servers. When you move to a new phone, Android can also copy the same data straight to it. The developer never receives or sees any of it.</p>
+<p>Your step data is never part of the backup. On a new phone, the app reads your steps again from Health Connect once you allow it; with access to past data, that includes the steps from before.</p>
+<p>You can turn backup off in your phone's settings, and see or delete your backup in your Google account.</p>
 
 <h2>Information shared with the developer or third parties</h2>
 <p>Apart from Google's ad software described under Ads, the app contains no advertising, analytics, tracking or crash-reporting code. The app itself does not sell your personal information. The developer never receives your steps, trips or locations.</p>
