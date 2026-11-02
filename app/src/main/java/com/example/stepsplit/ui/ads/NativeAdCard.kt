@@ -14,10 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -34,46 +31,44 @@ import com.google.android.gms.ads.nativead.NativeAdOptions
 import com.google.android.gms.ads.nativead.NativeAdView
 
 /**
- * The Trips list's one native ad, or null until it has loaded. Asked for once, the first time
- * [load] is true, then reused: every ad slot of the list shows this same ad for as long as the
- * Trips screen stays. Destroyed when the screen leaves; it comes back with a new one.
+ * The Trips list's native ads for this visit (see [NativeAdSlots]): one per slot, each asked for
+ * when its slot is first composed (see [NativeAdSlot]). Every one is destroyed when the screen
+ * leaves; the next visit asks again.
  */
 @Composable
-fun rememberTripsNativeAd(adUnitId: String, load: Boolean): NativeAd? {
+internal fun rememberTripsNativeAds(adUnitId: String): NativeAdSlots<NativeAd> {
     val context = LocalContext.current
-    val holder = remember { NativeAdHolder() }
-    DisposableEffect(holder) { onDispose(holder::destroy) }
-    LaunchedEffect(load) {
-        if (load && adUnitId.isNotEmpty()) holder.load(context, adUnitId)
+    val slots = remember(adUnitId) {
+        NativeAdSlots<NativeAd>(
+            maxAds = MAX_NATIVE_ADS_PER_VISIT,
+            load = { onLoaded -> loadNativeAd(context, adUnitId, onLoaded) },
+            destroy = NativeAd::destroy,
+        )
     }
-    return holder.ad
+    DisposableEffect(slots) { onDispose(slots::destroyAll) }
+    return slots
 }
 
-private class NativeAdHolder {
-    var ad by mutableStateOf<NativeAd?>(null)
-        private set
-    private var requested = false
-    private var destroyed = false
+/**
+ * One ad slot of the Trips list: asks for its own ad the first time it's composed, and shows it as
+ * a card once it arrives. Until then it takes no room at all.
+ */
+@Composable
+internal fun NativeAdSlot(slots: NativeAdSlots<NativeAd>, slot: Int) {
+    LaunchedEffect(slots, slot) { slots.request(slot) }
+    slots.adFor(slot)?.let { NativeAdCard(it) }
+}
 
-    fun load(context: Context, adUnitId: String) {
-        if (requested || destroyed) return
-        requested = true
-        // Landscape pictures suit a card in a list best; the card fits any other shape too.
-        val options = NativeAdOptions.Builder()
-            .setMediaAspectRatio(NativeAdOptions.NATIVE_MEDIA_ASPECT_RATIO_LANDSCAPE)
-            .build()
-        AdLoader.Builder(context, adUnitId)
-            .forNativeAd { loaded -> if (destroyed) loaded.destroy() else ad = loaded }
-            .withNativeAdOptions(options)
-            .build()
-            .loadAd(plainAdRequest())
-    }
-
-    fun destroy() {
-        destroyed = true
-        ad?.destroy()
-        ad = null
-    }
+private fun loadNativeAd(context: Context, adUnitId: String, onLoaded: (NativeAd) -> Unit) {
+    // Landscape pictures suit a card in a list best; the card fits any other shape too.
+    val options = NativeAdOptions.Builder()
+        .setMediaAspectRatio(NativeAdOptions.NATIVE_MEDIA_ASPECT_RATIO_LANDSCAPE)
+        .build()
+    AdLoader.Builder(context, adUnitId)
+        .forNativeAd(onLoaded)
+        .withNativeAdOptions(options)
+        .build()
+        .loadAd(plainAdRequest())
 }
 
 /**
@@ -83,7 +78,7 @@ private class NativeAdHolder {
  * view it registers it with, so taps on them open the ad.
  */
 @Composable
-fun NativeAdCard(ad: NativeAd, modifier: Modifier = Modifier) {
+private fun NativeAdCard(ad: NativeAd, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Card(modifier = modifier.fillMaxWidth()) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -100,8 +101,11 @@ fun TripsScreen(
     /** The gear icon in the header: opens Settings. */
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
-    /** The ad card shown among the finished trips (see [adSlotsAfterTrips]); null for none. Never while a trip records. */
-    adCard: (@Composable () -> Unit)? = null,
+    /**
+     * An ad slot among the finished trips, by its number (see [adSlotAfterTrip]); null for no ads.
+     * Never while a trip records. It shows nothing until its ad arrives.
+     */
+    adSlot: (@Composable (slot: Int) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -190,13 +194,18 @@ fun TripsScreen(
             if (uiState.history.isEmpty()) {
                 item { Text(text = stringResource(R.string.trips_history_empty), style = MaterialTheme.typography.bodyMedium) }
             } else {
-                val adSlots = if (adCard != null && uiState.activeTrip == null) adSlotsAfterTrips(uiState.history.size) else emptySet()
-                uiState.history.forEachIndexed { index, trip ->
-                    item(key = trip.summary.id) {
+                val shownAdSlot = adSlot.takeIf { uiState.activeTrip == null }
+                itemsIndexed(uiState.history, key = { _, trip -> trip.summary.id }) { index, trip ->
+                    val slot = shownAdSlot?.let { adSlotAfterTrip(index, uiState.history.size) }
+                    if (shownAdSlot == null || slot == null) {
                         TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
-                    }
-                    if (adCard != null && index in adSlots) {
-                        item(key = "ad-after-$index", contentType = "ad") { adCard() }
+                    } else {
+                        // The slot rides in its trip's item, so until its ad arrives it takes no
+                        // room, not even the list's spacing.
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TripHistoryCard(trip = trip, onClick = { onOpenTrip(trip.summary.id) })
+                            shownAdSlot(slot)
+                        }
                     }
                 }
             }
