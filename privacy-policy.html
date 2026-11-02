@@ -27,7 +27,7 @@
 <li><strong>App:</strong> Steps GPS Route</li>
 <li><strong>Developer:</strong> bukin</li>
 <li><strong>Contact:</strong> dev.mechanics998877@gmail.com</li>
-<li><strong>Effective date:</strong> 2026-10-31</li>
+<li><strong>Effective date:</strong> 2026-11-02</li>
 </ul>
 <p>This policy explains what the app does with your information. Steps GPS Route shows how much you walk each day, and records GPS routes of trips you start yourself, such as hikes, nature walks or off-road drives, so you can view them on a map and export them as GPX files.</p>
 <p>Steps GPS Route is not a health or medical app. It gives no health advice, and it is not meant to diagnose, treat or track any health condition.</p>
@@ -35,8 +35,8 @@
 <h2>Summary</h2>
 <ul>
 <li>The app reads only your step count from Health Connect, and uses your location only while a trip you started is recording or while you have its map open.</li>
-<li>Your steps, trips, the routes you import and your settings are stored only on your device. The app has no account, no ads, no analytics and no crash reporting, and it does not send your information to the developer or to anyone else.</li>
-<li>The app's only internet traffic is loading the map when you open a trip's screen or the app's map (the map from OpenFreeMap and its hill shading from Mapterhorn), and downloading an offline map from GitHub if you ask for one. Your GPS points are not sent.</li>
+<li>Your steps, trips, the routes you import and your settings are stored only on your device. The app has no account, no analytics and no crash reporting, and it does not send your information to the developer. It shows ads from Google AdMob on its Stats, History and Trips screens; Google's ad software gets none of your steps, trips, routes or GPS location (see Ads below).</li>
+<li>The app's internet traffic is loading the map when you open a trip's screen or the app's map (the map from OpenFreeMap and its hill shading from Mapterhorn), downloading an offline map from GitHub if you ask for one, and Google's ads (see Ads below). Your GPS points are not sent.</li>
 <li>A trip leaves your device only when you save or share its GPX file yourself. A GPX file you import is read on your device, with no internet.</li>
 </ul>
 
@@ -46,7 +46,7 @@
 <li><strong>What is read.</strong> The number of steps in each minute. Health Connect combines the steps counted by your phone with steps from any other app or device you've connected to Health Connect. The app reads only this combined total, not which app or device recorded the steps. On first use, or after a long break, it reads up to the last 30 days.</li>
 <li><strong>When.</strong> Only while the app is open. It never reads steps in the background.</li>
 <li><strong>What it's used for.</strong> Showing your daily and weekly steps, your progress toward your step goal, your step history, lifetime stats, and the split into workout and incidental steps.</li>
-<li><strong>What happens to it.</strong> A copy of the step counts is stored in the app's private storage on your device. The app never writes anything to Health Connect, never sends step data off your device, and never sells or shares it, uses it for advertising, or uses it for any purpose other than the features above.</li>
+<li><strong>What happens to it.</strong> A copy of the step counts is stored in the app's private storage on your device. The app never writes anything to Health Connect, never sends step data off your device, and never sells or shares it, uses it for advertising, or uses it for any purpose other than the features above. It is never passed to the app's ad software.</li>
 </ul>
 <p>The use of information received from Health Connect adheres to the Health Connect Permissions policy, including the Limited Use requirements.</p>
 <p>You can withdraw the permission at any time in Health Connect's settings. The app then stops reading steps; steps it already copied stay in the app until you uninstall it.</p>
@@ -79,7 +79,15 @@
 <p>Map and hill-shading tiles you've viewed are cached in the app's private storage, so maps load faster next time and areas you've viewed before can still show without internet.</p>
 <h3>Offline maps</h3>
 <p>You can download an offline map, for now of Israel, in <strong>Settings → Offline maps</strong>. The files come from <a href="https://github.com">GitHub</a> (run by GitHub, Inc.), where the app's map files are published. The download runs in Android's download manager. As with any download, GitHub receives your IP address and the usual technical details of the request; no account, location, steps or trip data is sent. The app checks GitHub for the list of offline maps, to show their sizes and whether a newer one is out, only when you open Settings, and downloads a map only when you tap <strong>Download</strong> or <strong>Update</strong>. GitHub handles these requests under its own terms; see the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub General Privacy Statement</a>.</p>
-<p>A downloaded map is stored only on your device, in the app's own folder, and is removed when you delete it in Settings or uninstall the app. Inside its area, the map is drawn from it, with no requests to OpenFreeMap or Mapterhorn. OpenFreeMap, Mapterhorn and, for offline maps, GitHub are the app's only internet use.</p>
+<p>A downloaded map is stored only on your device, in the app's own folder, and is removed when you delete it in Settings or uninstall the app. Inside its area, the map is drawn from it, with no requests to OpenFreeMap or Mapterhorn. OpenFreeMap, Mapterhorn, GitHub for offline maps, and Google's ads (see Ads) are the app's only internet use.</p>
+
+<h2>Ads</h2>
+<p>The app shows ads from Google AdMob in two kinds of places: a banner at the bottom of the <strong>Stats</strong> and <strong>History</strong> screens, and ad cards in your list of trips, each marked <strong>Ad</strong>. There are no ads on the Today, Map, trip and Settings screens, no full-screen ads, and no ad cards in the list of trips while a trip is recording.</p>
+<p>The ads come from Google's Mobile Ads software inside the app. To show ads, measure them and prevent fraud, it sends Google your device's IP address (from which Google can estimate your general location, such as your city), your device's advertising ID and app set ID, how you interact with the ads (such as views and taps) and technical information about the app's performance. Google handles this under its own privacy policy; see <a href="https://policies.google.com/technologies/partner-sites">How Google uses information from sites or apps that use its services</a>.</p>
+<ul>
+<li><strong>What the ads never get.</strong> The app gives Google's ad software none of its own data: not your steps or anything else from Health Connect, not your trips, spots, imported routes or GPS location, and no keywords or other information about you. Ads are never chosen using your health or fitness data, as Google Play's Health Connect policy requires. Ads are limited to content rated for general audiences with parental guidance (PG).</li>
+<li><strong>Your choices.</strong> If you're in the European Economic Area, the United Kingdom or Switzerland, the app shows Google's consent form when you first open it, and you can change your choice at any time in <strong>Settings → Privacy options for ads</strong>. Anywhere, you can reset or delete your advertising ID, or opt out of personalized ads, in your phone's Settings (<strong>Privacy → Ads</strong>, or <strong>Google → Ads</strong>, depending on the phone).</li>
+</ul>
 
 <h2>Sharing and saving GPX files</h2>
 <p>A trip leaves your device only when you share it: tap the <strong>Share</strong> icon at the top of the trip's screen (labelled "Share GPX" for screen readers), then choose where it goes. The GPX file contains the trip's route (the location, time and height of each point), the trip's name if it has one, and the spots you marked (the location, time, height and name of each). The file is named after the trip's date, and apps that use a subject line, such as email apps, also get "GPS route from" and that date.</p>
@@ -123,14 +131,14 @@
 <p>Android's cloud backup is turned off for this app, so nothing is backed up to your Google account. When you move to a new phone, Android's phone-to-phone transfer may still copy the app's data to the new phone.</p>
 
 <h2>Information shared with the developer or third parties</h2>
-<p>The app contains no advertising, analytics, tracking or crash-reporting code. The app itself does not collect, sell or share your personal information. The developer never receives your steps, trips or locations.</p>
+<p>Apart from Google's ad software described under Ads, the app contains no advertising, analytics, tracking or crash-reporting code. The app itself does not sell your personal information. The developer never receives your steps, trips or locations.</p>
 <p>If you install the app from Google Play, Google provides the developer with statistics such as install counts and, if you agreed to share usage and diagnostics data with Google, crash and performance reports about the app. Google processes this data under its own privacy policy.</p>
 
 <h2>Estimates are for fun</h2>
 <p>Some numbers in the app are rough, for-fun estimates rather than measurements: calories and burgers burned, distance estimated from steps, and progress around the Earth and to the Moon. They should not be relied on for any purpose, including health decisions.</p>
 
 <h2>Children</h2>
-<p>The app is intended for a general audience and is not specifically designed for children.</p>
+<p>The app is intended for a general audience and is not specifically designed for children. Ads in the app are limited to PG-rated content.</p>
 
 <h2>Visiting this policy webpage</h2>
 <p>This privacy-policy webpage is hosted on GitHub Pages. GitHub logs visitor IP addresses for security purposes. This is separate from the app. See the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a>.</p>
